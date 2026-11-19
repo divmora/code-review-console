@@ -172,6 +172,9 @@ type Server struct {
 	// WebhookRetention keeps webhook delivery history this long (needs a
 	// database). Default 14 days; at most 100,000 deliveries are kept.
 	WebhookRetention time.Duration `yaml:"webhook_retention"`
+	// ReviewRetention keeps review history (results included) this long.
+	// Default 180 days. Daily and monthly metrics are kept regardless.
+	ReviewRetention time.Duration `yaml:"review_retention"`
 }
 
 // Dashboard configures the status page defaults. Admins can change the
@@ -379,6 +382,9 @@ func (c *Config) applyDefaults() {
 	}
 	if s.WebhookRetention <= 0 {
 		s.WebhookRetention = 14 * 24 * time.Hour
+	}
+	if s.ReviewRetention <= 0 {
+		s.ReviewRetention = 180 * 24 * time.Hour
 	}
 	if s.Dashboard.History <= 0 {
 		s.Dashboard.History = 200

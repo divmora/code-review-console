@@ -388,3 +388,26 @@ func tail(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// ReviewNow queues a review requested from the admin panel (a pasted URL
+// or a re-run). It is an explicit request, so the allowlist, reviewer and
+// branch-sync rules do not apply; the repository's settings still do.
+func (s *Server) ReviewNow(ctx context.Context, ref vcs.Ref, full bool, by string) error {
+	h, ok := s.hosts.Find(ref.Platform, ref.Host)
+	if !ok {
+		return fmt.Errorf("no enabled %s host for %s: add it under Code hosts", ref.Platform, ref.Host)
+	}
+	var tgt target
+	switch ref.Platform {
+	case hosts.GitHub:
+		tgt = s.githubTarget(h, 0)
+	case hosts.GitLab:
+		tgt = s.gitlabTarget(h)
+	case hosts.Bitbucket:
+		tgt = s.bitbucketTarget(h)
+	default:
+		return fmt.Errorf("unsupported platform %q", ref.Platform)
+	}
+	acc := s.access(ctx, ref)
+	return s.enqueueReview(tgt, ref, reviewOpts{Full: full, By: by, Overrides: s.overrides(acc)}, false)
+}

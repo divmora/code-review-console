@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/hosts"
 )
@@ -326,4 +327,30 @@ func mustHost(t *testing.T, s *Server, host string) hosts.Host {
 		t.Fatalf("no gitlab host %s", host)
 	}
 	return h
+}
+
+func TestReviewNow(t *testing.T) {
+	t.Setenv("CODEREVIEW_CONFIG", "")
+	cfg, _ := config.Load("")
+	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
+	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
+	cfg.Model = "m"
+	cfg.Server.Debounce = time.Hour
+	cfg.Repos.RequireReviewer = true // an explicit request ignores this
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.queue.Shutdown(context.Background())
+	ref := vcs.Ref{Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/p", Number: 3}
+	if err := s.ReviewNow(context.Background(), ref, true, "admin@x"); err != nil {
+		t.Fatal(err)
+	}
+	snap := s.queue.Snapshot()
+	if len(snap.Running)+len(snap.Pending) != 1 {
+		t.Errorf("review should be queued: %+v", snap)
+	}
+	if err := s.ReviewNow(context.Background(), vcs.Ref{Platform: "gitlab", Host: "elsewhere", Repo: "g/p", Number: 1}, false, "a"); err == nil {
+		t.Error("unknown host must fail")
+	}
 }

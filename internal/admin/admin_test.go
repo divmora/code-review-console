@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
+	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -115,6 +117,7 @@ func (f *fakeIdP) as(claims map[string]any) {
 }
 
 type env struct {
+	adm    *Admin
 	idp    *fakeIdP
 	app    *httptest.Server
 	st     *storetest.Memory
@@ -144,7 +147,7 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 	a.Register(mux)
 	app.Config.Handler = mux
 	jar, _ := cookiejar.New(nil)
-	return &env{idp: idp, app: app, st: st, client: &http.Client{Jar: jar, Timeout: 10 * time.Second}}
+	return &env{idp: idp, app: app, st: st, adm: a, client: &http.Client{Jar: jar, Timeout: 10 * time.Second}}
 }
 
 func (e *env) login(t *testing.T) *http.Response {
@@ -190,6 +193,16 @@ func (e *env) do(t *testing.T, method, path, csrf string, body any) (int, []byte
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, b
+}
+
+type fakeReviewer struct{ refs []vcs.Ref }
+
+func (f *fakeReviewer) ReviewNow(_ context.Context, ref vcs.Ref, full bool, by string) error {
+	if ref.Host == "unknown.example" {
+		return errors.New("no enabled gitlab host for unknown.example")
+	}
+	f.refs = append(f.refs, ref)
+	return nil
 }
 
 func TestSafeNext(t *testing.T) {
@@ -325,6 +338,45 @@ func TestLoginAndManageRepos(t *testing.T) {
 	}
 	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, nil); code != 200 {
 		t.Errorf("delete host: %d", code)
+	}
+
+	// Reviews: history with filters, details, review now, re-run, metrics.
+	now := time.Now()
+	_, _ = e.st.InsertJob(context.Background(), store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.com", Repo: "g/api", Number: 4,
+		State: "done", Finished: now, Started: now.Add(-time.Minute), Comments: 2, Result: []byte(`{"summary":"Adds A.","findings":[]}`)})
+	_, _ = e.st.InsertJob(context.Background(), store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.com", Repo: "g/web", Number: 5, State: "failed", Finished: now, Error: "boom"})
+	if code, body := e.do(t, "GET", "/admin/api/reviews?state=failed&repo=web", "", nil); code != 200 || !bytes.Contains(body, []byte(`"error":"boom"`)) || bytes.Contains(body, []byte(`g/api`)) {
+		t.Errorf("filtered reviews: %d %s", code, body)
+	}
+	var list struct{ Reviews []store.Job }
+	_, body = e.do(t, "GET", "/admin/api/reviews?repo=g/api", "", nil)
+	_ = json.Unmarshal(body, &list)
+	if len(list.Reviews) != 1 || list.Reviews[0].Result != nil {
+		t.Fatalf("the list must not carry results: %s", body)
+	}
+	id := list.Reviews[0].ID
+	if code, body := e.do(t, "GET", fmt.Sprintf("/admin/api/reviews/%d", id), "", nil); code != 200 || !bytes.Contains(body, []byte("Adds A.")) {
+		t.Errorf("review detail: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "POST", fmt.Sprintf("/admin/api/reviews/%d/rerun", id), csrf, map[string]any{"full": true}); code != http.StatusServiceUnavailable {
+		t.Errorf("without a reviewer, re-runs are unavailable: %d", code)
+	}
+	fr := &fakeReviewer{}
+	e.adm.Reviewer = fr
+	if code, _ := e.do(t, "POST", fmt.Sprintf("/admin/api/reviews/%d/rerun", id), csrf, map[string]any{"full": true}); code != http.StatusAccepted || len(fr.refs) != 1 || fr.refs[0].Repo != "g/api" {
+		t.Errorf("re-run: %d %+v", code, fr.refs)
+	}
+	if code, _ := e.do(t, "POST", "/admin/api/reviews", csrf, map[string]any{"url": "https://gitlab.com/g/api/-/merge_requests/9"}); code != http.StatusAccepted || fr.refs[1].Number != 9 {
+		t.Errorf("review by URL: %d %+v", code, fr.refs)
+	}
+	if code, _ := e.do(t, "POST", "/admin/api/reviews", csrf, map[string]any{"url": "not a url"}); code != 400 {
+		t.Errorf("bad URL: %d", code)
+	}
+	if code, body := e.do(t, "POST", "/admin/api/reviews", csrf, map[string]any{"url": "https://unknown.example/g/p/-/merge_requests/1"}); code != 400 || !bytes.Contains(body, []byte("no enabled")) {
+		t.Errorf("unknown host: %d %s", code, body)
+	}
+	if code, body := e.do(t, "GET", "/admin/api/metrics?granularity=day", "", nil); code != 200 || !bytes.Contains(body, []byte(`"jobs":2`)) {
+		t.Errorf("metrics: %d %s", code, body)
 	}
 
 	r, _ := e.st.FindRepo(context.Background(), "github", "github.com", "org/api")

@@ -312,3 +312,54 @@ func TestWebhookEvents(t *testing.T) {
 		t.Errorf("prune should keep the newest: %+v", left)
 	}
 }
+
+func TestJobMetricsAndPrune(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	day := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	add := func(at time.Time, state string, comments int) {
+		if _, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: "gl.example.com", Repo: "Acme/API", Number: 1,
+			State: state, Enqueued: at, Started: at.Add(-time.Minute), Finished: at, Comments: comments, TokensIn: 100, TokensOut: 10}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(day, "done", 3)
+	add(day.Add(10*time.Minute), "failed", 0)
+	add(day.Add(2*time.Hour), "skipped", 0)
+	add(day.AddDate(0, 0, 1), "done", 1)
+	daily, err := p.Metrics(ctx, MetricsFilter{Granularity: Daily, From: day.AddDate(0, 0, -1), To: day.AddDate(0, 0, 3)})
+	if err != nil || len(daily) != 2 {
+		t.Fatalf("daily = %+v %v", daily, err)
+	}
+	d0 := daily[0]
+	if d0.Jobs != 3 || d0.Done != 1 || d0.Failed != 1 || d0.Skipped != 1 || d0.Comments != 3 || d0.TokensIn != 300 || d0.DurationMS != 180000 {
+		t.Errorf("first day rollup = %+v", d0)
+	}
+	hourly, _ := p.Metrics(ctx, MetricsFilter{Granularity: Hourly, From: day.Add(-time.Hour), To: day.Add(3 * time.Hour), Repo: "acme/api"})
+	if len(hourly) != 2 || hourly[0].Jobs != 2 {
+		t.Errorf("hourly, filtered by repo (case-insensitive) = %+v", hourly)
+	}
+	monthly, _ := p.Metrics(ctx, MetricsFilter{Granularity: Monthly, From: day.AddDate(0, -1, 0), To: day.AddDate(0, 1, 0), Host: "other"})
+	if len(monthly) != 0 {
+		t.Errorf("host filter: %+v", monthly)
+	}
+	if _, err := p.Metrics(ctx, MetricsFilter{Granularity: "week"}); err == nil {
+		t.Error("unknown granularity must fail")
+	}
+	got, _ := p.ListJobs(ctx, JobFilter{Host: "GL.example.com", RepoLike: "api", State: "done", From: day.Add(time.Hour)})
+	if len(got) != 1 || got[0].Comments != 1 {
+		t.Errorf("filtered jobs = %+v", got)
+	}
+	n, err := p.PruneJobs(ctx, day.Add(time.Hour), day.Add(time.Hour))
+	if err != nil || n != 2 {
+		t.Fatalf("prune: %d %v", n, err)
+	}
+	daily, _ = p.Metrics(ctx, MetricsFilter{Granularity: Daily, From: day.AddDate(0, 0, -1), To: day.AddDate(0, 0, 3)})
+	if len(daily) != 2 || daily[0].Jobs != 3 {
+		t.Errorf("daily rollups survive pruning: %+v", daily)
+	}
+	hourly, _ = p.Metrics(ctx, MetricsFilter{Granularity: Hourly, From: day.Add(-time.Hour), To: day.Add(3 * time.Hour)})
+	if len(hourly) != 1 {
+		t.Errorf("hourly rollups older than the cut are pruned: %+v", hourly)
+	}
+}

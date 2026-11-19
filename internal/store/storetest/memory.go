@@ -309,7 +309,8 @@ func (m *Memory) PruneWebhookEvents(_ context.Context, before time.Time, keep in
 func (m *Memory) InsertJob(_ context.Context, j store.Job) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	j.ID = int64(len(m.jobs) + 1)
+	m.nextID++
+	j.ID = m.nextID
 	m.jobs = append(m.jobs, j)
 	return j.ID, nil
 }
@@ -327,8 +328,7 @@ func (m *Memory) ListJobs(_ context.Context, f store.JobFilter) ([]store.Job, er
 	out := []store.Job{}
 	for i := len(m.jobs) - 1; i >= 0 && len(out) < f.Limit; i-- {
 		j := m.jobs[i]
-		if (f.Platform != "" && j.Platform != f.Platform) || (f.Repo != "" && !strings.EqualFold(j.Repo, f.Repo)) ||
-			(f.State != "" && j.State != f.State) || (f.Kind != "" && j.Kind != f.Kind) || (f.BeforeID > 0 && j.ID >= f.BeforeID) {
+		if !jobMatches(j, f) {
 			continue
 		}
 		j.Result = nil
@@ -337,14 +337,90 @@ func (m *Memory) ListJobs(_ context.Context, f store.JobFilter) ([]store.Job, er
 	return out, nil
 }
 
+func jobMatches(j store.Job, f store.JobFilter) bool {
+	return (f.Platform == "" || j.Platform == f.Platform) && (f.Repo == "" || strings.EqualFold(j.Repo, f.Repo)) &&
+		(f.Host == "" || strings.EqualFold(j.Host, f.Host)) &&
+		(f.RepoLike == "" || strings.Contains(strings.ToLower(j.Repo), strings.ToLower(f.RepoLike))) &&
+		(f.State == "" || j.State == f.State) && (f.Kind == "" || j.Kind == f.Kind) && (f.Trigger == "" || j.Trigger == f.Trigger) &&
+		(f.From.IsZero() || !j.Finished.Before(f.From)) && (f.To.IsZero() || j.Finished.Before(f.To)) &&
+		(f.BeforeID == 0 || j.ID < f.BeforeID)
+}
+
 func (m *Memory) GetJob(_ context.Context, id int64) (*store.Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if id < 1 || int(id) > len(m.jobs) {
-		return nil, store.ErrNotFound
+	for _, j := range m.jobs {
+		if j.ID == id {
+			c := j
+			return &c, nil
+		}
 	}
-	j := m.jobs[id-1]
-	return &j, nil
+	return nil, store.ErrNotFound
+}
+
+// Metrics computes rollups on the fly (the Postgres store keeps them).
+func (m *Memory) Metrics(_ context.Context, f store.MetricsFilter) ([]store.MetricPoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	trunc := func(t time.Time) time.Time {
+		t = t.UTC()
+		switch f.Granularity {
+		case store.Hourly:
+			return t.Truncate(time.Hour)
+		case store.Monthly:
+			return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		}
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	by := map[time.Time]*store.MetricPoint{}
+	for _, j := range m.jobs {
+		if j.Finished.Before(f.From) || !j.Finished.Before(f.To) || (f.Platform != "" && j.Platform != f.Platform) ||
+			(f.Host != "" && !strings.EqualFold(j.Host, f.Host)) || (f.Repo != "" && !strings.EqualFold(j.Repo, f.Repo)) {
+			continue
+		}
+		b := trunc(j.Finished)
+		p := by[b]
+		if p == nil {
+			p = &store.MetricPoint{Bucket: b}
+			by[b] = p
+		}
+		p.Jobs++
+		switch j.State {
+		case "done":
+			p.Done++
+		case "skipped":
+			p.Skipped++
+		case "failed":
+			p.Failed++
+		}
+		p.Comments += j.Comments
+		p.Files += j.Files
+		p.TokensIn += int64(j.TokensIn)
+		p.TokensOut += int64(j.TokensOut)
+		if !j.Started.IsZero() {
+			p.DurationMS += j.Finished.Sub(j.Started).Milliseconds()
+		}
+	}
+	out := []store.MetricPoint{}
+	for _, p := range by {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, k int) bool { return out[i].Bucket.Before(out[k].Bucket) })
+	return out, nil
+}
+
+func (m *Memory) PruneJobs(_ context.Context, before, _ time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var kept []store.Job
+	for _, j := range m.jobs {
+		if !j.Finished.Before(before) {
+			kept = append(kept, j)
+		}
+	}
+	n := int64(len(m.jobs) - len(kept))
+	m.jobs = kept
+	return n, nil
 }
 
 func (m *Memory) ListModelProfiles(context.Context) ([]store.ModelProfile, error) {

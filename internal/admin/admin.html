@@ -103,6 +103,25 @@ td.reason { max-width: 380px; color: var(--muted); font-size: 13px; }
 .hostgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; }
 .hostgrid textarea { min-height: 60px; }
 .hosturl { font-size: 12px; word-break: break-all; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.tile .n { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .l { font-size: 12px; color: var(--muted); }
+.chartbox { position: relative; margin-bottom: 0; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 6px; flex-wrap: wrap; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; background: var(--sw); }
+.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.14); display: none; z-index: 5; min-width: 150px; }
+.tip b { display: block; margin-bottom: 4px; }
+.tip div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.rn-url { min-width: 280px; flex: 1 1 280px; max-width: 520px; }
+.detail-box h3 { font-size: 14px; margin: 0 0 6px; }
+.finding { border-left: 3px solid var(--line); padding: 4px 10px; margin: 6px 0; }
+.finding .t { font-weight: 600; }
+:root { --st-done: #0ca30c; --st-skip: #9a9aa6; --st-fail: #d03b3b; --grid: #e4e4e9; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --st-skip: #6b6b76; --grid: #2b2b33; } }
+:root[data-theme="dark"] { --st-skip: #6b6b76; --grid: #2b2b33; }
 code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding: 0 4px; }
 </style>
 </head>
@@ -112,6 +131,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   <div class="brand">Code review<span>Divmora console</span></div>
   <nav class="side" aria-label="Sections">
     <a href="/admin/repositories" data-tab="repos">Repositories</a>
+    <a href="/admin/reviews" data-tab="reviews">Reviews</a>
     <a href="/admin/hosts" data-tab="hosts">Code hosts</a>
     <a href="/admin/rules" data-tab="rules">Rules</a>
     <a href="/admin/webhooks" data-tab="hooks">Webhooks</a>
@@ -152,6 +172,36 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     <div class="panel" id="repos"><div class="empty">Loading…</div></div>
     <p class="sub">Repositories appear here automatically when they send their first webhook, set to <b>Inherit</b>: they follow the most specific group or pattern rule, and otherwise the default (<span id="defaultNote"></span>). Choosing Enabled or Disabled here overrides every rule. Settings here override the rules' settings and the repository's own <code>.codereview.yaml</code>.</p>
     <p class="sub hidden" id="reviewerNote"><b>Reviewer required:</b> even in an enabled repository, a merge request is reviewed only when the bot user is one of its reviewers. Adding the bot as a reviewer starts a review; <code>@codereview review</code> comments still work.</p>
+  </section>
+
+  <section id="tab-reviews" class="hidden">
+    <div class="bar">
+      <select id="mGran" aria-label="Period">
+        <option value="hour">Last 48 hours</option>
+        <option value="day" selected>Last 30 days</option>
+        <option value="month">Last 12 months</option>
+      </select>
+      <span class="spacer"></span>
+      <input id="rnURL" type="url" placeholder="Paste a PR/MR URL to review it now" aria-label="Pull request URL" class="rn-url">
+      <label class="sub"><input type="checkbox" id="rnFull"> full</label>
+      <button class="btn primary" id="rnGo">Review now</button>
+    </div>
+    <div class="tiles" id="mTiles"></div>
+    <div class="panel pad chartbox">
+      <div class="legend" id="mLegend"></div>
+      <div id="mChart" class="chart"></div>
+    </div>
+    <div class="bar mt">
+      <select id="rvHost" aria-label="Host"><option value="">All hosts</option></select>
+      <input id="rvRepo" type="search" placeholder="Repository" aria-label="Repository">
+      <select id="rvState" aria-label="State"><option value="">Any state</option><option value="done">Done</option><option value="skipped">Skipped</option><option value="failed">Failed</option></select>
+      <select id="rvKind" aria-label="Kind"><option value="">Any kind</option><option value="review">Review</option><option value="full review">Full review</option><option value="answer">Answer</option><option value="help">Help</option></select>
+      <select id="rvTrigger" aria-label="Trigger"><option value="">Any trigger</option><option value="push">Push</option><option value="command">Command</option><option value="ui">Admin panel</option></select>
+      <input id="rvFrom" type="date" aria-label="From"><input id="rvTo" type="date" aria-label="To">
+    </div>
+    <div class="panel" id="rvList"><div class="empty">Loading…</div></div>
+    <div class="bar mt"><button class="btn hidden" id="rvMore">Load older</button></div>
+    <p class="sub">Every finished review, answer and help job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; daily and monthly totals are kept for good.</p>
   </section>
 
   <section id="tab-hosts" class="hidden">
@@ -226,6 +276,11 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
         <label class="f">Commit status on the reviewed commit
           <select id="sStatus"><option value="false">Off</option><option value="true">On</option></select>
         </label>
+      </div>
+      <h2 class="h2 mt">History</h2>
+      <div class="grid">
+        <label class="f">Keep reviews (days)<input id="sRevDays" type="number" min="1" max="3650"></label>
+        <label class="f">Keep webhook deliveries (days)<input id="sHookDays" type="number" min="1" max="3650"></label>
       </div>
       <h2 class="h2 mt">Status dashboard</h2>
       <div class="grid">
@@ -555,6 +610,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   function settingsBody(defaults) {
     function v(id) { return document.getElementById(id).value; }
     return { allowlist: v("sAllow") === "true", require_reviewer: v("sReviewer") === "true",
+      review_retention_days: parseInt(v("sRevDays") || "0", 10), webhook_retention_days: parseInt(v("sHookDays") || "0", 10),
       skip_branch_sync: v("sSync") === "true", score_labels: v("sLabels") === "true", commit_status: v("sStatus") === "true",
       sync_source_branches: v("sSyncBranches").split(",").map(function (x) { return x.trim(); }).filter(Boolean),
       dashboard_enabled: v("sDash") === "true", hide_repos: v("sHide") === "true", dashboard_title: v("sTitle").trim(),
@@ -575,6 +631,8 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     document.getElementById("sReviewer").value = String(e.require_reviewer);
     document.getElementById("sSync").value = String(e.skip_branch_sync);
     document.getElementById("sLabels").value = String(e.score_labels);
+    document.getElementById("sRevDays").value = e.review_retention_days;
+    document.getElementById("sHookDays").value = e.webhook_retention_days;
     document.getElementById("sStatus").value = String(e.commit_status);
     document.getElementById("sSyncBranches").value = (e.sync_source_branches || []).join(", ");
     document.getElementById("sDash").value = String(e.dashboard_enabled);
@@ -686,7 +744,22 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     var managed = hostData.mode === "database";
     document.getElementById("hostMode").textContent = managed ? "Managed here; stored encrypted in the database." :
       "Hosts come from the config file (read-only). Set " + (hostData.key_env || "CODEREVIEW_CONSOLE_SECRET_KEY") + " to manage them here.";
-    document.getElementById("hostAdd").classList.toggle("hidden", !managed);
+    document.getElementById("mGran").addEventListener("change", loadMetrics);
+  var rvTimer;
+  ["rvHost", "rvState", "rvKind", "rvTrigger", "rvFrom", "rvTo"].forEach(function (id) {
+    document.getElementById(id).addEventListener("change", function () { if (id === "rvHost") loadMetrics(); loadReviews(); });
+  });
+  document.getElementById("rvRepo").addEventListener("input", function () { clearTimeout(rvTimer); rvTimer = setTimeout(function () { loadReviews(); }, 300); });
+  document.getElementById("rvMore").addEventListener("click", function () { loadReviews(true); });
+  document.getElementById("rnGo").addEventListener("click", function () {
+    var url = document.getElementById("rnURL").value.trim();
+    if (!url) { toast("Paste a pull request or merge request URL", true); return; }
+    api("POST", "/admin/api/reviews", { url: url, full: document.getElementById("rnFull").checked }).then(function (r) {
+      document.getElementById("rnURL").value = ""; toast("Queued " + r.pr + " — it appears here when it finishes");
+    }).catch(function (e) { toast(e.message, true); });
+  });
+  window.addEventListener("resize", function () { if (!document.getElementById("tab-reviews").classList.contains("hidden")) loadMetrics(); });
+  document.getElementById("hostAdd").classList.toggle("hidden", !managed);
     renderHostForm();
     var box = document.getElementById("hostList");
     if (!hostData.hosts.length) { box.replaceChildren(el("div", { cls: "empty", text: "No code hosts yet. Add GitHub, GitLab or Bitbucket." })); return; }
@@ -721,6 +794,191 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, rows)]));
   }
 
+  // ---- reviews ----
+  var reviews = [], openReview = null, reviewDetail = {};
+  function fmtNum(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
+  function fmtDur(ms) { if (!ms) return "—"; var s = Math.round(ms / 1000); return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
+  function loadMetrics() {
+    var g = document.getElementById("mGran").value, h = document.getElementById("rvHost").value;
+    api("GET", "/admin/api/metrics?granularity=" + g + (h ? "&host=" + encodeURIComponent(h) : "")).then(function (d) { renderMetrics(d); })
+      .catch(function (e) { toast(e.message, true); });
+  }
+  function bucketsFor(d) {
+    // Fill empty buckets so the time axis is continuous.
+    var out = [], step = { hour: 3600e3, day: 86400e3 }[d.granularity], by = {};
+    d.points.forEach(function (p) { by[new Date(p.bucket).toISOString()] = p; });
+    var start = new Date(d.from), end = new Date(d.to), t;
+    if (d.granularity === "month") {
+      t = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+      while (t < end) { out.push(by[t.toISOString()] || { bucket: t.toISOString() }); t = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 1)); }
+    } else {
+      t = new Date(Math.floor(start.getTime() / step) * step);
+      while (t < end) { out.push(by[t.toISOString()] || { bucket: t.toISOString() }); t = new Date(t.getTime() + step); }
+    }
+    return out;
+  }
+  function bucketLabel(iso, g, long) {
+    var d = new Date(iso);
+    if (g === "hour") return long ? d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : d.toLocaleTimeString([], { hour: "2-digit" });
+    if (g === "month") return d.toLocaleDateString([], { month: "short", year: long ? "numeric" : "2-digit" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  function renderMetrics(d) {
+    var pts = bucketsFor(d), tot = { jobs: 0, done: 0, skipped: 0, failed: 0, comments: 0, tokens_in: 0, tokens_out: 0, duration_ms: 0 };
+    pts.forEach(function (p) { for (var k in tot) tot[k] += p[k] || 0; });
+    var ran = tot.done + tot.failed;
+    var tiles = [["Jobs", fmtNum(tot.jobs)], ["Reviewed", fmtNum(tot.done)], ["Skipped", fmtNum(tot.skipped)],
+      ["Failed", fmtNum(tot.failed) + (ran ? " · " + Math.round(100 * tot.failed / ran) + "%" : "")],
+      ["Comments posted", fmtNum(tot.comments)], ["Tokens in / out", fmtNum(tot.tokens_in) + " / " + fmtNum(tot.tokens_out)],
+      ["Avg time", fmtDur(ran ? tot.duration_ms / Math.max(1, tot.jobs) : 0)]];
+    document.getElementById("mTiles").replaceChildren.apply(document.getElementById("mTiles"), tiles.map(function (t) {
+      return el("div", { cls: "tile" }, [el("div", { cls: "n", text: t[1] }), el("div", { cls: "l", text: t[0] })]);
+    }));
+    var series = [["done", "Reviewed", "--st-done"], ["skipped", "Skipped", "--st-skip"], ["failed", "Failed", "--st-fail"]];
+    document.getElementById("mLegend").replaceChildren.apply(document.getElementById("mLegend"), series.map(function (s) {
+      var sp = el("span", { text: s[1] + " " + fmtNum(tot[s[0]]) }); sp.style.setProperty("--sw", "var(" + s[2] + ")"); return sp;
+    }));
+    drawChart(pts, d.granularity, series);
+  }
+  function drawChart(pts, g, series) {
+    var box = document.getElementById("mChart"), NS = "http://www.w3.org/2000/svg";
+    var W = Math.max(320, box.clientWidth || 900), H = 200, L = 34, R = 8, T = 8, B = 24;
+    var max = 0; pts.forEach(function (p) { max = Math.max(max, (p.done || 0) + (p.skipped || 0) + (p.failed || 0)); });
+    var nice = max <= 4 ? 4 : Math.pow(10, Math.floor(Math.log10(max))); var top = Math.ceil(max / nice) * nice || 4;
+    var band = (W - L - R) / pts.length, bw = Math.min(24, Math.max(2, band * 0.7));
+    function y(v) { return T + (H - T - B) * (1 - v / top); }
+    function mk(tag, attrs) { var n = document.createElementNS(NS, tag); for (var k in attrs) n.setAttribute(k, attrs[k]); return n; }
+    var svg = mk("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Jobs per " + g + ": reviewed, skipped and failed" });
+    [0, top / 2, top].forEach(function (v) {
+      svg.appendChild(mk("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }));
+      var t = mk("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }); t.textContent = fmtNum(v); svg.appendChild(t);
+    });
+    var every = Math.ceil(pts.length / Math.max(2, Math.floor((W - L - R) / 70)));
+    pts.forEach(function (p, i) {
+      var x = L + band * i + (band - bw) / 2, base = H - B, segs = [];
+      series.forEach(function (s) { var v = p[s[0]] || 0; if (v > 0) segs.push([v, s[2]]); });
+      var acc = 0;
+      segs.forEach(function (sg, k) {
+        // Stack upward from the baseline; a 2px surface gap sits under every
+        // segment but the first, and only the top segment gets rounded ends.
+        var yTop = y(acc + sg[0]), yBot = y(acc) - (k > 0 ? 2 : 0);
+        if (yBot - yTop < 1) yTop = yBot - 1;
+        var r = k === segs.length - 1 ? Math.min(4, bw / 2, yBot - yTop) : 0;
+        var d = "M" + x + "," + yBot + "V" + (yTop + r) + "Q" + x + "," + yTop + " " + (x + r) + "," + yTop +
+          "H" + (x + bw - r) + "Q" + (x + bw) + "," + yTop + " " + (x + bw) + "," + (yTop + r) + "V" + yBot + "Z";
+        svg.appendChild(mk("path", { d: d, fill: "var(" + sg[1] + ")" }));
+        acc += sg[0];
+      });
+      if (i % every === 0) {
+        var t = mk("text", { x: L + band * i + band / 2, y: base + 16, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" });
+        t.textContent = bucketLabel(p.bucket, g); svg.appendChild(t);
+      }
+      var hit = mk("rect", { x: L + band * i, y: T, width: band, height: H - T - B, fill: "transparent", tabindex: 0 });
+      hit.addEventListener("mouseenter", function () { showTip(p, g, L + band * i + band / 2, series); hit.setAttribute("fill", "var(--idle-bg)"); hit.setAttribute("fill-opacity", ".5"); });
+      hit.addEventListener("focus", function () { showTip(p, g, L + band * i + band / 2, series); });
+      hit.addEventListener("mouseleave", function () { hideTip(); hit.setAttribute("fill", "transparent"); });
+      hit.addEventListener("blur", hideTip);
+      svg.insertBefore(hit, svg.firstChild);
+    });
+    svg.appendChild(mk("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, stroke: "var(--grid)", "stroke-width": 1 }));
+    var tip = el("div", { cls: "tip", id: "mTip" });
+    box.replaceChildren(svg, tip);
+  }
+  function showTip(p, g, x, series) {
+    var tip = document.getElementById("mTip"), box = document.getElementById("mChart");
+    var rows = series.map(function (s) { return el("div", null, [el("span", { text: s[1] }), el("span", { text: String(p[s[0]] || 0) })]); });
+    rows.push(el("div", null, [el("span", { text: "Comments" }), el("span", { text: String(p.comments || 0) })]));
+    rows.push(el("div", null, [el("span", { text: "Tokens" }), el("span", { text: fmtNum((p.tokens_in || 0) + (p.tokens_out || 0)) })]));
+    tip.replaceChildren.apply(tip, [el("b", { text: bucketLabel(p.bucket, g, true) })].concat(rows));
+    tip.style.display = "block";
+    var scale = box.clientWidth / Math.max(320, box.clientWidth || 900);
+    var left = Math.min(box.clientWidth - tip.offsetWidth - 4, Math.max(0, x * scale + 12));
+    tip.style.left = left + "px"; tip.style.top = "28px";
+  }
+  function hideTip() { var t = document.getElementById("mTip"); if (t) t.style.display = "none"; }
+
+  function loadReviews(more) {
+    function v(id) { return document.getElementById(id).value.trim(); }
+    var q = "?limit=100";
+    [["host", "rvHost"], ["repo", "rvRepo"], ["state", "rvState"], ["kind", "rvKind"], ["trigger", "rvTrigger"], ["from", "rvFrom"], ["to", "rvTo"]].forEach(function (f) {
+      if (v(f[1])) q += "&" + f[0] + "=" + encodeURIComponent(v(f[1]));
+    });
+    if (more && reviews.length) q += "&before=" + reviews[reviews.length - 1].id;
+    api("GET", "/admin/api/reviews" + q).then(function (d) {
+      reviews = more ? reviews.concat(d.reviews) : d.reviews;
+      document.getElementById("rvMore").classList.toggle("hidden", d.reviews.length < 100);
+      renderReviews();
+    }).catch(function (e) { toast(e.message, true); });
+  }
+  function stateBadgeJob(st) { return el("span", { cls: "state " + ({ done: "on", failed: "off" }[st] || "idle"), text: st }); }
+  function renderReviews() {
+    var box = document.getElementById("rvList");
+    if (!reviews.length) { box.replaceChildren(el("div", { cls: "empty", text: "No reviews match." })); return; }
+    var rows = [];
+    reviews.forEach(function (j) {
+      var dur = j.started && j.started.indexOf("0001-") !== 0 ? new Date(j.finished) - new Date(j.started) : 0;
+      rows.push(el("tr", null, [
+        el("td", { cls: "muted nowrap", title: new Date(j.finished).toLocaleString(), text: ago(j.finished) }),
+        el("td", null, [el("div", null, [j.url ? el("a", { href: j.url, target: "_blank", rel: "noopener noreferrer", text: j.repo + " #" + j.number }) : el("span", { text: j.repo + " #" + j.number })]),
+          el("div", { cls: "plat", text: j.platform + " · " + j.host })]),
+        el("td", null, [el("div", { text: j.kind }), el("div", { cls: "plat", text: j.trigger + (j.requested_by ? " · " + j.requested_by : "") })]),
+        el("td", null, [stateBadgeJob(j.state), el("div", { cls: "why", text: j.error ? j.error.slice(0, 90) : j.note })]),
+        el("td", { cls: "nowrap", text: j.comments + " / " + j.files }),
+        el("td", { cls: "nowrap muted", text: fmtNum(j.tokens_in) + " / " + fmtNum(j.tokens_out) }),
+        el("td", { cls: "nowrap muted", text: fmtDur(dur) }),
+        el("td", null, [el("button", { cls: "btn", text: openReview === j.id ? "Close" : "Details", onclick: function () {
+          openReview = openReview === j.id ? null : j.id; if (openReview && !reviewDetail[j.id]) loadReviewDetail(j.id); renderReviews();
+        } })])
+      ]));
+      if (openReview === j.id) rows.push(el("tr", { cls: "editor" }, [el("td", { colspan: "8" }, [reviewDetailView(j)])]));
+    });
+    var head = el("tr", null, ["Finished", "Pull request", "Job", "State", "Comments / files", "Tokens in / out", "Took", ""].map(function (h) { return el("th", { text: h }); }));
+    box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, rows)]));
+  }
+  function loadReviewDetail(id) {
+    api("GET", "/admin/api/reviews/" + id).then(function (j) { reviewDetail[id] = j; renderReviews(); }).catch(function (e) { toast(e.message, true); });
+  }
+  function reviewDetailView(j) {
+    var d = reviewDetail[j.id], kids = [];
+    if (!d) return el("div", { cls: "muted", text: "Loading…" });
+    var r = null; try { r = d.result ? (typeof d.result === "string" ? JSON.parse(d.result) : d.result) : null; } catch (e) { r = null; }
+    if (d.error) kids.push(el("div", { cls: "finding" }, [el("div", { cls: "t", text: "Error" }), el("pre", { cls: "detail", text: d.error })]));
+    if (r) {
+      if (r.summary) kids.push(el("h3", { text: "Summary" }), el("p", { text: r.summary }));
+      if (r.scores) kids.push(el("p", { cls: "sub", text: "Scores — quality " + r.scores.quality + " · security " + r.scores.security + " · maintainability " + r.scores.maintainability }));
+      var fs = r.findings || [];
+      kids.push(el("h3", { text: fs.length ? "Findings (" + fs.length + ")" : "No findings" }));
+      fs.forEach(function (f) {
+        kids.push(el("div", { cls: "finding" }, [el("div", { cls: "t", text: (f.kind === "question" ? "❓ " : "") + f.title }),
+          el("div", { cls: "plat", text: f.severity + " · " + f.category + " · " + f.path + ":" + f.end_line })]));
+      });
+      var v = r.verification;
+      if (v && v.ran) kids.push(el("p", { cls: "sub", text: "Verification (" + v.model + "): " + (v.confirmed || 0) + " confirmed · " + (v.false_positives || 0) + " removed · " + (v.questions || 0) + " questions" }));
+      (v && v.removed || []).forEach(function (x) { kids.push(el("div", { cls: "finding" }, [el("div", { cls: "plat", text: "Removed: " + x.title + " — " + x.reason })])); });
+    } else if (!d.error) {
+      kids.push(el("p", { cls: "muted", text: d.note || "No review result stored for this job." }));
+    }
+    kids.push(el("p", { cls: "sub", text: "Model " + (d.model || "—") + " · " + d.comments + " comments · " + d.files + " files" }));
+    if (j.kind.indexOf("review") >= 0) kids.push(el("div", { cls: "bar mt" }, [
+      el("button", { cls: "btn", text: "Re-run (new changes)", onclick: function () { rerun(j, false); } }),
+      el("button", { cls: "btn", text: "Re-run full review", onclick: function () { rerun(j, true); } })
+    ]));
+    return el("div", { cls: "detail-box" }, kids);
+  }
+  function rerun(j, full) {
+    api("POST", "/admin/api/reviews/" + j.id + "/rerun", { full: full }).then(function (r) { toast("Queued " + r.pr); })
+      .catch(function (e) { toast(e.message, true); });
+  }
+  function loadReviewsPage() {
+    api("GET", "/admin/api/hosts").then(function (d) {
+      var sel = document.getElementById("rvHost"), cur = sel.value;
+      sel.replaceChildren.apply(sel, [el("option", { value: "", text: "All hosts" })].concat((d.hosts || []).map(function (h) {
+        return el("option", { value: h.host, selected: h.host === cur, text: h.name });
+      })));
+    }).catch(function () {});
+    loadMetrics(); loadReviews();
+  }
+
   function loadAudit() {
     api("GET", "/admin/api/audit").then(function (entries) {
       var box = document.getElementById("audit");
@@ -736,8 +994,8 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     }).catch(function (e) { toast(e.message, true); });
   }
 
-  var routes = { repositories: "repos", hosts: "hosts", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
-  var titles = { repos: "Repositories", hosts: "Code hosts", rules: "Rules", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
+  var routes = { repositories: "repos", reviews: "reviews", hosts: "hosts", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
+  var titles = { repos: "Repositories", reviews: "Reviews", hosts: "Code hosts", rules: "Rules", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
   function tabFromPath() {
     var seg = location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
     return routes[seg] || "repos";
@@ -745,13 +1003,14 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   function show(tab) {
     editing = null; editingRule = null; editingHost = null;
     document.querySelectorAll(".side a").forEach(function (a) { a.classList.toggle("on", a.dataset.tab === tab); });
-    ["repos", "hosts", "rules", "hooks", "settings", "audit"].forEach(function (t) {
+    ["repos", "reviews", "hosts", "rules", "hooks", "settings", "audit"].forEach(function (t) {
       document.getElementById("tab-" + t).classList.toggle("hidden", tab !== t);
     });
     document.getElementById("pageTitle").textContent = titles[tab];
     document.title = titles[tab] + " · Code review admin";
     if (tab === "rules") renderRules();
     if (tab === "hosts") loadHosts();
+    if (tab === "reviews") loadReviewsPage();
     if (tab === "hooks") loadHooks();
     if (tab === "settings") loadSettings();
     if (tab === "repos" && repos.length) reloadRepos();

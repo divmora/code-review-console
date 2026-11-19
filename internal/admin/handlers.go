@@ -56,6 +56,11 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/api/rules/{id}", a.requireAPI(a.apiUpdateRule))
 	mux.HandleFunc("DELETE /admin/api/rules/{id}", a.requireAPI(a.apiDeleteRule))
 	mux.HandleFunc("GET /admin/api/webhooks", a.requireAPI(a.apiWebhooks))
+	mux.HandleFunc("GET /admin/api/reviews", a.requireAPI(a.apiListReviews))
+	mux.HandleFunc("POST /admin/api/reviews", a.requireAPI(a.apiReviewNow))
+	mux.HandleFunc("GET /admin/api/reviews/{id}", a.requireAPI(a.apiGetReview))
+	mux.HandleFunc("POST /admin/api/reviews/{id}/rerun", a.requireAPI(a.apiRerun))
+	mux.HandleFunc("GET /admin/api/metrics", a.requireAPI(a.apiMetrics))
 	mux.HandleFunc("GET /admin/api/hosts", a.requireAPI(a.apiListHosts))
 	mux.HandleFunc("POST /admin/api/hosts", a.requireAPI(a.apiCreateHost))
 	mux.HandleFunc("PUT /admin/api/hosts/{id}", a.requireAPI(a.apiUpdateHost))
@@ -67,7 +72,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 }
 
 // adminSections are the admin UI's pages (see the routes in admin.html).
-var adminSections = map[string]bool{"repositories": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
+var adminSections = map[string]bool{"repositories": true, "reviews": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.session(r)
@@ -381,16 +386,25 @@ func (a *Admin) apiGetSettings(w http.ResponseWriter, r *http.Request, s *store.
 
 // settingsReq is the full set of settings; every save writes all of them.
 type settingsReq struct {
-	Allowlist          bool             `json:"allowlist"`
-	RequireReviewer    bool             `json:"require_reviewer"`
-	ReviewDefaults     config.Overrides `json:"review_defaults"`
-	SkipBranchSync     bool             `json:"skip_branch_sync"`
-	SyncSourceBranches []string         `json:"sync_source_branches"`
-	ScoreLabels        bool             `json:"score_labels"`
-	CommitStatus       bool             `json:"commit_status"`
-	DashboardEnabled   bool             `json:"dashboard_enabled"`
-	HideRepos          bool             `json:"hide_repos"`
-	DashboardTitle     string           `json:"dashboard_title"`
+	Allowlist            bool             `json:"allowlist"`
+	RequireReviewer      bool             `json:"require_reviewer"`
+	ReviewDefaults       config.Overrides `json:"review_defaults"`
+	SkipBranchSync       bool             `json:"skip_branch_sync"`
+	SyncSourceBranches   []string         `json:"sync_source_branches"`
+	ScoreLabels          bool             `json:"score_labels"`
+	CommitStatus         bool             `json:"commit_status"`
+	ReviewRetentionDays  int              `json:"review_retention_days"`
+	WebhookRetentionDays int              `json:"webhook_retention_days"`
+	DashboardEnabled     bool             `json:"dashboard_enabled"`
+	HideRepos            bool             `json:"hide_repos"`
+	DashboardTitle       string           `json:"dashboard_title"`
+}
+
+func intOr(v, def int) *int {
+	if v == 0 {
+		v = def
+	}
+	return &v
 }
 
 func cleanList(in []string) []string {
@@ -412,6 +426,7 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		Allowlist: &req.Allowlist, RequireReviewer: &req.RequireReviewer, ReviewDefaults: req.ReviewDefaults,
 		SkipBranchSync: &req.SkipBranchSync, SyncSourceBranches: cleanList(req.SyncSourceBranches),
 		ScoreLabels: &req.ScoreLabels, CommitStatus: &req.CommitStatus,
+		ReviewRetentionDays: intOr(req.ReviewRetentionDays, 180), WebhookRetentionDays: intOr(req.WebhookRetentionDays, 14),
 		DashboardEnabled: &req.DashboardEnabled, HideRepos: &req.HideRepos, DashboardTitle: strings.TrimSpace(req.DashboardTitle),
 	}
 	if st.DashboardTitle == "" {
@@ -685,4 +700,136 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "message": "connected as @" + user})
+}
+
+// ---- reviews and metrics ----
+
+func parseDay(v string) time.Time {
+	if t, err := time.Parse("2006-01-02", v); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
+// apiListReviews is the full review history with filters.
+func (a *Admin) apiListReviews(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	q := r.URL.Query()
+	f := store.JobFilter{Platform: q.Get("platform"), Host: q.Get("host"), RepoLike: strings.TrimSpace(q.Get("repo")),
+		State: q.Get("state"), Kind: q.Get("kind"), Trigger: q.Get("trigger"), From: parseDay(q.Get("from")), Limit: 100}
+	if to := parseDay(q.Get("to")); !to.IsZero() {
+		if len(q.Get("to")) == 10 {
+			to = to.Add(24 * time.Hour) // a date means "through that day"
+		}
+		f.To = to
+	}
+	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 && n <= 500 {
+		f.Limit = n
+	}
+	if id, err := strconv.ParseInt(q.Get("before"), 10, 64); err == nil && id > 0 {
+		f.BeforeID = id
+	}
+	jobs, err := a.store.ListJobs(r.Context(), f)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reviews": jobs, "can_review": a.Reviewer != nil})
+}
+
+func (a *Admin) apiGetReview(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	j, err := a.store.GetJob(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "review not found"})
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, j)
+}
+
+type reviewNowReq struct {
+	URL  string `json:"url"`
+	Full bool   `json:"full"`
+}
+
+func (a *Admin) queueReview(w http.ResponseWriter, r *http.Request, s *store.Session, ref vcs.Ref, full bool) {
+	if a.Reviewer == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "reviews cannot be started from this panel"})
+		return
+	}
+	if err := a.Reviewer.ReviewNow(r.Context(), ref, full, s.Email); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	_ = a.store.Audit(r.Context(), s.Email, "review.request", ref.String(), map[string]any{"full": full})
+	a.logger.Info("admin requested a review", "by", s.Email, "pr", ref.String(), "full", full)
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued", "pr": ref.String()})
+}
+
+// apiReviewNow reviews a pull/merge request by URL.
+func (a *Admin) apiReviewNow(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	var req reviewNowReq
+	if !decode(w, r, &req) {
+		return
+	}
+	ref, err := vcs.ParseURL(req.URL)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "paste a pull request or merge request URL: " + err.Error()})
+		return
+	}
+	a.queueReview(w, r, s, ref, req.Full)
+}
+
+// apiRerun reviews the pull/merge request of a past review again.
+func (a *Admin) apiRerun(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	var req reviewNowReq
+	if r.ContentLength > 0 && !decode(w, r, &req) {
+		return
+	}
+	j, err := a.store.GetJob(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "review not found"})
+		return
+	}
+	a.queueReview(w, r, s, vcs.Ref{Platform: j.Platform, Host: j.Host, Repo: j.Repo, Number: j.Number}, req.Full)
+}
+
+// apiMetrics returns rollup buckets for charts. Defaults: daily, last 30 days.
+func (a *Admin) apiMetrics(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	q := r.URL.Query()
+	g := q.Get("granularity")
+	span := map[string]time.Duration{store.Hourly: 48 * time.Hour, store.Daily: 30 * 24 * time.Hour, store.Monthly: 365 * 24 * time.Hour}
+	if _, ok := span[g]; !ok {
+		g = store.Daily
+	}
+	to := time.Now().UTC()
+	from := to.Add(-span[g])
+	if t := parseDay(q.Get("from")); !t.IsZero() {
+		from = t
+	}
+	if t := parseDay(q.Get("to")); !t.IsZero() {
+		to = t.Add(24 * time.Hour)
+	}
+	points, err := a.store.Metrics(r.Context(), store.MetricsFilter{Granularity: g, From: from, To: to,
+		Platform: q.Get("platform"), Host: q.Get("host"), Repo: q.Get("repo")})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"granularity": g, "from": from, "to": to, "points": points})
 }

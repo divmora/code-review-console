@@ -120,7 +120,7 @@ func (s *Server) recordHooks(platform string, h http.HandlerFunc) http.HandlerFu
 type hookWriter struct {
 	st        store.Store
 	logger    *slog.Logger
-	retention time.Duration
+	retention func() time.Duration
 	ch        chan store.WebhookEvent
 	done      chan struct{}
 	stopOnce  sync.Once
@@ -128,7 +128,7 @@ type hookWriter struct {
 	dropped   int
 }
 
-func newHookWriter(st store.Store, retention time.Duration, logger *slog.Logger) *hookWriter {
+func newHookWriter(st store.Store, retention func() time.Duration, logger *slog.Logger) *hookWriter {
 	w := &hookWriter{st: st, logger: logger, retention: retention, ch: make(chan store.WebhookEvent, 2000), done: make(chan struct{})}
 	go w.loop()
 	return w
@@ -191,7 +191,7 @@ func (w *hookWriter) loop() {
 func (w *hookWriter) prune() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if n, err := w.st.PruneWebhookEvents(ctx, time.Now().Add(-w.retention), maxStoredHooks); err != nil {
+	if n, err := w.st.PruneWebhookEvents(ctx, time.Now().Add(-w.retention()), maxStoredHooks); err != nil {
 		w.logger.Warn("could not prune webhook history", "error", err)
 	} else if n > 0 {
 		w.logger.Info("pruned webhook history", "deleted", n)

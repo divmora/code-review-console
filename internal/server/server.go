@@ -49,6 +49,35 @@ type Server struct {
 	hooks *hookWriter
 	// settings are the runtime settings (config defaults + admin changes).
 	settings *settings.Service
+	// stopPrune ends the review-history cleanup loop.
+	stopPrune chan struct{}
+	stopOnce  sync.Once
+}
+
+// hourlyMetricsKept is how long hourly rollups are kept; daily and monthly
+// rollups are kept forever (a few rows per repository per day).
+const hourlyMetricsKept = 90 * 24 * time.Hour
+
+// pruneLoop deletes review history older than the retention setting, once
+// at start and then hourly.
+func (s *Server) pruneLoop() {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ret := s.settings.Get(ctx).ReviewRetention()
+		if n, err := s.store.PruneJobs(ctx, time.Now().Add(-ret), time.Now().Add(-hourlyMetricsKept)); err != nil {
+			s.logger.Warn("could not prune review history", "error", err)
+		} else if n > 0 {
+			s.logger.Info("pruned review history", "deleted", n, "retention", ret.String())
+		}
+		cancel()
+		select {
+		case <-s.stopPrune:
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // Deps are optional components built by the caller.
@@ -103,7 +132,9 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 	if s.store != nil {
 		s.queue.OnFinish = s.persistJob
 		s.loadHistory()
-		s.hooks = newHookWriter(s.store, cfg.Server.WebhookRetention, logger)
+		s.hooks = newHookWriter(s.store, func() time.Duration { return s.settings.Get(context.Background()).WebhookRetention() }, logger)
+		s.stopPrune = make(chan struct{})
+		go s.pruneLoop()
 	}
 	return s, nil
 }
@@ -255,6 +286,9 @@ func (s *Server) overrides(acc store.Access) *config.Overrides {
 func (s *Server) Close() {
 	if s.hooks != nil {
 		s.hooks.close()
+	}
+	if s.stopPrune != nil {
+		s.stopOnce.Do(func() { close(s.stopPrune) })
 	}
 }
 

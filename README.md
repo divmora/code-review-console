@@ -14,6 +14,12 @@ The control plane for [code-review-bot](https://github.com/divmora/code-review-b
 - **Chat commands**: `@codereview review`, `full review`, `help`, or any question in a PR comment. The handle is configurable with `bot_name`.
 - **Admin** with OIDC single sign-on: a repository allowlist with group and pattern rules, review settings per group or repository, an audit log and persistent history in PostgreSQL.
 
+### Reviews, history and metrics
+
+The **Reviews** page lists every finished review, answer and help job from the database, with filters (host, repository, state, kind, trigger, dates). A review's details show its summary, scores, findings, what verification removed, and errors; **Re-run** reviews the same pull request again (new changes or full), and **Review now** reviews any PR/MR by URL on a configured host (allowlist, reviewer and branch-sync rules do not apply to these explicit requests).
+
+Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host and repository) that are updated as each job finishes, so they never scan the history. Review history is kept for 180 days by default and webhook deliveries for 14 (both in **Settings**); hourly rollups are kept 90 days, daily and monthly totals for good.
+
 ### Code hosts (GitHub, GitLab, Bitbucket)
 
 Hosts are managed under **Code hosts** in the admin panel: github.com or GitHub Enterprise (token or GitHub App), gitlab.com or self-managed GitLab, and Bitbucket Cloud (access token, or account email plus API token). Each host shows the webhook URL to configure (`/webhooks/github`, `/webhooks/gitlab`, `/webhooks/bitbucket`) and the events to send, and a **Test** button that checks the token.

@@ -37,29 +37,29 @@ type Repo struct {
 
 // Job is a finished background job (review, answer, help).
 type Job struct {
-	ID          int64
-	RequestedBy string // admin who triggered it from the UI, if any
+	ID          int64  `json:"id"`
+	RequestedBy string `json:"requested_by"` // admin who triggered it from the UI, if any
 	// Result is the review result JSON (summary, findings), when stored.
-	Result    json.RawMessage
-	Kind      string
-	Platform  string
-	Host      string
-	Repo      string
-	Number    int
-	URL       string
-	Trigger   string
-	State     string
-	Enqueued  time.Time
-	Started   time.Time
-	Finished  time.Time
-	Merged    int
-	Error     string
-	Note      string
-	Comments  int
-	Files     int
-	TokensIn  int
-	TokensOut int
-	Model     string
+	Result    json.RawMessage `json:"result,omitempty"`
+	Kind      string          `json:"kind"`
+	Platform  string          `json:"platform"`
+	Host      string          `json:"host"`
+	Repo      string          `json:"repo"`
+	Number    int             `json:"number"`
+	URL       string          `json:"url"`
+	Trigger   string          `json:"trigger"`
+	State     string          `json:"state"`
+	Enqueued  time.Time       `json:"enqueued"`
+	Started   time.Time       `json:"started"`
+	Finished  time.Time       `json:"finished"`
+	Merged    int             `json:"merged"`
+	Error     string          `json:"error"`
+	Note      string          `json:"note"`
+	Comments  int             `json:"comments"`
+	Files     int             `json:"files"`
+	TokensIn  int             `json:"tokens_in"`
+	TokensOut int             `json:"tokens_out"`
+	Model     string          `json:"model"`
 }
 
 // HostRow is a code host as stored: Config holds non-secret settings and
@@ -130,11 +130,47 @@ type Session struct {
 // JobFilter narrows ListJobs. Zero values match everything.
 type JobFilter struct {
 	Platform string
+	Host     string
 	Repo     string // exact "owner/repo" or "group/project"
+	RepoLike string // substring, case-insensitive
 	State    string
 	Kind     string
-	BeforeID int64 // pagination: only jobs with id < BeforeID
+	Trigger  string
+	From, To time.Time // finished within [From, To)
+	BeforeID int64     // pagination: only jobs with id < BeforeID
 	Limit    int
+}
+
+// Metric granularities.
+const (
+	Hourly  = "hour"
+	Daily   = "day"
+	Monthly = "month"
+)
+
+// MetricsFilter selects rollup rows. Empty Platform/Host/Repo sum over all.
+type MetricsFilter struct {
+	Granularity string
+	From, To    time.Time
+	Platform    string
+	Host        string
+	Repo        string
+}
+
+// MetricPoint is one bucket of finished jobs. Rollups are kept per bucket,
+// host and repository and updated as each job finishes, so charts never
+// scan the jobs table.
+type MetricPoint struct {
+	Bucket     time.Time `json:"bucket"`
+	Jobs       int       `json:"jobs"`
+	Done       int       `json:"done"`
+	Skipped    int       `json:"skipped"`
+	Failed     int       `json:"failed"`
+	Comments   int       `json:"comments"`
+	Files      int       `json:"files"`
+	TokensIn   int64     `json:"tokens_in"`
+	TokensOut  int64     `json:"tokens_out"`
+	DurationMS int64     `json:"duration_ms"`
 }
 
 // ModelProfile is a model configuration managed in the UI. It never holds
@@ -189,7 +225,13 @@ type Store interface {
 	// keep rows.
 	PruneWebhookEvents(ctx context.Context, before time.Time, keep int) (int64, error)
 
+	// InsertJob saves a finished job and adds it to the metric rollups.
 	InsertJob(ctx context.Context, j Job) (int64, error)
+	// Metrics returns rollup buckets, oldest first.
+	Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, error)
+	// PruneJobs deletes jobs finished before a time, and hourly rollups
+	// older than hourlyBefore (daily and monthly rollups are kept).
+	PruneJobs(ctx context.Context, before, hourlyBefore time.Time) (int64, error)
 	RecentJobs(ctx context.Context, limit int) ([]Job, error)
 	// ListJobs returns jobs newest first, without Result.
 	ListJobs(ctx context.Context, f JobFilter) ([]Job, error)
@@ -372,6 +414,34 @@ var migrations = []string{
 		updated_by  text NOT NULL DEFAULT '',
 		UNIQUE (platform, host)
 	);`,
+	// 7: metric rollups (hour, day, month) and indexes for review history
+	`CREATE TABLE job_metrics (
+		granularity  text NOT NULL,
+		bucket       timestamptz NOT NULL,
+		platform     text NOT NULL,
+		host         text NOT NULL,
+		repo         text NOT NULL,
+		jobs         integer NOT NULL DEFAULT 0,
+		done         integer NOT NULL DEFAULT 0,
+		skipped      integer NOT NULL DEFAULT 0,
+		failed       integer NOT NULL DEFAULT 0,
+		comments     integer NOT NULL DEFAULT 0,
+		files        integer NOT NULL DEFAULT 0,
+		tokens_in    bigint NOT NULL DEFAULT 0,
+		tokens_out   bigint NOT NULL DEFAULT 0,
+		duration_ms  bigint NOT NULL DEFAULT 0,
+		PRIMARY KEY (granularity, bucket, platform, host, repo)
+	);
+	CREATE INDEX job_metrics_bucket_idx ON job_metrics (granularity, bucket);
+	INSERT INTO job_metrics (granularity, bucket, platform, host, repo, jobs, done, skipped, failed, comments, files, tokens_in, tokens_out, duration_ms)
+	SELECT g, date_trunc(g, finished AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', platform, host, lower(repo), count(*),
+		count(*) FILTER (WHERE state = 'done'), count(*) FILTER (WHERE state = 'skipped'), count(*) FILTER (WHERE state = 'failed'),
+		sum(comments), sum(files), sum(tokens_in), sum(tokens_out),
+		coalesce(sum(extract(epoch FROM (finished - started)) * 1000) FILTER (WHERE started IS NOT NULL), 0)::bigint
+	FROM jobs, unnest(ARRAY['hour', 'day', 'month']) AS g
+	GROUP BY 1, 2, 3, 4, 5;
+	CREATE INDEX jobs_host_idx ON jobs (platform, host, id DESC);
+	CREATE INDEX jobs_state_idx ON jobs (state, id DESC);`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -875,15 +945,88 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	if len(j.Result) > 0 {
 		result = []byte(j.Result)
 	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
 	var id int64
-	err := p.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
 			merged, error, note, comments, files, tokens_in, tokens_out, model, result, requested_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING id`,
 		j.Kind, j.Platform, j.Host, j.Repo, j.Number, j.URL, j.Trigger, j.State, j.Enqueued, nullTime(j.Started), j.Finished,
 		j.Merged, j.Error, j.Note, j.Comments, j.Files, j.TokensIn, j.TokensOut, j.Model, result, j.RequestedBy).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	var durMS int64
+	if !j.Started.IsZero() {
+		durMS = j.Finished.Sub(j.Started).Milliseconds()
+	}
+	is := func(s string) int {
+		if j.State == s {
+			return 1
+		}
+		return 0
+	}
+	// One row per granularity; buckets are UTC.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO job_metrics (granularity, bucket, platform, host, repo, jobs, done, skipped, failed, comments, files, tokens_in, tokens_out, duration_ms)
+		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12
+		FROM unnest(ARRAY['hour', 'day', 'month']) AS g
+		ON CONFLICT (granularity, bucket, platform, host, repo) DO UPDATE SET
+			jobs = job_metrics.jobs + 1, done = job_metrics.done + EXCLUDED.done, skipped = job_metrics.skipped + EXCLUDED.skipped,
+			failed = job_metrics.failed + EXCLUDED.failed, comments = job_metrics.comments + EXCLUDED.comments,
+			files = job_metrics.files + EXCLUDED.files, tokens_in = job_metrics.tokens_in + EXCLUDED.tokens_in,
+			tokens_out = job_metrics.tokens_out + EXCLUDED.tokens_out, duration_ms = job_metrics.duration_ms + EXCLUDED.duration_ms`,
+		j.Finished, j.Platform, j.Host, j.Repo, is("done"), is("skipped"), is("failed"), j.Comments, j.Files, j.TokensIn, j.TokensOut, durMS); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit(ctx)
+}
+
+func (p *Postgres) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, error) {
+	switch f.Granularity {
+	case Hourly, Daily, Monthly:
+	default:
+		return nil, fmt.Errorf("granularity %q: want hour, day or month", f.Granularity)
+	}
+	q := `SELECT bucket, sum(jobs), sum(done), sum(skipped), sum(failed), sum(comments), sum(files), sum(tokens_in), sum(tokens_out), sum(duration_ms)
+		FROM job_metrics WHERE granularity = $1 AND bucket >= $2 AND bucket < $3`
+	args := []any{f.Granularity, f.From, f.To}
+	for _, c := range []struct{ col, v string }{{"platform", f.Platform}, {"host", strings.ToLower(f.Host)}, {"repo", strings.ToLower(f.Repo)}} {
+		if c.v != "" {
+			args = append(args, c.v)
+			q += fmt.Sprintf(" AND %s = $%d", c.col, len(args))
+		}
+	}
+	rows, err := p.pool.Query(ctx, q+" GROUP BY bucket ORDER BY bucket", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MetricPoint{}
+	for rows.Next() {
+		var m MetricPoint
+		if err := rows.Scan(&m.Bucket, &m.Jobs, &m.Done, &m.Skipped, &m.Failed, &m.Comments, &m.Files, &m.TokensIn, &m.TokensOut, &m.DurationMS); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) PruneJobs(ctx context.Context, before, hourlyBefore time.Time) (int64, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM jobs WHERE finished < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := p.pool.Exec(ctx, `DELETE FROM job_metrics WHERE granularity = 'hour' AND bucket < $1`, hourlyBefore); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 const jobCols = `id, kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
@@ -932,6 +1075,21 @@ func (p *Postgres) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	}
 	if f.Repo != "" {
 		add("lower(repo) = lower($%d)", f.Repo)
+	}
+	if f.Host != "" {
+		add("host = lower($%d)", f.Host)
+	}
+	if f.RepoLike != "" {
+		add("repo ILIKE $%d", "%"+likeEscape(f.RepoLike)+"%")
+	}
+	if f.Trigger != "" {
+		add("trigger = $%d", f.Trigger)
+	}
+	if !f.From.IsZero() {
+		add("finished >= $%d", f.From)
+	}
+	if !f.To.IsZero() {
+		add("finished < $%d", f.To)
 	}
 	if f.State != "" {
 		add("state = $%d", f.State)

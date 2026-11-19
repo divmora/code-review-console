@@ -43,6 +43,9 @@ type Stored struct {
 	// ScoreLabels and CommitStatus control what a review posts.
 	ScoreLabels  *bool `json:"score_labels,omitempty"`
 	CommitStatus *bool `json:"commit_status,omitempty"`
+	// Retention in days for review history and webhook deliveries.
+	ReviewRetentionDays  *int `json:"review_retention_days,omitempty"`
+	WebhookRetentionDays *int `json:"webhook_retention_days,omitempty"`
 	// Dashboard: the status page at /dashboard.
 	DashboardEnabled *bool  `json:"dashboard_enabled,omitempty"`
 	HideRepos        *bool  `json:"hide_repos,omitempty"`
@@ -52,17 +55,19 @@ type Stored struct {
 // Effective is what the console uses now, with where each value came from
 // ("database", or "config" when it was never saved).
 type Effective struct {
-	Allowlist          bool              `json:"allowlist"`
-	RequireReviewer    bool              `json:"require_reviewer"`
-	ReviewDefaults     config.Overrides  `json:"review_defaults"`
-	SkipBranchSync     bool              `json:"skip_branch_sync"`
-	SyncSourceBranches []string          `json:"sync_source_branches"`
-	ScoreLabels        bool              `json:"score_labels"`
-	CommitStatus       bool              `json:"commit_status"`
-	DashboardEnabled   bool              `json:"dashboard_enabled"`
-	HideRepos          bool              `json:"hide_repos"`
-	DashboardTitle     string            `json:"dashboard_title"`
-	Source             map[string]string `json:"source"`
+	Allowlist            bool              `json:"allowlist"`
+	RequireReviewer      bool              `json:"require_reviewer"`
+	ReviewDefaults       config.Overrides  `json:"review_defaults"`
+	SkipBranchSync       bool              `json:"skip_branch_sync"`
+	SyncSourceBranches   []string          `json:"sync_source_branches"`
+	ScoreLabels          bool              `json:"score_labels"`
+	CommitStatus         bool              `json:"commit_status"`
+	ReviewRetentionDays  int               `json:"review_retention_days"`
+	WebhookRetentionDays int               `json:"webhook_retention_days"`
+	DashboardEnabled     bool              `json:"dashboard_enabled"`
+	HideRepos            bool              `json:"hide_repos"`
+	DashboardTitle       string            `json:"dashboard_title"`
+	Source               map[string]string `json:"source"`
 }
 
 // Service resolves settings. It is safe for concurrent use; a nil store
@@ -89,7 +94,9 @@ func (s *Service) Defaults() Effective {
 		Allowlist: s.cfg.Repos.Allowlist, RequireReviewer: s.cfg.Repos.RequireReviewer,
 		SkipBranchSync: skip, SyncSourceBranches: append([]string{}, s.cfg.Repos.SyncSourceBranches...),
 		ScoreLabels: s.cfg.Repos.ScoreLabels, CommitStatus: s.cfg.Repos.CommitStatus,
-		DashboardEnabled: d.Enabled, HideRepos: d.HideRepos, DashboardTitle: d.Title,
+		ReviewRetentionDays:  days(s.cfg.Server.ReviewRetention, 180),
+		WebhookRetentionDays: days(s.cfg.Server.WebhookRetention, 14),
+		DashboardEnabled:     d.Enabled, HideRepos: d.HideRepos, DashboardTitle: d.Title,
 		Source: map[string]string{},
 	}
 }
@@ -147,6 +154,14 @@ func (s *Service) resolve(st Stored) Effective {
 	pick("skip_branch_sync", &e.SkipBranchSync, st.SkipBranchSync)
 	pick("score_labels", &e.ScoreLabels, st.ScoreLabels)
 	pick("commit_status", &e.CommitStatus, st.CommitStatus)
+	pickInt := func(name string, dst *int, v *int) {
+		e.Source[name] = "config"
+		if v != nil {
+			*dst, e.Source[name] = *v, "database"
+		}
+	}
+	pickInt("review_retention_days", &e.ReviewRetentionDays, st.ReviewRetentionDays)
+	pickInt("webhook_retention_days", &e.WebhookRetentionDays, st.WebhookRetentionDays)
 	e.Source["sync_source_branches"] = "config"
 	if st.SyncSourceBranches != nil {
 		e.SyncSourceBranches, e.Source["sync_source_branches"] = st.SyncSourceBranches, "database"
@@ -158,6 +173,23 @@ func (s *Service) resolve(st Stored) Effective {
 	}
 	e.ReviewDefaults = st.ReviewDefaults
 	return e
+}
+
+func days(d time.Duration, def int) int {
+	if d <= 0 {
+		return def
+	}
+	return max(1, int(d.Hours()/24))
+}
+
+// ReviewRetention and WebhookRetention as durations.
+func (e Effective) ReviewRetention() time.Duration {
+	return time.Duration(max(1, e.ReviewRetentionDays)) * 24 * time.Hour
+}
+
+// WebhookRetention is how long webhook deliveries are kept.
+func (e Effective) WebhookRetention() time.Duration {
+	return time.Duration(max(1, e.WebhookRetentionDays)) * 24 * time.Hour
 }
 
 // Base is the global level for store.Resolve.
@@ -204,6 +236,7 @@ func (s *Service) Seed(ctx context.Context) (seeded bool, differs []string, err 
 		init := Stored{Allowlist: &d.Allowlist, RequireReviewer: &d.RequireReviewer,
 			SkipBranchSync: &d.SkipBranchSync, SyncSourceBranches: d.SyncSourceBranches,
 			ScoreLabels: &d.ScoreLabels, CommitStatus: &d.CommitStatus,
+			ReviewRetentionDays: &d.ReviewRetentionDays, WebhookRetentionDays: &d.WebhookRetentionDays,
 			DashboardEnabled: &d.DashboardEnabled, HideRepos: &d.HideRepos, DashboardTitle: d.DashboardTitle}
 		_, err := s.Put(ctx, init, SeedActor)
 		return err == nil, nil, err
@@ -233,6 +266,11 @@ func (st Stored) Validate(profiles map[string]bool, haveStore bool) error {
 	}
 	if strings.ContainsAny(st.DashboardTitle, "<>") {
 		return errors.New("dashboard title cannot contain < or >")
+	}
+	for name, v := range map[string]*int{"review retention": st.ReviewRetentionDays, "webhook retention": st.WebhookRetentionDays} {
+		if v != nil && (*v < 1 || *v > 3650) {
+			return fmt.Errorf("%s must be between 1 and 3650 days", name)
+		}
 	}
 	if len(st.SyncSourceBranches) > 50 {
 		return errors.New("at most 50 sync source branches")
