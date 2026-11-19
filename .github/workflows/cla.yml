@@ -1,0 +1,24 @@
+name: CLA
+
+# Contributors sign CLA.md (this repository's own CLA). Signatures are kept
+# in divmora/cla-signatures under signatures/repos/code-review-console/.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    uses: divmora/.github/.github/workflows/cla-bsl.yml@main
+    with:
+      cla-document: https://github.com/divmora/code-review-console/blob/main/CLA.md
+    secrets:
+      CLA_PAT: ${{ secrets.CLA_PAT }}
