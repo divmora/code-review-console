@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/divmora/code-review-console/compare/v0.3.0...v0.3.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **license:** plans include their features ([b4529ed](https://github.com/divmora/code-review-console/commit/b4529ed2b3075e2aff88fb47bfab7618a2869854))
+
 ## [0.3.0](https://github.com/divmora/code-review-console/compare/v0.2.0...v0.3.0) (2026-11-19)
 
 
