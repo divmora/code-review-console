@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code review admin</title>
+<script nonce="{{.Nonce}}">
+// Apply the saved theme before the page paints. "system" follows the OS.
+(function () {
+  try {
+    var t = localStorage.getItem("crc-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style nonce="{{.Nonce}}">
+:root {
+  color-scheme: light;
+  --bg: #f7f7f8; --panel: #ffffff; --text: #1d1d22; --muted: #6b6b76; --line: #e4e4e9;
+  --accent: #5b4fd6; --accent-text: #ffffff; --ok: #1f8a4c; --ok-bg: #e6f4ec; --bad: #c4352b; --bad-bg: #fbe7e5;
+  --idle-bg: #efeff3; --input: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111114; --panel: #1a1a1f; --text: #ececf1; --muted: #9a9aa6; --line: #2b2b33;
+    --accent: #8f86ff; --accent-text: #111114; --ok: #4cc584; --ok-bg: #16301f; --bad: #f07067; --bad-bg: #3a1b19;
+    --idle-bg: #24242b; --input: #141418;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+    --bg: #111114; --panel: #1a1a1f; --text: #ececf1; --muted: #9a9aa6; --line: #2b2b33;
+    --accent: #8f86ff; --accent-text: #111114; --ok: #4cc584; --ok-bg: #16301f; --bad: #f07067; --bad-bg: #3a1b19;
+    --idle-bg: #24242b; --input: #141418;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.layout { display: grid; grid-template-columns: 228px minmax(0, 1fr); min-height: 100vh; }
+aside { background: var(--panel); border-right: 1px solid var(--line); padding: 18px 12px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 14px; }
+.brand { font-weight: 700; font-size: 15px; padding: 0 10px; }
+.brand span { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+.side a { display: block; padding: 7px 10px; border-radius: 7px; color: var(--text); text-decoration: none; }
+.side a:hover { background: var(--idle-bg); }
+.side a.on { background: var(--idle-bg); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.me { margin-top: auto; font-size: 12px; color: var(--muted); padding: 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.me a { color: var(--muted); }
+.themepick { display: flex; align-items: center; gap: 6px; }
+.themepick select { padding: 3px 6px; font-size: 12px; }
+main { max-width: 1180px; width: 100%; padding: 24px 24px 48px; }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 16px; }
+  .side { display: flex; gap: 4px; overflow-x: auto; }
+  .side a { white-space: nowrap; }
+  .me { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  main { padding: 16px 16px 40px; }
+}
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+h1 { font-size: 20px; margin: 0; }
+.sub { color: var(--muted); font-size: 13px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+input, select, textarea { background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; font: inherit; }
+textarea { width: 100%; min-height: 70px; resize: vertical; }
+button.btn { background: var(--idle-bg); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; font: inherit; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--bad); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 720px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+.plat { font-size: 12px; color: var(--muted); }
+.muted { color: var(--muted); }
+.chip { display: inline-block; background: var(--idle-bg); border-radius: 999px; padding: 0 8px; margin: 1px 2px 1px 0; font-size: 12px; color: var(--muted); }
+.switch { position: relative; display: inline-block; width: 38px; height: 22px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; inset: 0; background: var(--line); border-radius: 22px; cursor: pointer; transition: background .15s; }
+.slider:before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
+.switch input:checked + .slider { background: var(--ok); }
+.switch input:checked + .slider:before { transform: translateX(16px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+.editor td { background: var(--bg); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 14px; margin-bottom: 10px; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.toast { position: fixed; right: 16px; bottom: 16px; padding: 10px 14px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0,0,0,.12); display: none; max-width: 360px; }
+.toast.err { border-color: var(--bad); color: var(--bad); }
+.empty { padding: 18px 12px; color: var(--muted); }
+pre.detail { margin: 0; font-size: 12px; white-space: pre-wrap; color: var(--muted); max-width: 520px; }
+.hidden { display: none; }
+.spacer { flex: 1; }
+.pad { padding: 12px; margin-bottom: 12px; }
+.mt { margin-top: 10px; }
+.state { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 600; }
+.state.on { background: var(--ok-bg); color: var(--ok); }
+.state.off { background: var(--bad-bg); color: var(--bad); }
+.state.idle { background: var(--idle-bg); color: var(--muted); }
+td.reason { max-width: 380px; color: var(--muted); font-size: 13px; }
+.nowrap { white-space: nowrap; }
+.why { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.h2 { font-size: 15px; margin: 0 0 10px; }
+code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="layout">
+<aside>
+  <div class="brand">Code review<span>Divmora console</span></div>
+  <nav class="side" aria-label="Sections">
+    <a href="/admin/repositories" data-tab="repos">Repositories</a>
+    <a href="/admin/rules" data-tab="rules">Hosts &amp; groups</a>
+    <a href="/admin/webhooks" data-tab="hooks">Webhooks</a>
+    <a href="/admin/settings" data-tab="settings">Settings</a>
+    <a href="/admin/audit" data-tab="audit">Audit log</a>
+  </nav>
+  <div class="me">
+    <span>Signed in as {{.Name}}</span>
+    <a href="/dashboard">Status dashboard</a>
+    <label class="themepick">Theme <select id="theme" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <button class="btn" id="logout">Sign out</button>
+  </div>
+</aside>
+<main>
+  <header><h1 id="pageTitle">Repositories</h1></header>
+
+  <section id="tab-repos">
+    <div class="bar">
+      <input id="q" type="search" placeholder="Filter repositories" aria-label="Filter repositories">
+      <select id="show" aria-label="Show">
+        <option value="all">All</option>
+        <option value="on">Enabled</option>
+        <option value="off">Disabled</option>
+      </select>
+      <span class="sub" id="counts"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="addToggle">Add repository</button>
+    </div>
+    <div class="panel hidden pad" id="addForm">
+      <div class="grid">
+        <label class="f">Platform<select id="aPlat"><option value="github">GitHub</option><option value="gitlab">GitLab</option></select></label>
+        <label class="f">Host<input id="aHost" placeholder="github.com"></label>
+        <label class="f">Repository path<input id="aPath" placeholder="owner/repo or group/sub/project"></label>
+        <label class="f">Reviews<select id="aEn"><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="inherit">Inherit from rules</option></select></label>
+      </div>
+      <button class="btn primary" id="aSave">Add</button>
+    </div>
+    <div class="panel" id="repos"><div class="empty">Loading…</div></div>
+    <p class="sub">Repositories appear here automatically when they send their first webhook, set to <b>Inherit</b>: they follow the most specific group or pattern rule, and otherwise the default (<span id="defaultNote"></span>). Choosing Enabled or Disabled here overrides every rule. Settings here override the rules' settings and the repository's own <code>.codereview.yaml</code>.</p>
+    <p class="sub hidden" id="reviewerNote"><b>Reviewer required:</b> even in an enabled repository, a merge request is reviewed only when the bot user is one of its reviewers. Adding the bot as a reviewer starts a review; <code>@codereview review</code> comments still work.</p>
+  </section>
+
+  <section id="tab-rules" class="hidden">
+    <div class="bar">
+      <span class="sub">Defaults for a whole host, or for a group, organisation or name pattern on a host.</span>
+      <span class="spacer"></span>
+      <button class="btn" id="rAddToggle">Add rule</button>
+    </div>
+    <div class="panel hidden pad" id="rAddForm">
+      <div class="grid">
+        <label class="f">Platform<select id="rPlat"><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></label>
+        <label class="f">Host<input id="rHost" placeholder="gitlab.com"></label>
+        <label class="f">Group, owner or pattern<input id="rPat" placeholder="empty = whole host · acme · acme/svc-*"></label>
+        <label class="f">Reviews<select id="rEn"><option value="">Inherit</option><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+      </div>
+      <button class="btn primary" id="rSave">Add rule</button>
+    </div>
+    <div class="panel" id="rules"><div class="empty">Loading…</div></div>
+    <p class="sub">Levels, broadest first: <b>Settings</b> (everything) → <b>whole host</b> (empty pattern) → <b>group or owner</b> (<code>acme</code>, <code>acme/platform</code>, subgroups included) or <b>pattern</b> (<code>acme/svc-*</code>; <code>*</code> stays within one level) → <b>repository</b>. For each setting the most specific level that sets it wins; <b>Inherit</b> means "use the level above". Review settings add up the same way. Hosts are separate: a rule for <code>acme</code> on one host never touches <code>acme</code> on another.</p>
+  </section>
+
+  <section id="tab-hooks" class="hidden">
+    <div class="bar">
+      <input id="hQ" type="search" placeholder="Filter by project" aria-label="Filter webhooks by project">
+      <select id="hOut" aria-label="Outcome">
+        <option value="">All outcomes</option>
+        <option value="queued">Queued</option>
+        <option value="ignored">Ignored</option>
+        <option value="duplicate">Duplicate</option>
+        <option value="rejected">Rejected</option>
+        <option value="error">Error</option>
+      </select>
+      <span class="sub" id="hCounts"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="hRefresh">Refresh</button>
+    </div>
+    <div class="panel" id="hooks"><div class="empty">Loading…</div></div>
+    <div class="bar mt"><button class="btn hidden" id="hMore">Load older</button></div>
+    <p class="sub">Every webhook delivery and what the console did with it. <b>Ignored</b> is normal for events that should not start a review (approvals, label or reviewer changes, edits without new commits) and for repositories that are not enabled. <b>Rejected</b> means the signature or token did not match. History is kept for <code>server.webhook_retention</code> (14 days by default).</p>
+  </section>
+
+  <section id="tab-settings" class="hidden">
+    <div class="panel pad">
+      <h2 class="h2">Repository access</h2>
+      <div class="grid">
+        <label class="f">Repositories no rule matches
+          <select id="sAllow"><option value="true">Not reviewed (allowlist on)</option><option value="false">Reviewed (allowlist off)</option></select>
+        </label>
+        <label class="f">Who asks for a review
+          <select id="sReviewer"><option value="false">Any opened MR or push</option><option value="true">Only when the bot is a reviewer</option></select>
+        </label>
+        <label class="f">Branch syncs (source is the default branch)
+          <select id="sSync"><option value="true">Skip</option><option value="false">Review</option></select>
+        </label>
+        <label class="f">Also treat these source branches as syncs
+          <input id="sSyncBranches" placeholder="develop, release/*">
+        </label>
+        <label class="f">Score labels on MRs/PRs
+          <select id="sLabels"><option value="false">Off</option><option value="true">On</option></select>
+        </label>
+        <label class="f">Commit status on the reviewed commit
+          <select id="sStatus"><option value="false">Off</option><option value="true">On</option></select>
+        </label>
+      </div>
+      <h2 class="h2 mt">Status dashboard</h2>
+      <div class="grid">
+        <label class="f">Dashboard<select id="sDash"><option value="true">On</option><option value="false">Off</option></select></label>
+        <label class="f">Repository names<select id="sHide"><option value="false">Shown</option><option value="true">Hidden</option></select></label>
+        <label class="f">Title<input id="sTitle" maxlength="120"></label>
+      </div>
+      <div class="bar mt"><button class="btn primary" id="sSave">Save settings</button><span class="sub" id="sSource"></span></div>
+    </div>
+    <div class="panel pad">
+      <h2 class="h2">Default review settings</h2>
+      <p class="sub">Apply to every repository. Group and pattern rules, then repository settings, override them.</p>
+      <div id="sDefaults"></div>
+    </div>
+    <p class="sub">The config file is the initial configuration: on first start its values are copied here, and from then on these settings are kept in the database. Editing the config file later does not change them; the server log notes any difference. Every change is in the audit log.</p>
+  </section>
+
+  <section id="tab-audit" class="hidden">
+    <div class="panel" id="audit"><div class="empty">Loading…</div></div>
+  </section>
+</main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script nonce="{{.Nonce}}">
+(function () {
+  var themeSel = document.getElementById("theme");
+  if (themeSel) {
+    try { themeSel.value = localStorage.getItem("crc-theme") || "system"; } catch (e) {}
+    themeSel.addEventListener("change", function () {
+      var v = themeSel.value;
+      if (v === "system") document.documentElement.removeAttribute("data-theme");
+      else document.documentElement.setAttribute("data-theme", v);
+      try { localStorage.setItem("crc-theme", v); } catch (e) {}
+    });
+  }
+})();
+(function () {
+  var CSRF = "{{.CSRF}}";
+  var profiles = [];
+  var repos = [];
+  var rules = [];
+  var allowlist = true;
+  var editing = null;
+  var editingRule = null;
+
+  function api(method, path, body) {
+    var opt = { method: method, headers: { "X-CSRF-Token": CSRF }, cache: "no-store" };
+    if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+    return fetch(path, opt).then(function (r) {
+      if (r.status === 401) { location.href = "/admin/login"; throw new Error("signed out"); }
+      return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || ("HTTP " + r.status)); return d; });
+    });
+  }
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === "text") n.textContent = attrs[k];
+      else if (k === "cls") n.className = attrs[k];
+      else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), attrs[k]);
+      else if (attrs[k] !== false && attrs[k] != null) n.setAttribute(k, attrs[k] === true ? "" : attrs[k]);
+    }
+    (kids || []).forEach(function (c) { if (c != null) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return n;
+  }
+  var toastTimer;
+  function toast(msg, err) {
+    var t = document.getElementById("toast");
+    t.textContent = msg; t.className = "toast" + (err ? " err" : ""); t.style.display = "block";
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.style.display = "none"; }, 3500);
+  }
+  function ago(t) {
+    if (!t) return "never";
+    var s = Math.round((Date.now() - new Date(t).getTime()) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  function chips(st) {
+    var out = [];
+    if (st.profile) out.push(st.profile);
+    if (st.max_comments) out.push("max " + st.max_comments);
+    if (st.min_severity) out.push("≥ " + st.min_severity);
+    if (st.model) out.push("model " + st.model);
+    if (st.auto_review === false) out.push("auto review off");
+    if (st.auto_review === true) out.push("auto review on");
+    if (st.drafts === true) out.push("drafts");
+    if (st.instructions) out.push("instructions");
+    if (!out.length) return el("span", { cls: "muted", text: "defaults" });
+    return el("span", null, out.map(function (c) { return el("span", { cls: "chip", text: c }); }));
+  }
+
+  function save(repo, mode, settings) {
+    return api("PUT", "/admin/api/repos/" + repo.id, { mode: mode, settings: settings }).then(function (r) {
+      repos = repos.map(function (x) { return x.id === r.id ? r : x; });
+      render();
+      toast(r.path + ": reviews " + (r.effective.enabled ? "on" : "off") + " (" + r.effective.source + ")");
+    });
+  }
+  function reloadRepos() {
+    return api("GET", "/admin/api/repos").then(function (list) { repos = list; render(); });
+  }
+
+  // settingsEditor renders the shared settings form. onSave gets the new
+  // settings; onRemove (optional) deletes the item.
+  function settingsEditor(st, onSave, removeLabel, onRemove, inheritHint, bare) {
+    st = st || {};
+    function sel(id, opts, val) {
+      return el("select", { id: id }, opts.map(function (o) {
+        return el("option", { value: o[0], selected: String(val === undefined || val === null ? "" : val) === o[0] }, [o[1]]);
+      }));
+    }
+    var tri = [["", "Inherit"], ["true", "On"], ["false", "Off"]];
+    var form = el("div", null, [
+      el("div", { cls: "grid" }, [
+        el("label", { cls: "f" }, ["Review profile", sel("eProf", [["", "Inherit"], ["chill", "Chill"], ["balanced", "Balanced"], ["assertive", "Assertive"]], st.profile)]),
+        el("label", { cls: "f" }, ["Max inline comments", el("input", { id: "eMax", type: "number", min: "0", max: "200", value: st.max_comments || "", placeholder: "Inherit" })]),
+        el("label", { cls: "f" }, ["Minimum severity", sel("eSev", [["", "Inherit"], ["critical", "Critical"], ["major", "Major"], ["minor", "Minor"], ["nitpick", "Nitpick"]], st.min_severity)]),
+        el("label", { cls: "f" }, ["Model profile", sel("eModel", [["", inheritHint || "Server default"]].concat(profiles.map(function (p) { return [p, p]; })), st.model)]),
+        el("label", { cls: "f" }, ["Auto review on push", sel("eAuto", tri, st.auto_review)]),
+        el("label", { cls: "f" }, ["Review draft PRs", sel("eDraft", tri, st.drafts)])
+      ]),
+      el("label", { cls: "f" }, ["Extra review instructions", el("textarea", { id: "eInstr", maxlength: "8000", placeholder: "Appended to the repository's own instructions" }, [st.instructions || ""])]),
+      el("div", { cls: "bar mt" }, [
+        el("button", { cls: "btn primary", text: "Save settings", onclick: function () {
+          function v(id) { return document.getElementById(id).value; }
+          function tb(x) { return x === "" ? undefined : x === "true"; }
+          var s = {};
+          if (v("eProf")) s.profile = v("eProf");
+          if (v("eMax")) s.max_comments = parseInt(v("eMax"), 10);
+          if (v("eSev")) s.min_severity = v("eSev");
+          if (v("eModel")) s.model = v("eModel");
+          if (tb(v("eAuto")) !== undefined) s.auto_review = tb(v("eAuto"));
+          if (tb(v("eDraft")) !== undefined) s.drafts = tb(v("eDraft"));
+          if (v("eInstr").trim()) s.instructions = v("eInstr").trim();
+          onSave(s);
+        } }),
+        el("button", { cls: "btn", text: "Cancel", onclick: function () { editing = null; editingRule = null; render(); renderRules(); if (current) renderSettings(); } }),
+        el("span", { cls: "spacer" }),
+        onRemove ? el("button", { cls: "btn danger", text: removeLabel, onclick: onRemove }) : null
+      ])
+    ]);
+    if (bare) return form;
+    return el("tr", { cls: "editor" }, [el("td", { colspan: "6" }, [form])]);
+  }
+
+  function editor(repo) {
+    return settingsEditor(repo.settings, function (s) {
+      save(repo, repo.mode, s).then(function () { editing = null; render(); toast("Saved settings for " + repo.path); })
+        .catch(function (e) { toast(e.message, true); });
+    }, "Remove", function () {
+      if (!confirm("Remove " + repo.path + "? It reappears (set to Inherit) if it sends another webhook.")) return;
+      api("DELETE", "/admin/api/repos/" + repo.id).then(function () {
+        repos = repos.filter(function (x) { return x.id !== repo.id; }); editing = null; render(); toast("Removed " + repo.path);
+      }).catch(function (e) { toast(e.message, true); });
+    });
+  }
+
+  function stateBadge(on) { return el("span", { cls: "state " + (on ? "on" : "off"), text: on ? "Reviewed" : "Not reviewed" }); }
+  function whyText(eff) {
+    if (eff.source === "repository") return "set on this repository";
+    if (eff.source === "allowlist") return "no rule matches · allowlist default";
+    if (eff.source === "default") return "no rule matches · reviewed by default";
+    return "by " + eff.source;
+  }
+
+  function render() {
+    var q = document.getElementById("q").value.toLowerCase();
+    var show = document.getElementById("show").value;
+    var on = repos.filter(function (r) { return r.effective.enabled; }).length;
+    document.getElementById("counts").textContent = on + " reviewed · " + (repos.length - on) + " not reviewed";
+    var list = repos.filter(function (r) {
+      if (show === "on" && !r.effective.enabled) return false;
+      if (show === "off" && r.effective.enabled) return false;
+      return !q || (r.host + "/" + r.path).toLowerCase().indexOf(q) >= 0;
+    });
+    var box = document.getElementById("repos");
+    if (!list.length) {
+      box.replaceChildren(el("div", { cls: "empty", text: repos.length ? "No repositories match." : "No repositories yet. They appear when they send their first webhook, or add one above." }));
+      return;
+    }
+    var rows = [];
+    list.forEach(function (r) {
+      var mode = el("select", { "aria-label": "Reviews for " + r.path, onchange: function (ev) {
+        var want = ev.target.value;
+        save(r, want, r.settings || {}).catch(function (e) { ev.target.value = r.mode; toast(e.message, true); });
+      } }, [["inherit", "Inherit"], ["enabled", "Enabled"], ["disabled", "Disabled"]].map(function (o) {
+        return el("option", { value: o[0], selected: r.mode === o[0] }, [o[1]]);
+      }));
+      var inherited = (r.effective.rules || []).length && JSON.stringify(r.effective.settings) !== JSON.stringify(r.settings || {});
+      rows.push(el("tr", null, [
+        el("td", null, [mode, el("div", { cls: "why" }, [stateBadge(r.effective.enabled)]), el("div", { cls: "why", text: whyText(r.effective) }),
+          el("div", { cls: "why", title: "reviewer: " + r.effective.require_reviewer_source + " · branch syncs: " + r.effective.skip_branch_sync_source +
+            " · labels: " + r.effective.score_labels_source + " · status: " + r.effective.commit_status_source,
+            text: [r.effective.require_reviewer ? "reviewer required" : "", r.effective.skip_branch_sync ? "skips branch syncs" : "",
+              r.effective.score_labels ? "score labels" : "", r.effective.commit_status ? "commit status" : ""].filter(Boolean).join(" · ") })]),
+        el("td", null, [el("div", { text: r.path }), el("div", { cls: "plat", text: r.platform + " · " + r.host })]),
+        el("td", { cls: "muted", text: ago(r.last_seen) }),
+        el("td", null, [chips(r.effective.settings || {}), inherited ? el("div", { cls: "why", text: "includes rule settings" }) : null]),
+        el("td", { cls: "muted", text: r.updated_by ? r.updated_by + " · " + ago(r.updated_at) : "—" }),
+        el("td", null, [el("button", { cls: "btn", text: editing === r.id ? "Close" : "Settings", onclick: function () {
+          editing = editing === r.id ? null : r.id; render();
+        } })])
+      ]));
+      if (editing === r.id) rows.push(editor(r));
+    });
+    var head = el("tr", null, ["Reviews", "Repository", "Last webhook", "Effective settings", "Last changed", ""].map(function (h) { return el("th", { text: h }); }));
+    box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, rows)]));
+  }
+
+  function matchCount(rule) {
+    var label = rule.pattern ? rule.pattern : "host " + rule.host;
+    return repos.filter(function (r) { return (r.effective.rules || []).indexOf(label) >= 0 && r.platform === rule.platform && r.host === rule.host; }).length;
+  }
+  var ruleFlags = [
+    ["enabled", "Reviews", "Enabled", "Disabled"],
+    ["require_reviewer", "Reviewer required", "On", "Off"],
+    ["skip_branch_sync", "Branch syncs", "Skip", "Review"],
+    ["score_labels", "Score labels", "On", "Off"],
+    ["commit_status", "Commit status", "On", "Off"]
+  ];
+  function ruleLabel(rule) { return rule.pattern ? rule.pattern : "Whole host"; }
+  function saveRule(rule, body) {
+    return api("PUT", "/admin/api/rules/" + rule.id, body).then(function (r) {
+      rules = rules.map(function (x) { return x.id === r.id ? r : x; });
+      return reloadRepos();
+    }).then(renderRules);
+  }
+  function ruleBody(rule) {
+    var b = { settings: rule.settings || {} };
+    ruleFlags.forEach(function (f) { b[f[0]] = rule[f[0]] === undefined ? null : rule[f[0]]; });
+    return b;
+  }
+  function flagChips(rule) {
+    var out = ruleFlags.filter(function (f) { return rule[f[0]] !== null && rule[f[0]] !== undefined; }).map(function (f) {
+      return el("span", { cls: "chip", text: f[1] + ": " + (rule[f[0]] ? f[2] : f[3]) });
+    });
+    return out.length ? el("span", null, out) : el("span", { cls: "muted", text: "inherits everything" });
+  }
+  function ruleEditor(rule) {
+    var grid = el("div", { cls: "grid" }, ruleFlags.map(function (f) {
+      var v = rule[f[0]];
+      return el("label", { cls: "f" }, [f[1], el("select", { id: "rf_" + f[0] }, [["", "Inherit"], ["true", f[2]], ["false", f[3]]].map(function (o) {
+        return el("option", { value: o[0], selected: (v === null || v === undefined ? "" : String(v)) === o[0] }, [o[1]]);
+      }))]);
+    }));
+    var form = settingsEditor(rule.settings, function (s) {
+      var body = { settings: s };
+      ruleFlags.forEach(function (f) { var x = document.getElementById("rf_" + f[0]).value; body[f[0]] = x === "" ? null : x === "true"; });
+      saveRule(rule, body).then(function () { editingRule = null; renderRules(); toast("Saved " + ruleLabel(rule)); })
+        .catch(function (e) { toast(e.message, true); });
+    }, "Delete rule", function () {
+      if (!confirm("Delete the rule for " + ruleLabel(rule) + " on " + rule.host + "? Repositories fall back to the level above.")) return;
+      api("DELETE", "/admin/api/rules/" + rule.id).then(function () {
+        rules = rules.filter(function (x) { return x.id !== rule.id; }); editingRule = null; return reloadRepos();
+      }).then(function () { renderRules(); toast("Deleted rule " + ruleLabel(rule)); }).catch(function (e) { toast(e.message, true); });
+    }, "Inherit", true);
+    return el("tr", { cls: "editor" }, [el("td", { colspan: "5" }, [el("div", { cls: "sub", text: "Settings for this level" }), grid,
+      el("div", { cls: "sub mt", text: "Review settings" }), form])]);
+  }
+  function renderRules() {
+    var box = document.getElementById("rules");
+    if (!rules.length) {
+      box.replaceChildren(el("div", { cls: "empty", text: "No rules yet. Add one for a whole host, a group or a name pattern." }));
+      return;
+    }
+    var sorted = rules.slice().sort(function (a, b) {
+      return (a.platform + a.host).localeCompare(b.platform + b.host) || (a.pattern ? 1 : 0) - (b.pattern ? 1 : 0) || a.pattern.localeCompare(b.pattern);
+    });
+    var rows = [];
+    sorted.forEach(function (rule) {
+      var n = matchCount(rule);
+      rows.push(el("tr", null, [
+        el("td", null, [el("div", null, [rule.pattern ? el("code", { text: rule.pattern }) : el("b", { text: "Whole host" })]),
+          el("div", { cls: "plat", text: rule.platform + " · " + rule.host })]),
+        el("td", null, [flagChips(rule), el("div", { cls: "why" }, [chips(rule.settings || {})])]),
+        el("td", { cls: "muted", text: n + (n === 1 ? " known repository" : " known repositories") }),
+        el("td", { cls: "muted", text: rule.updated_by ? rule.updated_by + " · " + ago(rule.updated_at) : "—" }),
+        el("td", null, [el("button", { cls: "btn", text: editingRule === rule.id ? "Close" : "Edit", onclick: function () {
+          editingRule = editingRule === rule.id ? null : rule.id; renderRules();
+        } })])
+      ]));
+      if (editingRule === rule.id) rows.push(ruleEditor(rule));
+    });
+    var head = el("tr", null, ["Scope", "Sets", "Covers", "Last changed", ""].map(function (h) { return el("th", { text: h }); }));
+    box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, rows)]));
+  }
+
+  var hooks = [];
+  function hookBadge(o) {
+    var cls = { queued: "on", rejected: "off", error: "off" }[o] || "idle";
+    return el("span", { cls: "state " + cls, text: o });
+  }
+  function loadHooks(more) {
+    var q = "?limit=100";
+    var p = document.getElementById("hQ").value.trim(), o = document.getElementById("hOut").value;
+    if (p) q += "&project=" + encodeURIComponent(p);
+    if (o) q += "&outcome=" + encodeURIComponent(o);
+    if (more && hooks.length) q += "&before=" + hooks[hooks.length - 1].id;
+    api("GET", "/admin/api/webhooks" + q).then(function (d) {
+      hooks = more ? hooks.concat(d.events) : d.events;
+      var c = d.counts_24h || {};
+      document.getElementById("hCounts").textContent = "Last 24 h: " + ["queued", "ignored", "duplicate", "rejected", "error"]
+        .map(function (k) { return (c[k] || 0) + " " + k; }).join(" · ");
+      document.getElementById("hMore").classList.toggle("hidden", d.events.length < 100);
+      renderHooks();
+    }).catch(function (e) { toast(e.message, true); });
+  }
+  function renderHooks() {
+    var box = document.getElementById("hooks");
+    if (!hooks.length) { box.replaceChildren(el("div", { cls: "empty", text: "No webhook deliveries match." })); return; }
+    var head = el("tr", null, ["When", "Project", "Event", "Outcome", "Reason", "Auth"].map(function (h) { return el("th", { text: h }); }));
+    box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, hooks.map(function (e) {
+      var what = [e.kind || e.event, e.action].filter(Boolean).join(" · ") + (e.number ? " · !" + e.number : "");
+      return el("tr", null, [
+        el("td", { cls: "muted nowrap", title: new Date(e.received_at).toLocaleString(), text: ago(e.received_at) }),
+        el("td", null, [el("div", { text: e.project || "—" }), el("div", { cls: "plat", text: e.platform + (e.host ? " · " + e.host : "") })]),
+        el("td", null, [el("div", { text: what || "—" }), el("div", { cls: "plat", text: e.event + (e.sender ? " · by " + e.sender : "") })]),
+        el("td", null, [hookBadge(e.outcome)]),
+        el("td", { cls: "reason", text: e.reason || "" }),
+        el("td", { cls: "muted", text: e.auth || "" })
+      ]);
+    }))]));
+  }
+
+  var current = null;
+  function settingsBody(defaults) {
+    function v(id) { return document.getElementById(id).value; }
+    return { allowlist: v("sAllow") === "true", require_reviewer: v("sReviewer") === "true",
+      skip_branch_sync: v("sSync") === "true", score_labels: v("sLabels") === "true", commit_status: v("sStatus") === "true",
+      sync_source_branches: v("sSyncBranches").split(",").map(function (x) { return x.trim(); }).filter(Boolean),
+      dashboard_enabled: v("sDash") === "true", hide_repos: v("sHide") === "true", dashboard_title: v("sTitle").trim(),
+      review_defaults: defaults };
+  }
+  function saveSettings(defaults) {
+    return api("PUT", "/admin/api/settings", settingsBody(defaults)).then(function (eff) {
+      current = eff; allowlist = eff.allowlist;
+      document.getElementById("reviewerNote").classList.toggle("hidden", !eff.require_reviewer);
+      document.getElementById("defaultNote").textContent = allowlist ? "not reviewed, because the allowlist is on" : "reviewed, because the allowlist is off";
+      renderSettings(); toast("Settings saved");
+      return reloadRepos();
+    }).catch(function (e) { toast(e.message, true); });
+  }
+  function renderSettings() {
+    var e = current;
+    document.getElementById("sAllow").value = String(e.allowlist);
+    document.getElementById("sReviewer").value = String(e.require_reviewer);
+    document.getElementById("sSync").value = String(e.skip_branch_sync);
+    document.getElementById("sLabels").value = String(e.score_labels);
+    document.getElementById("sStatus").value = String(e.commit_status);
+    document.getElementById("sSyncBranches").value = (e.sync_source_branches || []).join(", ");
+    document.getElementById("sDash").value = String(e.dashboard_enabled);
+    document.getElementById("sHide").value = String(e.hide_repos);
+    document.getElementById("sTitle").value = e.dashboard_title || "";
+    var fromFile = Object.keys(e.source || {}).filter(function (k) { return e.source[k] === "config"; });
+    document.getElementById("sSource").textContent = fromFile.length ? "Not saved yet (from the config file): " + fromFile.join(", ") : "";
+    document.getElementById("sDefaults").replaceChildren(settingsEditor(e.review_defaults, function (s) { saveSettings(s); }, null, null, "Server default", true));
+  }
+  function loadSettings() {
+    api("GET", "/admin/api/settings").then(function (eff) { current = eff; renderSettings(); }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function loadAudit() {
+    api("GET", "/admin/api/audit").then(function (entries) {
+      var box = document.getElementById("audit");
+      if (!entries.length) { box.replaceChildren(el("div", { cls: "empty", text: "No admin activity yet." })); return; }
+      var head = el("tr", null, ["When", "Who", "Action", "Target", "Details"].map(function (h) { return el("th", { text: h }); }));
+      box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, entries.map(function (e) {
+        return el("tr", null, [
+          el("td", { cls: "muted", text: new Date(e.at).toLocaleString() }),
+          el("td", { text: e.actor }), el("td", { text: e.action }), el("td", { text: e.target }),
+          el("td", null, [el("pre", { cls: "detail", text: JSON.stringify(e.detail) })])
+        ]);
+      }))]));
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  var routes = { repositories: "repos", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
+  var titles = { repos: "Repositories", rules: "Hosts & groups", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
+  function tabFromPath() {
+    var seg = location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
+    return routes[seg] || "repos";
+  }
+  function show(tab) {
+    editing = null; editingRule = null;
+    document.querySelectorAll(".side a").forEach(function (a) { a.classList.toggle("on", a.dataset.tab === tab); });
+    ["repos", "rules", "hooks", "settings", "audit"].forEach(function (t) {
+      document.getElementById("tab-" + t).classList.toggle("hidden", tab !== t);
+    });
+    document.getElementById("pageTitle").textContent = titles[tab];
+    document.title = titles[tab] + " · Code review admin";
+    if (tab === "rules") renderRules();
+    if (tab === "hooks") loadHooks();
+    if (tab === "settings") loadSettings();
+    if (tab === "repos" && repos.length) reloadRepos();
+    if (tab === "audit") loadAudit();
+  }
+  document.querySelectorAll(".side a").forEach(function (a) {
+    a.addEventListener("click", function (ev) {
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return; // let new-tab clicks through
+      ev.preventDefault();
+      if (location.pathname !== a.getAttribute("href")) history.pushState(null, "", a.getAttribute("href"));
+      show(a.dataset.tab);
+    });
+  });
+  window.addEventListener("popstate", function () { show(tabFromPath()); });
+  if (!routes[location.pathname.replace(/^\/admin\/?/, "").split("/")[0]]) history.replaceState(null, "", "/admin/repositories");
+  document.getElementById("q").addEventListener("input", render);
+  document.getElementById("show").addEventListener("change", render);
+  document.getElementById("addToggle").addEventListener("click", function () { document.getElementById("addForm").classList.toggle("hidden"); });
+  document.getElementById("aSave").addEventListener("click", function () {
+    var body = { platform: document.getElementById("aPlat").value, host: document.getElementById("aHost").value.trim(),
+      path: document.getElementById("aPath").value.trim(), mode: document.getElementById("aEn").value };
+    api("POST", "/admin/api/repos", body).then(function (r) {
+      repos = repos.filter(function (x) { return x.id !== r.id; }).concat([r]); render();
+      document.getElementById("aPath").value = ""; toast("Added " + r.path);
+    }).catch(function (e) { toast(e.message, true); });
+  });
+  var hTimer;
+  document.getElementById("hQ").addEventListener("input", function () { clearTimeout(hTimer); hTimer = setTimeout(function () { loadHooks(); }, 300); });
+  document.getElementById("hOut").addEventListener("change", function () { loadHooks(); });
+  document.getElementById("hRefresh").addEventListener("click", function () { loadHooks(); });
+  document.getElementById("hMore").addEventListener("click", function () { loadHooks(true); });
+  document.getElementById("sSave").addEventListener("click", function () { saveSettings(current ? current.review_defaults : {}); });
+  document.getElementById("rAddToggle").addEventListener("click", function () { document.getElementById("rAddForm").classList.toggle("hidden"); });
+  document.getElementById("rSave").addEventListener("click", function () {
+    var body = { platform: document.getElementById("rPlat").value, host: document.getElementById("rHost").value.trim(),
+      pattern: document.getElementById("rPat").value.trim() };
+    var en = document.getElementById("rEn").value;
+    if (en !== "") body.enabled = en === "true";
+    api("POST", "/admin/api/rules", body).then(function (r) {
+      rules = rules.filter(function (x) { return x.id !== r.id; }).concat([r]);
+      document.getElementById("rPat").value = "";
+      editingRule = r.id;
+      return reloadRepos().then(function () { renderRules(); toast("Saved rule " + ruleLabel(r) + " — set its options below"); });
+    }).catch(function (e) { toast(e.message, true); });
+  });
+  document.getElementById("logout").addEventListener("click", function () {
+    api("POST", "/admin/logout").finally(function () { location.href = "/admin/login"; });
+  });
+
+  api("GET", "/admin/api/me").then(function (me) {
+    profiles = me.profiles || []; allowlist = me.allowlist !== false;
+    document.getElementById("reviewerNote").classList.toggle("hidden", !me.require_reviewer);
+    document.getElementById("defaultNote").textContent = allowlist ? "not reviewed, because the allowlist is on" : "reviewed, because the allowlist is off";
+    return api("GET", "/admin/api/rules");
+  }).then(function (list) { rules = list || []; return api("GET", "/admin/api/repos"); })
+    .then(function (list) { repos = list; render(); show(tabFromPath()); })
+    .catch(function (e) { toast(e.message, true); });
+})();
+</script>
+</body>
+</html>
