@@ -5,7 +5,7 @@ Each release publishes:
 | Artifact | Where | Contains |
 |---|---|---|
 | Container image | `ghcr.io/divmora/code-review-console:X.Y.Z` (linux/amd64, linux/arm64) | the console, the admin UI, and the pinned `codereview` CLI for the local executor |
-| Binaries | the GitHub release (linux, macOS, Windows; amd64, arm64) | the console only; install the CLI from [code-review-bot](https://github.com/divmora/code-review-bot/releases) |
+| Binaries | the GitHub release (Linux and macOS; amd64, arm64). There is no Windows build: use the container image there | the console only; install the CLI from [code-review-bot](https://github.com/divmora/code-review-bot/releases) |
 
 Both include every feature; a license key turns the paid ones on (see [License](#license)).
 

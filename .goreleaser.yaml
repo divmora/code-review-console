@@ -15,10 +15,12 @@ builds:
       - -trimpath
     env:
       - CGO_ENABLED=0
+    # No Windows build: the local executor uses Unix process groups
+    # (Setpgid, kill of the group). Run the console on Linux or macOS, or
+    # in Docker.
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -32,10 +34,6 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
     files:
       - README.md
       - LICENSE
