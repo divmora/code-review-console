@@ -1,0 +1,79 @@
+Divmora Enterprise License
+
+Copyright (c) 2026 DIVMORA Technologies. All rights reserved.
+
+1. Scope
+
+This license governs:
+
+(a) the "Enterprise Files": every file in this repository that begins with
+    the notice "Licensed under the Divmora Enterprise License", every file
+    under a directory named "ee", and those portions of any compiled,
+    bundled or packaged form of this software (including binaries, container
+    images and the built admin interface) that are derived from them; and
+
+(b) the "Enterprise Features": the capabilities of the Divmora Code Review
+    Console that are enabled only by a license key, namely: more than one
+    code host per platform and per-host bot identities; host, group and
+    pattern rules; team learnings; the Docker and Kubernetes executors;
+    token budgets; metrics, charts and review history kept longer than
+    thirty (30) days; the audit log viewer; branch-sync skipping; and admin
+    sign-in by email domain or identity-provider group; together with any
+    capability the Licensor later designates as requiring a license key.
+
+The rest of the repository is licensed under the Business Source License 1.1
+in LICENSE.
+
+2. License grant
+
+Subject to your compliance with this license, DIVMORA Technologies (the
+"Licensor") grants you a non-exclusive, non-transferable right to use the
+Enterprise Files and the Enterprise Features only:
+
+(a) while you hold a valid, unexpired license key issued by the Licensor for
+    this software; and
+
+(b) under, and within the scope and term of, a written commercial agreement
+    with the Licensor or an authorized reseller (including a trial agreement).
+
+This applies to every environment, including development, testing, staging,
+quality assurance, continuous integration and production. There is no free,
+non-production or evaluation use of the Enterprise Files or the Enterprise
+Features without a license key.
+
+3. Restrictions
+
+You may not, and may not permit others to:
+
+(a) remove, disable, bypass or circumvent any license-key check, or modify
+    the software so that an Enterprise Feature works without a valid license
+    key;
+
+(b) copy, modify, distribute, sublicense, sell or offer as a service the
+    Enterprise Files, except as part of the unmodified software you are
+    licensed to run;
+
+(c) share, publish or transfer a license key, or use it beyond the customer,
+    scope or term for which it was issued.
+
+You may read the Enterprise Files to assess the security of the software.
+
+4. Termination
+
+This license ends automatically if you breach it, or when your license key
+or commercial agreement expires or ends. On termination you must stop using
+the Enterprise Files and the Enterprise Features. The software's free core
+(LICENSE) remains available to you under its own terms.
+
+5. No warranty
+
+THE ENTERPRISE FILES AND ENTERPRISE FEATURES ARE PROVIDED "AS IS", WITHOUT
+WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT,
+EXCEPT AS STATED IN YOUR COMMERCIAL AGREEMENT. TO THE EXTENT PERMITTED BY
+LAW, THE LICENSOR IS NOT LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY
+ARISING FROM THEM, EXCEPT AS STATED IN YOUR COMMERCIAL AGREEMENT.
+
+6. Contact
+
+Licenses, trials and questions: licensing@divmora.com

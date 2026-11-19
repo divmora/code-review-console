@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  ci:
+    uses: divmora/.github/.github/workflows/go-ci.yml@main
+    with:
+      go-version: '1.27'
+
+  # The admin UI's build output is committed (the binary embeds it), so
+  # check it type-checks and matches web/src.
+  web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make web
+      - name: Committed build is up to date
+        run: git diff --exit-code -- internal/admin/ui || (echo "::error::run 'make web' and commit internal/admin/ui" && exit 1)
