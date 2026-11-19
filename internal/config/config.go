@@ -271,7 +271,7 @@ type LocalExecutor struct {
 
 // DockerExecutor runs each review in a container.
 type DockerExecutor struct {
-	// Image is the CLI image, e.g. ghcr.io/divmora/code-review-bot:v0.1.0.
+	// Image is the CLI image, e.g. ghcr.io/divmora/code-review-bot:0.4.0.
 	Image string `yaml:"image"`
 	// Network for the container (default bridge).
 	Network string `yaml:"network"`

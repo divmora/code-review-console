@@ -62,12 +62,12 @@ executor:
   local:
     binary: codereview                 # bundled in the console image
   docker:
-    image: ghcr.io/divmora/code-review-bot:v0.4.0
+    image: ghcr.io/divmora/code-review-bot:0.4.0
     cpus: "1"
     memory: 1g
     # network: bridge
   kubernetes:
-    image: ghcr.io/divmora/code-review-bot:v0.4.0
+    image: ghcr.io/divmora/code-review-bot:0.4.0
     namespace: code-review
     service_account: ""                # set for IRSA / workload identity (e.g. Bedrock)
     cpu: "1"

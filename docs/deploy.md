@@ -4,7 +4,7 @@ Each release publishes:
 
 | Artifact | Where | Contains |
 |---|---|---|
-| Container image | `ghcr.io/divmora/code-review-console:vX.Y.Z` (linux/amd64, linux/arm64) | the console, the admin UI, and the pinned `codereview` CLI for the local executor |
+| Container image | `ghcr.io/divmora/code-review-console:X.Y.Z` (linux/amd64, linux/arm64) | the console, the admin UI, and the pinned `codereview` CLI for the local executor |
 | Binaries | the GitHub release (linux, macOS, Windows; amd64, arm64) | the console only; install the CLI from [code-review-bot](https://github.com/divmora/code-review-bot/releases) |
 
 The admin UI is built into the binary: there is nothing else to serve.
@@ -51,7 +51,7 @@ docker compose exec console code-review-console check-config --config /etc/conso
 ```
 
 To run a published image instead of building, replace `build: .` with
-`image: ghcr.io/divmora/code-review-console:vX.Y.Z` in `docker-compose.yml`.
+`image: ghcr.io/divmora/code-review-console:X.Y.Z` in `docker-compose.yml`.
 
 ## Kubernetes
 
