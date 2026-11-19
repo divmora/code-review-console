@@ -1,0 +1,7 @@
+// Apply the saved theme before the page paints. "system" follows the OS.
+(function () {
+  try {
+    var t = localStorage.getItem("crc-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();

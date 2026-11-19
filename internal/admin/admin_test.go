@@ -16,7 +16,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -159,20 +158,29 @@ func (e *env) login(t *testing.T) *http.Response {
 	return resp
 }
 
-var csrfRe = regexp.MustCompile(`var CSRF = "([^"]+)"`)
-
+// csrf loads the app page (checking it is served with a strict CSP) and
+// returns the CSRF token from /admin/api/me.
 func (e *env) csrf(t *testing.T) string {
 	resp, err := e.client.Get(e.app.URL + "/admin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
-	m := csrfRe.FindSubmatch(b)
-	if resp.StatusCode != 200 || m == nil {
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 || !bytes.Contains(b, []byte(`id="root"`)) {
 		t.Fatalf("admin page: %d", resp.StatusCode)
 	}
-	return string(m[1])
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe") {
+		t.Fatalf("admin page CSP: %q", csp)
+	}
+	code, body := e.do(t, "GET", "/admin/api/me", "", nil)
+	var me struct {
+		CSRF string `json:"csrf"`
+	}
+	if code != 200 || json.Unmarshal(body, &me) != nil || me.CSRF == "" {
+		t.Fatalf("me: %d %s", code, body)
+	}
+	return me.CSRF
 }
 
 func (e *env) do(t *testing.T, method, path, csrf string, body any) (int, []byte) {
@@ -296,12 +304,15 @@ func TestLoginAndManageRepos(t *testing.T) {
 	}
 
 	for _, path := range []string{"/admin/settings", "/admin/rules", "/admin/webhooks"} {
-		if code, body := e.do(t, "GET", path, "", nil); code != 200 || !bytes.Contains(body, []byte("Code hosts")) {
+		if code, body := e.do(t, "GET", path, "", nil); code != 200 || !bytes.Contains(body, []byte(`id="root"`)) {
 			t.Errorf("%s should serve the admin page so reloads land there: %d", path, code)
 		}
 	}
 	if code, _ := e.do(t, "GET", "/admin/nope", "", nil); code != 404 {
 		t.Errorf("unknown section: %d", code)
+	}
+	if code, body := e.do(t, "GET", "/admin/assets/theme.js", "", nil); code != 200 || !bytes.Contains(body, []byte("crc-theme")) {
+		t.Errorf("static assets: %d", code)
 	}
 
 	// Code hosts: secrets go in, never come out, and are kept on edit.

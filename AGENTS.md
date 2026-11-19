@@ -17,7 +17,10 @@ internal/secrets/     AES-256-GCM with CODEREVIEW_CONSOLE_SECRET_KEY (never stor
 internal/settings/    runtime settings: config file seeds the database, admin panel edits
 internal/server/      webhooks (GitHub, GitLab, Bitbucket), command parsing, queue + history, jobs.go
                       (targets, per-job config/secrets), status dashboard
-internal/admin/       OIDC sign-in (code flow + PKCE + nonce), DB sessions, CSRF, repo/audit API
+internal/admin/       OIDC sign-in (code flow + PKCE + nonce), DB sessions, CSRF, admin JSON API;
+                      embeds ui/ (the built admin app, committed so `go build` needs no Node)
+web/                  admin app source: React + TypeScript + Vite. `make web` builds it into
+                      internal/admin/ui; CI fails if the committed build is stale
 internal/store/       PostgreSQL: repos, overrides, jobs + results, sessions, audit, model
                       profiles, settings; migrations under an advisory lock. storetest/ = fake
 ```
@@ -55,6 +58,13 @@ Changing this contract means changing the bot's CLI too; keep them in step.
   and extracts them (`codereview learn`). The console never calls a model itself.
 - Host secrets are encrypted before the store sees them; APIs and audit entries expose only
   whether a secret is set. Webhooks are verified against the matched host's secrets only.
+
+## Admin UI
+
+Change `web/src`, run `make web`, commit both. The page is served with a strict CSP (`script-src
+'self'; style-src 'self'`): no inline scripts or `style=` attributes in HTML (React's `style`
+prop and `el.style` are fine). The CSRF token comes from `GET /admin/api/me`. New sections need
+a route in `web/src/App.tsx` and an entry in `adminSections` (handlers.go) so reloads land on them.
 
 ## Tests
 

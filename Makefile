@@ -1,10 +1,19 @@
-.PHONY: build clean test test-db test-e2e fmt lint docker-build run
+.PHONY: web web-dev build clean test test-db test-e2e fmt lint docker-build run
 
 BINARY  ?= code-review-console
 IMAGE   ?= ghcr.io/divmora/code-review-console
 VERSION ?= 0.0.0-dev
 LDFLAGS := -s -w -X github.com/divmora/code-review-console/internal/version.Version=$(VERSION)
 BOT_DIR ?= ../code-review-bot
+
+# Admin UI: web/ (React + Vite) builds into internal/admin/ui, which the
+# binary embeds. The build output is committed so `go build` alone works.
+web:
+	@cd web && npm ci --no-audit --no-fund && npm run build
+
+# Vite dev server on :5173, proxying the API to a console on :8080.
+web-dev:
+	@cd web && npm run dev
 
 build:
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/console

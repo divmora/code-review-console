@@ -1,16 +1,13 @@
 package admin
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	_ "embed"
-	"encoding/base64"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"path"
@@ -28,10 +25,32 @@ import (
 	"github.com/divmora/code-review-console/internal/version"
 )
 
-//go:embed admin.html
-var adminHTML string
+// ui is the admin single-page app, built from web/ by `make web`.
+//
+//go:embed all:ui
+var uiFS embed.FS
 
-var adminTmpl = template.Must(template.New("admin").Parse(adminHTML))
+var (
+	uiIndex  = mustRead("ui/index.html")
+	uiAssets = func() http.Handler {
+		sub, err := fs.Sub(uiFS, "ui")
+		if err != nil {
+			panic(err)
+		}
+		return http.StripPrefix("/admin/", http.FileServerFS(sub))
+	}()
+)
+
+func mustRead(name string) []byte {
+	b, err := uiFS.ReadFile(name)
+	if err != nil {
+		panic("admin UI not built: " + err.Error() + " (run make web)")
+	}
+	return b
+}
+
+// uiCSP allows only the app's own files: no inline scripts or styles.
+const uiCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // Register mounts the admin routes.
 func (a *Admin) Register(mux *http.ServeMux) {
@@ -44,6 +63,16 @@ func (a *Admin) Register(mux *http.ServeMux) {
 			return
 		}
 		a.handlePage(w, r)
+	})
+	mux.HandleFunc("GET /admin/assets/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", uiCSP)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if strings.HasPrefix(r.URL.Path, "/admin/assets/index-") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // content-hashed names
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		uiAssets.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("GET /admin/login", a.handleLogin)
 	mux.HandleFunc("GET /admin/callback", a.handleCallback)
@@ -77,35 +106,24 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
 }
 
-// adminSections are the admin UI's pages (see the routes in admin.html).
+// adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
 var adminSections = map[string]bool{"repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.session(r)
-	if !ok {
+	if _, ok := a.session(r); !ok {
 		http.Redirect(w, r, "/admin/login?next="+url.QueryEscape(r.URL.Path), http.StatusFound)
 		return
 	}
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	nonce := base64.RawStdEncoding.EncodeToString(b)
-	var buf bytes.Buffer
-	if err := adminTmpl.Execute(&buf, map[string]any{
-		"Nonce": nonce, "CSRF": s.CSRF, "Email": s.Email, "Name": firstNonEmpty(s.Name, s.Email), "Version": version.Version,
-	}); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
-		return
-	}
 	noStore(w)
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+nonce+"'")
+	w.Header().Set("Content-Security-Policy", uiCSP)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(buf.Bytes())
+	_, _ = w.Write(uiIndex)
 }
 
 func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	eff := a.settings().Get(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"email": s.Email, "name": s.Name, "expires": s.Expires, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
+		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
 	})
 }
 

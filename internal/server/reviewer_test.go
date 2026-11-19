@@ -14,9 +14,9 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/hosts"
-	"github.com/divmora/code-review-console/internal/store/storetest"
-	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/settings"
+	"github.com/divmora/code-review-console/internal/store"
+	"github.com/divmora/code-review-console/internal/store/storetest"
 )
 
 func TestRequireReviewerGitLab(t *testing.T) {
