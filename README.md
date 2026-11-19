@@ -24,7 +24,7 @@ Replies arrive as comment events: on GitLab add a group or project webhook with 
 
 The **Reviews** page lists every finished review, answer and help job from the database, with filters (host, repository, state, kind, trigger, dates). A review's details show its summary, scores, findings, what verification removed, and errors; **Re-run** reviews the same pull request again (new changes or full), and **Review now** reviews any PR/MR by URL on a configured host (allowlist, reviewer and branch-sync rules do not apply to these explicit requests).
 
-Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host and repository) that are updated as each job finishes, so they never scan the history. Review history is kept for 180 days by default and webhook deliveries for 14 (both in **Settings**); hourly rollups only serve the last-48-hours chart and are kept 3 days; daily and monthly totals are kept for good.
+Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host and repository) that are updated as each job finishes, so they never scan the history. **Budgets** (Settings) cap tokens per UTC day for all repositories and per repository; when one is used up, automatic reviews and chat commands are skipped with a note until the next day, while "Review now" and re-runs still run. Review history is kept for 180 days by default and webhook deliveries for 14 (both in **Settings**); hourly rollups only serve the last-48-hours chart and are kept 3 days; daily and monthly totals are kept for good.
 
 ### Code hosts (GitHub, GitLab, Bitbucket)
 

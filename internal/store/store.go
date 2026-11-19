@@ -271,6 +271,9 @@ type Store interface {
 
 	// InsertJob saves a finished job and adds it to the metric rollups.
 	InsertJob(ctx context.Context, j Job) (int64, error)
+	// TokensUsed sums input and output tokens of jobs finished in the UTC
+	// day containing at (from the daily rollup); empty repo sums all.
+	TokensUsed(ctx context.Context, at time.Time, platform, host, repo string) (int64, error)
 	// Metrics returns rollup buckets, oldest first.
 	Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, error)
 	// PruneJobs deletes jobs finished before a time, and hourly rollups
@@ -1175,6 +1178,19 @@ func (p *Postgres) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint,
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) TokensUsed(ctx context.Context, at time.Time, platform, host, repo string) (int64, error) {
+	q := `SELECT coalesce(sum(tokens_in + tokens_out), 0) FROM job_metrics
+		WHERE granularity = 'day' AND bucket = date_trunc('day', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`
+	args := []any{at}
+	if repo != "" {
+		q += ` AND platform = $2 AND host = lower($3) AND repo = lower($4)`
+		args = append(args, platform, host, repo)
+	}
+	var n int64
+	err := p.pool.QueryRow(ctx, q, args...).Scan(&n)
+	return n, err
 }
 
 func (p *Postgres) PruneJobs(ctx context.Context, before, hourlyBefore time.Time) (int64, error) {

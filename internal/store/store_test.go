@@ -396,3 +396,27 @@ func TestLearnings(t *testing.T) {
 		t.Errorf("second delete: %v", err)
 	}
 }
+
+func TestTokensUsed(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	now := time.Now()
+	before, _ := p.TokensUsed(ctx, now, "", "", "") // other tests may have run jobs today
+	for _, j := range []Job{
+		{Platform: "gitlab", Host: "gl", Repo: "g/a", TokensIn: 100, TokensOut: 10, Finished: now},
+		{Platform: "gitlab", Host: "gl", Repo: "G/A", TokensIn: 50, TokensOut: 5, Finished: now},
+		{Platform: "gitlab", Host: "gl", Repo: "g/b", TokensIn: 1000, Finished: now},
+		{Platform: "gitlab", Host: "gl", Repo: "g/a", TokensIn: 9999, Finished: now.AddDate(0, 0, -2)},
+	} {
+		j.Kind, j.State, j.Enqueued = "review", "done", j.Finished
+		if _, err := p.InsertJob(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := p.TokensUsed(ctx, now, "gitlab", "GL", "g/a"); err != nil || n != 165 {
+		t.Errorf("repo today = %d %v", n, err)
+	}
+	if n, _ := p.TokensUsed(ctx, now, "", "", ""); n-before != 1165 {
+		t.Errorf("all today = %d", n)
+	}
+}

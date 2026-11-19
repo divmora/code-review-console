@@ -286,6 +286,16 @@ func (s *Server) enqueueReview(tgt target, ref vcs.Ref, opts reviewOpts, debounc
 	}
 	reMeta()
 	job.Run = func(ctx context.Context, rep *Report) error {
+		if cur.By == "" { // requests from the admin panel are not budgeted
+			if why := s.overBudget(ctx, ref); why != "" {
+				rep.Skipped, rep.Note = true, why
+				s.logger.Warn("review skipped: token budget", "pr", ref.String(), "reason", why)
+				if !cur.Auto {
+					_ = tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, "⏸️ Review skipped: "+why+".")
+				}
+				return nil
+			}
+		}
 		t, err := s.newTask(ctx, tgt, ref, "review", cur.Overrides)
 		if err != nil {
 			return err
@@ -336,6 +346,10 @@ func (s *Server) enqueueAnswer(tgt target, ref vcs.Ref, question string, ov *con
 		Label: "answer " + ref.String(),
 		Meta:  meta(ref, "answer", "command"),
 		Run: func(ctx context.Context, rep *Report) error {
+			if why := s.overBudget(ctx, ref); why != "" {
+				rep.Skipped, rep.Note = true, why
+				return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, "⏸️ Not answered: "+why+".")
+			}
 			t, err := s.newTask(ctx, tgt, ref, "ask", ov)
 			if err != nil {
 				return err
@@ -392,6 +406,36 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// overBudget reports why a job must not run because today's token budget
+// is used up ("" when it may run). Budgets count input and output tokens
+// of finished jobs in the current UTC day, from the daily rollup; a job
+// that starts under budget may finish over it.
+func (s *Server) overBudget(ctx context.Context, ref vcs.Ref) string {
+	if s.store == nil {
+		return ""
+	}
+	eff := s.settings.Get(ctx)
+	now := time.Now()
+	check := func(budget int64, repo string, what string) string {
+		if budget <= 0 {
+			return ""
+		}
+		used, err := s.store.TokensUsed(ctx, now, ref.Platform, ref.Host, repo)
+		if err != nil {
+			s.logger.Warn("could not read token usage", "error", err)
+			return "" // fail open: a metrics error should not stop reviews
+		}
+		if used >= budget {
+			return fmt.Sprintf("the daily token budget %s is used up (%d of %d tokens today, UTC)", what, used, budget)
+		}
+		return ""
+	}
+	if why := check(eff.DailyTokenBudget, "", "for all repositories"); why != "" {
+		return why
+	}
+	return check(eff.RepoDailyTokenBudget, ref.Repo, "for "+ref.Repo)
 }
 
 // ReviewNow queues a review requested from the admin panel (a pasted URL

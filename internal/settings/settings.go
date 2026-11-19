@@ -47,9 +47,12 @@ type Stored struct {
 	ReviewRetentionDays *int `json:"review_retention_days,omitempty"`
 	// Learnings: capture team decisions from replies, and whether new ones
 	// apply at once (else they wait for an admin).
-	LearningsEnabled      *bool `json:"learnings_enabled,omitempty"`
-	LearningsAutoActivate *bool `json:"learnings_auto_activate,omitempty"`
-	WebhookRetentionDays  *int  `json:"webhook_retention_days,omitempty"`
+	LearningsEnabled *bool `json:"learnings_enabled,omitempty"`
+	// Daily token budgets (input + output, UTC day); 0 = no limit.
+	DailyTokenBudget      *int64 `json:"daily_token_budget,omitempty"`
+	RepoDailyTokenBudget  *int64 `json:"repo_daily_token_budget,omitempty"`
+	LearningsAutoActivate *bool  `json:"learnings_auto_activate,omitempty"`
+	WebhookRetentionDays  *int   `json:"webhook_retention_days,omitempty"`
 	// Dashboard: the status page at /dashboard.
 	DashboardEnabled *bool  `json:"dashboard_enabled,omitempty"`
 	HideRepos        *bool  `json:"hide_repos,omitempty"`
@@ -68,6 +71,8 @@ type Effective struct {
 	CommitStatus          bool              `json:"commit_status"`
 	ReviewRetentionDays   int               `json:"review_retention_days"`
 	LearningsEnabled      bool              `json:"learnings_enabled"`
+	DailyTokenBudget      int64             `json:"daily_token_budget"`
+	RepoDailyTokenBudget  int64             `json:"repo_daily_token_budget"`
 	LearningsAutoActivate bool              `json:"learnings_auto_activate"`
 	WebhookRetentionDays  int               `json:"webhook_retention_days"`
 	DashboardEnabled      bool              `json:"dashboard_enabled"`
@@ -162,6 +167,16 @@ func (s *Service) resolve(st Stored) Effective {
 	pick("score_labels", &e.ScoreLabels, st.ScoreLabels)
 	pick("commit_status", &e.CommitStatus, st.CommitStatus)
 	pick("learnings_enabled", &e.LearningsEnabled, st.LearningsEnabled)
+	for _, b := range []struct {
+		name string
+		dst  *int64
+		v    *int64
+	}{{"daily_token_budget", &e.DailyTokenBudget, st.DailyTokenBudget}, {"repo_daily_token_budget", &e.RepoDailyTokenBudget, st.RepoDailyTokenBudget}} {
+		e.Source[b.name] = "config"
+		if b.v != nil {
+			*b.dst, e.Source[b.name] = *b.v, "database"
+		}
+	}
 	pick("learnings_auto_activate", &e.LearningsAutoActivate, st.LearningsAutoActivate)
 	pickInt := func(name string, dst *int, v *int) {
 		e.Source[name] = "config"
@@ -279,6 +294,11 @@ func (st Stored) Validate(profiles map[string]bool, haveStore bool) error {
 	for name, v := range map[string]*int{"review retention": st.ReviewRetentionDays, "webhook retention": st.WebhookRetentionDays} {
 		if v != nil && (*v < 1 || *v > 3650) {
 			return fmt.Errorf("%s must be between 1 and 3650 days", name)
+		}
+	}
+	for _, v := range []*int64{st.DailyTokenBudget, st.RepoDailyTokenBudget} {
+		if v != nil && *v < 0 {
+			return errors.New("token budgets cannot be negative (0 means no limit)")
 		}
 	}
 	if len(st.SyncSourceBranches) > 50 {

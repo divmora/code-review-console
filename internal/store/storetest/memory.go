@@ -467,6 +467,24 @@ func (m *Memory) Metrics(_ context.Context, f store.MetricsFilter) ([]store.Metr
 	return out, nil
 }
 
+func (m *Memory) TokensUsed(_ context.Context, at time.Time, platform, host, repo string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day := time.Date(at.UTC().Year(), at.UTC().Month(), at.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	var n int64
+	for _, j := range m.jobs {
+		f := j.Finished.UTC()
+		if f.Before(day) || !f.Before(day.Add(24*time.Hour)) {
+			continue
+		}
+		if repo != "" && (j.Platform != platform || !strings.EqualFold(j.Host, host) || !strings.EqualFold(j.Repo, repo)) {
+			continue
+		}
+		n += int64(j.TokensIn + j.TokensOut)
+	}
+	return n, nil
+}
+
 func (m *Memory) PruneJobs(_ context.Context, before, _ time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

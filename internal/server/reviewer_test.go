@@ -14,6 +14,9 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/store/storetest"
+	"github.com/divmora/code-review-console/internal/store"
+	"github.com/divmora/code-review-console/internal/settings"
 )
 
 func TestRequireReviewerGitLab(t *testing.T) {
@@ -353,4 +356,55 @@ func TestReviewNow(t *testing.T) {
 	if err := s.ReviewNow(context.Background(), vcs.Ref{Platform: "gitlab", Host: "elsewhere", Repo: "g/p", Number: 1}, false, "a"); err == nil {
 		t.Error("unknown host must fail")
 	}
+}
+
+func TestTokenBudgets(t *testing.T) {
+	t.Setenv("CODEREVIEW_CONFIG", "")
+	cfg, _ := config.Load("")
+	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
+	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
+	cfg.Model = "m"
+	st := storetest.New()
+	exec := &fakeExec{}
+	s, err := New(cfg, exec, quiet, Deps{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.queue.Shutdown(context.Background())
+	ctx := context.Background()
+	now := time.Now()
+	_, _ = st.InsertJob(ctx, store.Job{Kind: "review", Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/big", State: "done", Finished: now, TokensIn: 90000, TokensOut: 10000})
+	ref := vcs.Ref{Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/small", Number: 1}
+	if why := s.overBudget(ctx, ref); why != "" {
+		t.Fatalf("no budget set: %s", why)
+	}
+	repoBudget := int64(50000)
+	_, _ = s.settings.Put(ctx, settings.Stored{RepoDailyTokenBudget: &repoBudget}, "a")
+	if why := s.overBudget(ctx, ref); why != "" {
+		t.Errorf("g/small has used nothing today: %s", why)
+	}
+	if why := s.overBudget(ctx, vcs.Ref{Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/big"}); !strings.Contains(why, "for g/big") {
+		t.Errorf("g/big is over its budget: %q", why)
+	}
+	global := int64(100000)
+	_, _ = s.settings.Put(ctx, settings.Stored{DailyTokenBudget: &global}, "a")
+	why := s.overBudget(ctx, ref)
+	if !strings.Contains(why, "for all repositories") || !strings.Contains(why, "100000 of 100000") {
+		t.Fatalf("global budget: %q", why)
+	}
+	// Automatic reviews are skipped; admin requests still run.
+	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"))
+	_ = s.enqueueReview(tgt, ref, reviewOpts{Auto: true}, false)
+	waitFor(t, func() bool { return len(s.queue.Snapshot().Recent) == 1 })
+	if r := s.queue.Snapshot().Recent; r[len(r)-1].State != Skipped || !strings.Contains(r[len(r)-1].Note, "budget") {
+		t.Errorf("over budget: %+v", r[len(r)-1])
+	}
+	exec.mu.Lock()
+	n := len(exec.tasks)
+	exec.mu.Unlock()
+	if n != 0 {
+		t.Errorf("a skipped review must not run the CLI: %d", n)
+	}
+	_ = s.enqueueReview(tgt, vcs.Ref{Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/small", Number: 2}, reviewOpts{By: "admin@x"}, false)
+	waitFor(t, func() bool { exec.mu.Lock(); defer exec.mu.Unlock(); return len(exec.tasks) == 1 })
 }

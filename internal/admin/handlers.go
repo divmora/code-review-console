@@ -401,6 +401,8 @@ type settingsReq struct {
 	CommitStatus          bool             `json:"commit_status"`
 	ReviewRetentionDays   int              `json:"review_retention_days"`
 	LearningsEnabled      bool             `json:"learnings_enabled"`
+	DailyTokenBudget      int64            `json:"daily_token_budget"`
+	RepoDailyTokenBudget  int64            `json:"repo_daily_token_budget"`
 	LearningsAutoActivate bool             `json:"learnings_auto_activate"`
 	WebhookRetentionDays  int              `json:"webhook_retention_days"`
 	DashboardEnabled      bool             `json:"dashboard_enabled"`
@@ -435,6 +437,7 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		SkipBranchSync: &req.SkipBranchSync, SyncSourceBranches: cleanList(req.SyncSourceBranches),
 		ScoreLabels: &req.ScoreLabels, CommitStatus: &req.CommitStatus,
 		LearningsEnabled: &req.LearningsEnabled, LearningsAutoActivate: &req.LearningsAutoActivate,
+		DailyTokenBudget: &req.DailyTokenBudget, RepoDailyTokenBudget: &req.RepoDailyTokenBudget,
 		ReviewRetentionDays: intOr(req.ReviewRetentionDays, 180), WebhookRetentionDays: intOr(req.WebhookRetentionDays, 14),
 		DashboardEnabled: &req.DashboardEnabled, HideRepos: &req.HideRepos, DashboardTitle: strings.TrimSpace(req.DashboardTitle),
 	}
@@ -840,7 +843,9 @@ func (a *Admin) apiMetrics(w http.ResponseWriter, r *http.Request, s *store.Sess
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"granularity": g, "from": from, "to": to, "points": points})
+	today, _ := a.store.TokensUsed(r.Context(), time.Now(), "", "", "")
+	writeJSON(w, http.StatusOK, map[string]any{"granularity": g, "from": from, "to": to, "points": points,
+		"today_tokens": today, "daily_token_budget": a.settings().Get(r.Context()).DailyTokenBudget})
 }
 
 // ---- learnings ----

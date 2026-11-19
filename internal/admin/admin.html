@@ -305,6 +305,12 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
         <label class="f">Learn from replies to the bot<select id="sLearn"><option value="true">On</option><option value="false">Off</option></select></label>
         <label class="f">New learnings<select id="sLearnAuto"><option value="true">Apply at once</option><option value="false">Wait for an admin's approval</option></select></label>
       </div>
+      <h2 class="h2 mt">Budgets</h2>
+      <div class="grid">
+        <label class="f">Daily tokens, all repositories<input id="sBudget" type="number" min="0" step="10000" placeholder="0 = no limit"></label>
+        <label class="f">Daily tokens per repository<input id="sRepoBudget" type="number" min="0" step="10000" placeholder="0 = no limit"></label>
+      </div>
+      <p class="sub">Input plus output tokens of finished jobs in the current UTC day. When a budget is used up, automatic reviews and chat commands wait until the next day; "Review now" and re-runs from this panel still run.</p>
       <h2 class="h2 mt">History</h2>
       <div class="grid">
         <label class="f">Keep reviews (days)<input id="sRevDays" type="number" min="1" max="3650"></label>
@@ -638,6 +644,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   function settingsBody(defaults) {
     function v(id) { return document.getElementById(id).value; }
     return { allowlist: v("sAllow") === "true", require_reviewer: v("sReviewer") === "true",
+      daily_token_budget: parseInt(v("sBudget") || "0", 10), repo_daily_token_budget: parseInt(v("sRepoBudget") || "0", 10),
       learnings_enabled: v("sLearn") === "true", learnings_auto_activate: v("sLearnAuto") === "true",
       review_retention_days: parseInt(v("sRevDays") || "0", 10), webhook_retention_days: parseInt(v("sHookDays") || "0", 10),
       skip_branch_sync: v("sSync") === "true", score_labels: v("sLabels") === "true", commit_status: v("sStatus") === "true",
@@ -662,6 +669,8 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     document.getElementById("sLabels").value = String(e.score_labels);
     document.getElementById("sRevDays").value = e.review_retention_days;
     document.getElementById("sLearn").value = String(e.learnings_enabled);
+    document.getElementById("sBudget").value = e.daily_token_budget || "";
+    document.getElementById("sRepoBudget").value = e.repo_daily_token_budget || "";
     document.getElementById("sLearnAuto").value = String(e.learnings_auto_activate);
     document.getElementById("sHookDays").value = e.webhook_retention_days;
     document.getElementById("sStatus").value = String(e.commit_status);
@@ -846,7 +855,8 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     var tiles = [["Jobs", fmtNum(tot.jobs)], ["Reviewed", fmtNum(tot.done)], ["Skipped", fmtNum(tot.skipped)],
       ["Failed", fmtNum(tot.failed) + (ran ? " · " + Math.round(100 * tot.failed / ran) + "%" : "")],
       ["Comments posted", fmtNum(tot.comments)], ["Tokens in / out", fmtNum(tot.tokens_in) + " / " + fmtNum(tot.tokens_out)],
-      ["Avg time", fmtDur(ran ? tot.duration_ms / Math.max(1, tot.jobs) : 0)]];
+      ["Avg time", fmtDur(ran ? tot.duration_ms / Math.max(1, tot.jobs) : 0)],
+      ["Tokens today (UTC)", fmtNum(d.today_tokens || 0) + (d.daily_token_budget ? " of " + fmtNum(d.daily_token_budget) : "")]];
     document.getElementById("mTiles").replaceChildren.apply(document.getElementById("mTiles"), tiles.map(function (t) {
       return el("div", { cls: "tile" }, [el("div", { cls: "n", text: t[1] }), el("div", { cls: "l", text: t[0] })]);
     }));
