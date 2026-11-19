@@ -26,7 +26,7 @@ func TestManager(t *testing.T) {
 	if !m.Has(license.Rules) || !m.Has(license.Audit) || m.Has(license.Learnings) {
 		t.Errorf("features: %+v", m.Status())
 	}
-	if st := m.Status(); st.Customer != "Test Co" || st.Plan != "enterprise" || st.Expires.IsZero() {
+	if st := m.Status(); st.Customer != "Test Co" || st.Plan != "custom" || st.Expires.IsZero() {
 		t.Errorf("status: %+v", st)
 	}
 	// Armored (PEM-style) keys work too.
@@ -82,5 +82,29 @@ func TestManager(t *testing.T) {
 	m.SetClock(func() time.Time { return time.Now().Add(10 * 365 * 24 * time.Hour) })
 	if st := m.Status(); st.State != license.Active || !st.Managed || len(st.Features) != len(license.All) {
 		t.Errorf("perpetual: %+v", st)
+	}
+
+	// Plans include features: the portal writes only add-ons into
+	// "features", so an enterprise or trial key with none unlocks everything.
+	for _, plan := range []string{"enterprise", "Trial"} {
+		key := k.Sign(t, lg.Claims{ID: "3f5e4d0c-2b0a-4e6d-9c77-7f3b2a4c9d55", Customer: lg.Customer{Name: "P"}, Product: license.Product,
+			Plan: plan, IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour)})
+		m := k.Manager(t)
+		if err := m.Install(key, "file"); err != nil {
+			t.Fatal(err)
+		}
+		if st := m.Status(); len(st.Features) != len(license.All) {
+			t.Errorf("plan %s with no explicit features: %v", plan, st.Features)
+		}
+	}
+	// Any other plan gets only its explicit features (add-ons).
+	addon := k.Sign(t, lg.Claims{ID: "4a6f5e1d-3c1b-4f7e-8d88-8a4c3b5d0e66", Customer: lg.Customer{Name: "P"}, Product: license.Product,
+		Plan: "starter", IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), Features: []string{"audit"}})
+	m2 := k.Manager(t)
+	if err := m2.Install(addon, "file"); err != nil {
+		t.Fatal(err)
+	}
+	if !m2.Has(license.Audit) || m2.Has(license.Rules) {
+		t.Errorf("starter + audit add-on: %v", m2.Status().Features)
 	}
 }

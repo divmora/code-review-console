@@ -63,8 +63,18 @@ const Grace = 14 * 24 * time.Hour
 // ErrFormat is returned for an empty key.
 var ErrFormat = errors.New("not a Divmora license key")
 
-// Grants reports whether claims enable f.
-func Grants(c *lg.Claims, f Feature) bool { return c != nil && c.HasFeature(string(f)) }
+// Tiers are the features each plan includes, matching the license
+// portal's product catalog (modules "included_in_plans"). The portal only
+// writes add-ons into a key's "features"; what the plan includes is implied
+// by the plan, so it must be listed here. Keep in step with the portal.
+var Tiers = lg.TierFeatures{
+	"enterprise": {"*"},
+	"trial":      {"*"},
+}
+
+// Grants reports whether claims enable f: through the plan (Tiers) or as
+// an explicit feature (an add-on).
+func Grants(c *lg.Claims, f Feature) bool { return c != nil && c.HasFeatureWithTiers(string(f), Tiers) }
 
 // State of the installed license.
 type State string

@@ -49,8 +49,10 @@ func (k *Key) Issue(t testing.TB, d time.Duration, features ...license.Feature) 
 	for i, f := range features {
 		fs[i] = string(f)
 	}
+	// A plan with no tier of its own, so exactly the given features are on
+	// (enterprise and trial would include every feature).
 	return k.Sign(t, lg.Claims{ID: "7b0c6f1e-3f43-4a52-9d1e-2b8f0a9c1d11", Customer: lg.Customer{Name: "Test Co"}, Product: license.Product,
-		Plan: "enterprise", IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(d), Features: fs})
+		Plan: "custom", IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(d), Features: fs})
 }
 
 // Manager returns an empty Manager trusting k.
