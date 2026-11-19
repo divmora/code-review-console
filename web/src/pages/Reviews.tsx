@@ -1,8 +1,17 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { ExternalLink, Play, Search } from "lucide-react";
 import { get, post, qs } from "../api";
 import JobsChart, { Point, series } from "../Chart";
 import { ago, fmtDur, fmtNum } from "../format";
-import { Empty, errMsg, Locked, StateBadge, useFeature, useMe, useToast } from "../ui";
+import { Empty, errMsg, Locked, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useFeature, useMe, useToast } from "../ui";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Job = {
   id: number; kind: string; platform: string; host: string; repo: string; number: number; url: string; trigger: string;
@@ -36,13 +45,15 @@ function fillBuckets(d: Metrics): Point[] {
   return out;
 }
 
+const severityKind: Record<string, "off" | "warn" | "idle"> = { critical: "off", major: "warn", minor: "idle", nitpick: "idle" };
+
 function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }) {
   const toast = useToast();
   const [d, setD] = useState<Job | null>(null);
   useEffect(() => {
     get<Job>("/admin/api/reviews/" + job.id).then(setD).catch((e) => toast(errMsg(e), true));
   }, [job.id]);
-  if (!d) return <div className="muted">Loading…</div>;
+  if (!d) return <p className="text-sm text-muted-foreground">Loading…</p>;
   let r: any = null;
   try {
     r = d.result ? (typeof d.result === "string" ? JSON.parse(d.result) : d.result) : null;
@@ -51,58 +62,80 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
   }
   const v = r?.verification;
   return (
-    <div className="detail-box">
+    <div className="grid gap-5 text-sm">
       {d.error && (
-        <div className="finding">
-          <div className="t">Error</div>
-          <pre className="detail">{d.error}</pre>
+        <div className="rounded-md border border-destructive/40 bg-danger-soft p-3">
+          <div className="mb-1 font-medium text-destructive">Error</div>
+          <pre className="font-mono text-xs whitespace-pre-wrap text-destructive">{d.error}</pre>
         </div>
       )}
       {r ? (
         <>
           {r.summary && (
-            <>
-              <h3>Summary</h3>
-              <p>{r.summary}</p>
-            </>
-          )}
-          {r.scores && <p className="sub">Scores — quality {r.scores.quality} · security {r.scores.security} · maintainability {r.scores.maintainability}</p>}
-          <h3>{(r.findings || []).length ? `Findings (${r.findings.length})` : "No findings"}</h3>
-          {(r.findings || []).map((f: any, i: number) => (
-            <div className="finding" key={i}>
-              <div className="t">{(f.kind === "question" ? "❓ " : "") + f.title}</div>
-              <div className="plat">
-                {f.severity} · {f.category} · {f.path}:{f.end_line}
-              </div>
+            <div>
+              <h3 className="mb-1 font-semibold">Summary</h3>
+              <p className="leading-relaxed text-muted-foreground">{r.summary}</p>
             </div>
-          ))}
+          )}
+          {r.scores && (
+            <div className="grid grid-cols-3 gap-2">
+              {(["quality", "security", "maintainability"] as const).map((k) => (
+                <div key={k} className="rounded-md border p-2.5">
+                  <div className="text-lg font-semibold">{r.scores[k]}</div>
+                  <div className="text-xs text-muted-foreground capitalize">{k}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div>
+            <h3 className="mb-2 font-semibold">{(r.findings || []).length ? `Findings (${r.findings.length})` : "No findings"}</h3>
+            <div className="grid gap-2">
+              {(r.findings || []).map((f: any, i: number) => (
+                <div className="finding rounded-md border p-3" key={i}>
+                  <div className="font-medium">{(f.kind === "question" ? "❓ " : "") + f.title}</div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <StateBadge kind={severityKind[f.severity] ?? "idle"}>{f.severity}</StateBadge>
+                    <Badge variant="outline" className="font-normal">
+                      {f.category}
+                    </Badge>
+                    <span className="font-mono">
+                      {f.path}:{f.end_line}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           {v?.ran && (
-            <p className="sub">
+            <p className="text-muted-foreground">
               Verification ({v.model}): {v.confirmed || 0} confirmed · {v.false_positives || 0} removed · {v.questions || 0} questions
             </p>
           )}
-          {(v?.removed || []).map((x: any, i: number) => (
-            <div className="finding" key={"r" + i}>
-              <div className="plat">
-                Removed: {x.title} — {x.reason}
-              </div>
+          {(v?.removed || []).length > 0 && (
+            <div className="grid gap-1.5">
+              {(v.removed as any[]).map((x: any, i: number) => (
+                <p key={"r" + i} className="text-xs text-muted-foreground">
+                  Removed: <span className="text-foreground">{x.title}</span> — {x.reason}
+                </p>
+              ))}
             </div>
-          ))}
+          )}
         </>
       ) : (
-        !d.error && <p className="muted">{d.note || "No review result stored for this job."}</p>
+        !d.error && <p className="text-muted-foreground">{d.note || "No review result stored for this job."}</p>
       )}
-      <p className="sub">
+      <Separator />
+      <p className="text-xs text-muted-foreground">
         Model {d.model || "—"} · {d.comments} comments · {d.files} files
       </p>
       {job.kind.includes("review") && (
-        <div className="bar mt">
-          <button className="btn" onClick={() => onRerun(false)}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => onRerun(false)}>
             Re-run (new changes)
-          </button>
-          <button className="btn" onClick={() => onRerun(true)}>
+          </Button>
+          <Button variant="outline" onClick={() => onRerun(true)}>
             Re-run full review
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -174,70 +207,84 @@ export default function Reviews() {
     ["Tokens today (UTC)", fmtNum(metrics?.today_tokens || 0) + (metrics?.daily_token_budget ? " of " + fmtNum(metrics.daily_token_budget) : "")],
   ];
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const openJob = jobs?.find((j) => j.id === open) ?? null;
 
   return (
-    <section>
-      <div className="bar">
+    <section className="grid gap-4">
+      <Toolbar>
         {hasMetrics && (
-          <select aria-label="Period" value={gran} onChange={(e) => setGran(e.target.value)}>
+          <NativeSelect className="w-auto" aria-label="Period" value={gran} onChange={(e) => setGran(e.target.value)}>
             <option value="hour">Last 48 hours</option>
             <option value="day">Last 30 days</option>
             <option value="month">Last 12 months</option>
-          </select>
+          </NativeSelect>
         )}
-        <span className="spacer" />
-        <input type="url" className="rn-url" placeholder="Paste a PR/MR URL to review it now" aria-label="Pull request URL" value={url} onChange={(e) => setURL(e.target.value)} />
-        <label className="sub">
-          <input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} /> full
-        </label>
-        <button className="btn primary" onClick={reviewNow}>
-          Review now
-        </button>
-      </div>
+        <span className="flex-1" />
+        <Input type="url" className="rn-url w-full sm:w-80" placeholder="Paste a PR/MR URL to review it now" aria-label="Pull request URL" value={url} onChange={(e) => setURL(e.target.value)} onKeyDown={(e) => e.key === "Enter" && reviewNow()} />
+        <div className="flex items-center gap-2">
+          <Checkbox id="rnFull" checked={full} onCheckedChange={(v) => setFull(v === true)} />
+          <Label htmlFor="rnFull" className="text-sm font-normal text-muted-foreground">
+            Full
+          </Label>
+        </div>
+        <Button onClick={reviewNow}>
+          <Play /> Review now
+        </Button>
+      </Toolbar>
+
       {!hasMetrics && (
         <Locked feature="metrics">
           Totals, charts and token use, and history kept longer than {me.free_retention_days} days, are part of the licensed console. Every review is listed below.
         </Locked>
       )}
       {hasMetrics && (
-      <>
-      <div className="tiles">
-        {tiles.map(([l, v]) => (
-          <div className="tile" key={l}>
-            <div className="n">{v}</div>
-            <div className="l">{l}</div>
+        <>
+          <div className="tiles grid grid-cols-2 gap-3 md:grid-cols-4">
+            {tiles.map(([l, v]) => (
+              <Card key={l} className="tile gap-1 py-4">
+                <CardContent className="px-4">
+                  <div className="text-xl font-semibold tabular-nums">{v}</div>
+                  <div className="text-xs text-muted-foreground">{l}</div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        ))}
-      </div>
-      <div className="panel pad chartbox">
-        <div className="legend">
-          {series.map(([k, label, c]) => (
-            <span key={k} ref={(el) => el?.style.setProperty("--sw", `var(${c})`)}>
-              {label} {fmtNum(tot[k as string] || 0)}
-            </span>
-          ))}
-        </div>
-        {metrics && <JobsChart points={pts} granularity={metrics.granularity} />}
-      </div>
-      </>
+          <Card className="py-4">
+            <CardContent className="grid gap-3 px-4">
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                {series.map(([k, label, c]) => (
+                  <span key={k} className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm" ref={(el) => el?.style.setProperty("background", `var(${c})`)} />
+                    {label} {fmtNum(tot[k as string] || 0)}
+                  </span>
+                ))}
+              </div>
+              {metrics && <JobsChart points={pts} granularity={metrics.granularity} />}
+            </CardContent>
+          </Card>
+        </>
       )}
-      <div className="bar mt">
-        <select aria-label="Host" value={f.host} onChange={set("host")}>
+
+      <Toolbar>
+        <NativeSelect className="w-auto" aria-label="Host" value={f.host} onChange={set("host")}>
           <option value="">All hosts</option>
           {hosts.map((h) => (
             <option key={h.host} value={h.host}>
               {h.name}
             </option>
           ))}
-        </select>
-        <input type="search" placeholder="Repository" aria-label="Repository" value={repoQ} onChange={(e) => setRepoQ(e.target.value)} />
-        <select aria-label="State" value={f.state} onChange={set("state")}>
+        </NativeSelect>
+        <div className="relative w-full sm:w-52">
+          <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+          <Input type="search" className="pl-8" placeholder="Repository" aria-label="Repository" value={repoQ} onChange={(e) => setRepoQ(e.target.value)} />
+        </div>
+        <NativeSelect className="w-auto" aria-label="State" value={f.state} onChange={set("state")}>
           <option value="">Any state</option>
           <option value="done">Done</option>
           <option value="skipped">Skipped</option>
           <option value="failed">Failed</option>
-        </select>
-        <select aria-label="Kind" value={f.kind} onChange={set("kind")}>
+        </NativeSelect>
+        <NativeSelect className="w-auto" aria-label="Kind" value={f.kind} onChange={set("kind")}>
           <option value="">Any kind</option>
           <option value="review">Review</option>
           <option value="full review">Full review</option>
@@ -245,102 +292,104 @@ export default function Reviews() {
           <option value="help">Help</option>
           <option value="learn">Learn</option>
           <option value="remember">Remember</option>
-        </select>
-        <select aria-label="Trigger" value={f.trigger} onChange={set("trigger")}>
+        </NativeSelect>
+        <NativeSelect className="w-auto" aria-label="Trigger" value={f.trigger} onChange={set("trigger")}>
           <option value="">Any trigger</option>
           <option value="push">Push</option>
           <option value="command">Command</option>
           <option value="reply">Reply</option>
           <option value="ui">Admin panel</option>
-        </select>
-        <input type="date" aria-label="From" value={f.from} onChange={set("from")} />
-        <input type="date" aria-label="To" value={f.to} onChange={set("to")} />
-      </div>
-      <div className="panel">
+        </NativeSelect>
+        <Input type="date" className="w-auto" aria-label="From" value={f.from} onChange={set("from")} />
+        <Input type="date" className="w-auto" aria-label="To" value={f.to} onChange={set("to")} />
+      </Toolbar>
+
+      <Panel>
         {!jobs ? (
           <Empty>Loading…</Empty>
         ) : !jobs.length ? (
           <Empty>No reviews match.</Empty>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Finished</th>
-                <th>Pull request</th>
-                <th>Job</th>
-                <th>State</th>
-                <th>Comments / files</th>
-                <th>Tokens in / out</th>
-                <th>Took</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">Finished</TableHead>
+                <TableHead>Pull request</TableHead>
+                <TableHead>Job</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead className="text-right">Comments / files</TableHead>
+                <TableHead className="text-right">Tokens in / out</TableHead>
+                <TableHead className="text-right">Took</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {jobs.map((j) => {
                 const dur = j.started && !j.started.startsWith("0001-") ? new Date(j.finished).getTime() - new Date(j.started).getTime() : 0;
                 return (
-                  <Fragment key={j.id}>
-                    <tr>
-                      <td className="muted nowrap" title={new Date(j.finished).toLocaleString()}>
-                        {ago(j.finished)}
-                      </td>
-                      <td>
-                        <div>
-                          {j.url ? (
-                            <a href={j.url} target="_blank" rel="noopener noreferrer">
-                              {j.repo} #{j.number}
-                            </a>
-                          ) : (
-                            `${j.repo} #${j.number}`
-                          )}
-                        </div>
-                        <div className="plat">
-                          {j.platform} · {j.host}
-                        </div>
-                      </td>
-                      <td>
-                        <div>{j.kind}</div>
-                        <div className="plat">{j.trigger + (j.requested_by ? " · " + j.requested_by : "")}</div>
-                      </td>
-                      <td>
-                        <StateBadge kind={j.state === "done" ? "on" : j.state === "failed" ? "off" : "idle"}>{j.state}</StateBadge>
-                        <div className="why">{j.error ? j.error.slice(0, 90) : j.note}</div>
-                      </td>
-                      <td className="nowrap">
-                        {j.comments} / {j.files}
-                      </td>
-                      <td className="nowrap muted">
-                        {fmtNum(j.tokens_in)} / {fmtNum(j.tokens_out)}
-                      </td>
-                      <td className="nowrap muted">{fmtDur(dur)}</td>
-                      <td>
-                        <button className="btn" onClick={() => setOpen(open === j.id ? null : j.id)}>
-                          {open === j.id ? "Close" : "Details"}
-                        </button>
-                      </td>
-                    </tr>
-                    {open === j.id && (
-                      <tr className="editor">
-                        <td colSpan={8}>
-                          <Detail job={j} onRerun={(isFull) => rerun(j, isFull)} />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
+                  <TableRow key={j.id} className="cursor-pointer" onClick={() => setOpen(j.id)}>
+                    <TableCell className="pl-4 text-muted-foreground" title={new Date(j.finished).toLocaleString()}>
+                      {ago(j.finished)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">
+                        {j.url ? (
+                          <a className="inline-flex items-center gap-1 hover:underline" href={j.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                            {j.repo} #{j.number} <ExternalLink className="size-3 text-muted-foreground" />
+                          </a>
+                        ) : (
+                          `${j.repo} #${j.number}`
+                        )}
+                      </div>
+                      <Sub>
+                        {j.platform} · {j.host}
+                      </Sub>
+                    </TableCell>
+                    <TableCell>
+                      <div>{j.kind}</div>
+                      <Sub>{j.trigger + (j.requested_by ? " · " + j.requested_by : "")}</Sub>
+                    </TableCell>
+                    <TableCell className="max-w-64 whitespace-normal">
+                      <StateBadge kind={j.state === "done" ? "on" : j.state === "failed" ? "off" : "idle"}>{j.state}</StateBadge>
+                      {(j.error || j.note) && <Sub className="line-clamp-2">{j.error ? j.error.slice(0, 120) : j.note}</Sub>}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {j.comments} / {j.files}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground tabular-nums">
+                      {fmtNum(j.tokens_in)} / {fmtNum(j.tokens_out)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground tabular-nums">{fmtDur(dur)}</TableCell>
+                    <TableCell className="pr-4 text-right">
+                      <Button variant="ghost" size="sm" onClick={(e) => (e.stopPropagation(), setOpen(j.id))}>
+                        Details
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
+      </Panel>
       {more && (
-        <div className="bar mt">
-          <button className="btn" onClick={() => jobs && loadJobs(jobs[jobs.length - 1].id)}>
+        <div>
+          <Button variant="outline" onClick={() => jobs && loadJobs(jobs[jobs.length - 1].id)}>
             Load older
-          </button>
+          </Button>
         </div>
       )}
-      <p className="sub">Every finished review, answer, help and learning job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; hourly detail for 3 days, daily and monthly totals for good.</p>
+      <Note>Every finished review, answer, help and learning job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; hourly detail for 3 days, daily and monthly totals for good.</Note>
+
+      <SidePanel
+        wide
+        open={!!openJob}
+        onClose={() => setOpen(null)}
+        title={openJob ? `${openJob.repo} #${openJob.number}` : ""}
+        description={openJob ? `${openJob.kind} · ${openJob.trigger} · ${openJob.state} · ${ago(openJob.finished)}` : undefined}
+      >
+        {openJob && <Detail key={openJob.id} job={openJob} onRerun={(isFull) => rerun(openJob, isFull)} />}
+      </SidePanel>
     </section>
   );
 }

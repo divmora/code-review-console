@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { get } from "../api";
-import { Empty, errMsg, Locked, useFeature, useToast } from "../ui";
+import { Empty, errMsg, Locked, Panel, useFeature, useToast } from "../ui";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; detail: unknown };
 
@@ -18,39 +19,41 @@ export default function Audit() {
       </section>
     );
   return (
-    <section>
-      <div className="panel">
+    <section className="grid gap-4">
+      <Panel>
         {!list ? (
           <Empty>Loading…</Empty>
         ) : !list.length ? (
           <Empty>No admin activity yet.</Empty>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Who</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">When</TableHead>
+                <TableHead>Who</TableHead>
+                <TableHead>Action</TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead className="pr-4">Details</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {list.map((e, i) => (
-                <tr key={e.id ?? i}>
-                  <td className="muted">{new Date(e.at).toLocaleString()}</td>
-                  <td>{e.actor}</td>
-                  <td>{e.action}</td>
-                  <td>{e.target}</td>
-                  <td>
-                    <pre className="detail">{JSON.stringify(e.detail)}</pre>
-                  </td>
-                </tr>
+                <TableRow key={e.id ?? i}>
+                  <TableCell className="pl-4 align-top text-muted-foreground">{new Date(e.at).toLocaleString()}</TableCell>
+                  <TableCell className="align-top">{e.actor}</TableCell>
+                  <TableCell className="align-top">
+                    <code>{e.action}</code>
+                  </TableCell>
+                  <TableCell className="align-top">{e.target}</TableCell>
+                  <TableCell className="max-w-xl pr-4 align-top whitespace-normal">
+                    <pre className="detail max-h-40 overflow-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre-wrap break-all">{JSON.stringify(e.detail)}</pre>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
+      </Panel>
     </section>
   );
 }
