@@ -93,6 +93,7 @@ docker compose up --build                 # console + PostgreSQL
 - GitHub App setup: [docs/github-app.md](docs/github-app.md)
 - GitLab webhooks: [docs/gitlab.md](docs/gitlab.md)
 - Admin sign-in (OIDC): [docs/admin.md](docs/admin.md)
+- Deploying, upgrading and CLI compatibility: [docs/deploy.md](docs/deploy.md)
 - Check a config: `code-review-console check-config --config console.yaml`
 
 ## Executors
@@ -109,12 +110,14 @@ Provider keys and cloud credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEM
 
 ```bash
 make build      # bin/code-review-console
+make web        # rebuild the admin UI (web/ → internal/admin/ui, commit the result)
+make web-dev    # admin UI dev server on :5173, proxying to a console on :8080
 make test       # unit tests
 make test-db    # + PostgreSQL integration tests (Docker)
 make test-e2e   # + end-to-end with the real codereview CLI (local + docker executors)
 ```
 
-The console imports only `pkg/vcs` from code-review-bot (code host API clients). Everything else about the engine goes through the CLI: the console writes `CODEREVIEW_CONFIG_YAML` itself, and `console check-config` runs `codereview config validate` through the configured executor, so the binary or image that runs reviews is the one that judges the config. That check needs code-review-bot v0.4.0 or later.
+The console imports only `pkg/vcs` from code-review-bot (code host API clients). Everything else about the engine goes through the CLI: the console writes `CODEREVIEW_CONFIG_YAML` itself, and `console check-config` runs `codereview config validate` through the configured executor, so the binary or image that runs reviews is the one that judges the config. This console needs code-review-bot v0.4.0 or later; see [docs/deploy.md](docs/deploy.md#cli-compatibility).
 
 ## License
 

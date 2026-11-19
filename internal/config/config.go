@@ -428,9 +428,15 @@ func (c *Config) validate() error {
 		if c.Executor.Docker.Image == "" {
 			return errors.New("executor.docker.image is required")
 		}
+		if err := checkImageTag("executor.docker.image", c.Executor.Docker.Image); err != nil {
+			return err
+		}
 	case "kubernetes":
 		if c.Executor.Kubernetes.Image == "" {
 			return errors.New("executor.kubernetes.image is required")
+		}
+		if err := checkImageTag("executor.kubernetes.image", c.Executor.Kubernetes.Image); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("executor.type %q: want local, docker or kubernetes", c.Executor.Type)

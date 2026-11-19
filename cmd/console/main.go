@@ -200,11 +200,17 @@ func checkConfig(ctx context.Context, args []string) error {
 	defer cancel()
 	res, err := exec.Run(cctx, executor.Task{
 		ID: fmt.Sprintf("check-config-%d", time.Now().UnixNano()), Kind: "validate", ConfigYAML: yml, Env: env,
+		// Every override key the console may send, so a CLI too old to
+		// understand one fails here (it rejects unknown keys), not in a review.
+		Overrides: config.Overrides{Learnings: []config.Learning{{Text: "check-config probe"}}},
 	})
 	if err != nil {
 		var re *executor.RunError
 		if errors.As(err, &re) && strings.Contains(re.Logs, `unknown command "config"`) {
 			return fmt.Errorf("the codereview CLI used by the %s executor has no \"config validate\" command; use code-review-bot v0.4.0 or later", exec.Name())
+		}
+		if errors.As(err, &re) && strings.Contains(re.Logs, "CODEREVIEW_OVERRIDES") && strings.Contains(re.Logs, "unknown field") {
+			return fmt.Errorf("the codereview CLI used by the %s executor is too old for this console (it does not know every override key); use code-review-bot v%s or later: %w", exec.Name(), config.MinCLIVersion, err)
 		}
 		return fmt.Errorf("codereview config validate (%s executor): %w", exec.Name(), err)
 	}
@@ -214,6 +220,12 @@ func checkConfig(ctx context.Context, args []string) error {
 		Version string   `json:"version"`
 	}
 	_ = json.Unmarshal(res.Raw, &rep)
+	switch ok, known := config.CLIVersionOK(rep.Version); {
+	case !ok:
+		return fmt.Errorf("the %s executor runs codereview %s; this console needs v%s or later", exec.Name(), rep.Version, config.MinCLIVersion)
+	case !known:
+		fmt.Printf("note: codereview %q is a development build; release builds must be v%s or later\n", rep.Version, config.MinCLIVersion)
+	}
 	fmt.Printf("engine config: ok (codereview %s)\nmodel chain: %s\n", rep.Version, strings.Join(rep.Chain, " -> "))
 	if rep.Verify != "" {
 		fmt.Println("verify model:", rep.Verify)

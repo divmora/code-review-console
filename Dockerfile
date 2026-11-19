@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
-# The codereview CLI image the local executor runs. Pin it to a release.
-ARG BOT_IMAGE=ghcr.io/divmora/code-review-bot:v0.3.0
+
+# The codereview CLI the local executor runs, pinned to a release that is at
+# least config.MinCLIVersion. A plain FROM line (not an ARG) so Dependabot
+# can bump it.
+FROM ghcr.io/divmora/code-review-bot:v0.4.0 AS bot
 
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS builder
 ARG TARGETOS
@@ -13,8 +16,6 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags "-s -w -X github.com/divmora/code-review-console/internal/version.Version=${VERSION}" \
     -o /out/code-review-console ./cmd/console
-
-FROM ${BOT_IMAGE} AS bot
 
 FROM debian:bookworm-slim
 ARG VERSION=0.0.0-dev
