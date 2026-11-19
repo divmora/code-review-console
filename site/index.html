@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Review Console — self-hosted AI code review for every repository</title>
+<meta name="description" content="Self-hosted control plane for AI code review: GitHub, GitLab and Bitbucket webhooks, a review queue, local, Docker and Kubernetes executors and an admin panel. Free core, paid features by license key.">
+<meta property="og:title" content="Code Review Console by Divmora">
+<meta property="og:description" content="Run AI code review for every repository from one self-hosted admin panel. Free core; paid features by license key.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://divmora.github.io/code-review-console/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c6cff'/><rect x='8' y='8' width='16' height='16' rx='2' stroke='white' stroke-width='2.4' fill='none'/><path d='M13 8v16' stroke='white' stroke-width='2.4'/></svg>">
+<style>
+:root {
+  --bg: #0b0b10; --bg-soft: #111118; --panel: #15151d; --panel-2: #1b1b25; --line: #262633;
+  --text: #ececf3; --muted: #9b9bab; --faint: #6d6d7d;
+  --accent: #8b7dff; --accent-2: #5ee0c1; --accent-ink: #0b0b10;
+  --ok: #4cc584; --warn: #e8a33d; --bad: #f07067; --info: #6ea2ff;
+  --code-bg: #0f0f15; --shadow: 0 20px 60px rgba(0,0,0,.35);
+  --radius: 14px; --max: 1120px;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #fbfbfd; --bg-soft: #f4f4f8; --panel: #ffffff; --panel-2: #f6f6fa; --line: #e5e5ee;
+    --text: #17171f; --muted: #5d5d6e; --faint: #8a8a99;
+    --accent: #5b4fd6; --accent-2: #0e9f80; --accent-ink: #ffffff;
+    --ok: #1f8a4c; --warn: #b26a00; --bad: #c4352b; --info: #2f6fd1;
+    --code-bg: #f6f6fa; --shadow: 0 18px 50px rgba(30,30,60,.10);
+  }
+}
+:root[data-theme="light"] {
+  --bg: #fbfbfd; --bg-soft: #f4f4f8; --panel: #ffffff; --panel-2: #f6f6fa; --line: #e5e5ee;
+  --text: #17171f; --muted: #5d5d6e; --faint: #8a8a99;
+  --accent: #5b4fd6; --accent-2: #0e9f80; --accent-ink: #ffffff;
+  --ok: #1f8a4c; --warn: #b26a00; --bad: #c4352b; --info: #2f6fd1;
+  --code-bg: #f6f6fa; --shadow: 0 18px 50px rgba(30,30,60,.10);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body { margin: 0; overflow-x: clip; background: var(--bg); color: var(--text); font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, kbd { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+:not(pre) > code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: .08em .38em; font-size: .88em; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+svg.i { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* nav */
+header.nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+.nav .wrap { display: flex; align-items: center; gap: 22px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.brand:hover { text-decoration: none; }
+.logo { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; color: #fff; }
+.logo svg { width: 16px; height: 16px; stroke: #fff; }
+.nav nav { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+.nav nav a { color: var(--muted); }
+.nav nav a:hover { color: var(--text); text-decoration: none; }
+.theme { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; }
+@media (max-width: 760px) { .nav nav a.hide-sm { display: none; } .nav .wrap { gap: 14px; } }
+@media (max-width: 420px) { .nav nav a[href="#cli"] { display: none; } }
+
+/* hero */
+.hero { padding: 76px 0 40px; position: relative; overflow: hidden; }
+.hero::before { content: ""; position: absolute; inset: -200px -10% auto; height: 520px; background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 24%, transparent), transparent 70%); pointer-events: none; }
+.hero .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 44px; align-items: center; }
+.hero .wrap > * { min-width: 0; }
+@media (max-width: 920px) { .hero .wrap { grid-template-columns: minmax(0, 1fr); } }
+.pill { display: inline-block; line-height: 1.5; font-size: 13px; color: var(--muted); border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; }
+.pill b { color: var(--accent-2); font-weight: 600; }
+h1 { font-size: clamp(34px, 5vw, 54px); line-height: 1.08; letter-spacing: -.025em; margin: 18px 0 16px; }
+h1 .grad { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lead { font-size: 18px; color: var(--muted); max-width: 560px; margin: 0 0 26px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px; font-weight: 600; font-size: 15px; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+.btn:hover { text-decoration: none; border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.install { margin-top: 22px; display: flex; align-items: center; gap: 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; max-width: 560px; }
+.install code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; color: var(--text); }
+.install .dollar { color: var(--faint); user-select: none; }
+
+/* review mock */
+.mock { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; font-size: 14px; }
+.mock .bar { display: flex; gap: 6px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); align-items: center; color: var(--faint); font-size: 12px; }
+.mock .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
+.mock .bar span { margin-left: 8px; }
+.diff { font-family: "JetBrains Mono", monospace; font-size: 12.5px; background: var(--code-bg); }
+.diff div { padding: 1px 14px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.diff .ln { color: var(--faint); display: inline-block; width: 30px; }
+.diff .add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.diff .del { background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.comment { margin: 10px 14px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.comment .who { display: flex; gap: 8px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.comment .who .av { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.comment .who b { color: var(--text); }
+.comment .body { padding: 10px 12px 12px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 9px; margin-right: 6px; }
+.t-major { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.t-cat { color: var(--info); background: color-mix(in srgb, var(--info) 15%, transparent); }
+.comment h4 { margin: 8px 0 4px; font-size: 14px; }
+.comment p { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.sugg { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-family: "JetBrains Mono", monospace; font-size: 12px; }
+.sugg .h { padding: 5px 10px; background: var(--panel-2); color: var(--faint); font-family: Inter, sans-serif; font-size: 12px; display: flex; justify-content: space-between; }
+.sugg .h b { color: var(--ok); font-weight: 600; }
+.scores { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 14px 14px; }
+.score { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); }
+.score .n { font-size: 20px; font-weight: 700; }
+.score .l { font-size: 11.5px; color: var(--faint); }
+.g { color: var(--ok); } .o { color: var(--warn); } .r { color: var(--bad); }
+
+/* sections */
+section { padding: 64px 0; }
+section.alt { background: var(--bg-soft); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.eyebrow { color: var(--accent-2); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+h2 { font-size: clamp(26px, 3.4vw, 36px); letter-spacing: -.02em; margin: 8px 0 10px; line-height: 1.15; }
+.sub { color: var(--muted); max-width: 680px; margin: 0 0 32px; }
+h3 { font-size: 17px; margin: 0 0 6px; }
+.grid { display: grid; gap: 16px; }
+.grid > * { min-width: 0; }
+.g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.g1 { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 920px) { .g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .g3, .g2 { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+.card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+.card .ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-bottom: 12px; }
+
+/* code blocks + tabs */
+.codeblock { position: relative; background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.codeblock .ttl { font-size: 12.5px; color: var(--faint); padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: flex; justify-content: space-between; align-items: center; }
+pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; color: var(--text); }
+.copy { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 7px; font: 12px Inter, sans-serif; padding: 3px 9px; cursor: pointer; }
+.copy:hover { color: var(--text); border-color: var(--accent); }
+.c { color: var(--faint); } .k { color: var(--accent); } .s { color: var(--accent-2); }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.tabs button { background: var(--panel); border: 1px solid var(--line); color: var(--muted); border-radius: 9px; padding: 8px 14px; font: 600 14px Inter, sans-serif; cursor: pointer; }
+.tabs button[aria-selected="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.tabpanel[hidden] { display: none; }
+
+/* providers */
+.providers { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 26px; }
+.prov { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 500; }
+.prov small { color: var(--faint); font-weight: 400; margin-left: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--faint); font-weight: 500; font-size: 13px; }
+td code { white-space: nowrap; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.tablewrap tr:last-child td { border-bottom: 0; }
+
+ul.check { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+ul.check li { display: flex; gap: 10px; color: var(--muted); font-size: 15px; }
+ul.check li svg { color: var(--accent-2); margin-top: 3px; }
+ul.check b { color: var(--text); font-weight: 600; }
+
+.console { display: flex; gap: 24px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--panel)), var(--panel)); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; }
+.console p { color: var(--muted); margin: 6px 0 0; max-width: 640px; }
+footer { padding: 36px 0 48px; color: var(--faint); font-size: 14px; border-top: 1px solid var(--line); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 14px; justify-content: space-between; }
+footer a { color: var(--muted); }
+
+/* console additions */
+.nav nav a { white-space: nowrap; }
+@media (max-width: 440px) { .nav nav a[href="#start"] { display: none; } }
+@media (max-width: 360px) { .nav nav a[href^="https://github.com"] { display: none; } }
+.app { display: grid; grid-template-columns: 132px minmax(0, 1fr); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; font-size: 13px; }
+.app .side { background: var(--panel-2); border-right: 1px solid var(--line); padding: 12px 8px; display: grid; gap: 2px; align-content: start; }
+.app .side b { font-size: 12.5px; padding: 2px 8px 8px; }
+.app .side span { padding: 5px 8px; border-radius: 6px; color: var(--muted); display: flex; justify-content: space-between; gap: 4px; }
+.app .side span.on { background: var(--bg-soft); color: var(--text); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.app .side small { color: var(--faint); font-size: 10px; }
+.app .main { padding: 14px; min-width: 0; }
+.app .main h4 { margin: 0 0 10px; font-size: 15px; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.tiles div { border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; background: var(--panel-2); }
+.tiles b { display: block; font-size: 17px; }
+.tiles small { color: var(--faint); font-size: 11px; }
+.bars { display: flex; align-items: flex-end; gap: 5px; height: 64px; padding: 6px 4px 0; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.bars i { flex: 1; border-radius: 4px 4px 0 0; background: var(--ok); }
+.bars i.sk { background: var(--faint); }
+.rows div { display: flex; justify-content: space-between; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.rows div:last-child { border-bottom: 0; }
+.rows code { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.st.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.st.sk { color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); }
+@media (max-width: 480px) { .app { grid-template-columns: minmax(0, 1fr); } .app .side { display: none; } }
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; counter-reset: step; }
+.flow .card { position: relative; }
+.flow .card::before { counter-increment: step; content: counter(step); position: absolute; top: 16px; right: 18px; font-weight: 800; font-size: 22px; color: var(--line); }
+@media (max-width: 920px) { .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .flow { grid-template-columns: minmax(0, 1fr); } }
+.paid { font-size: 11px; font-weight: 600; color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: 2px; }
+.plans td:first-child { width: 22%; color: var(--text); font-weight: 600; }
+.plans td { color: var(--muted); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 003 3h6M18 15V9"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 2l10 6-10 6L2 8l10-6z"/><path d="M2 16l10 6 10-6"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1117.4 0"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20V3H6.5A2.5 2.5 0 004 5.5v14z"/><path d="M20 17v4H6.5A2.5 2.5 0 014 18.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-gh" viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 00-1.3-3.2 4.2 4.2 0 00-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 00-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 00-.1 3.2A4.6 4.6 0 004 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+  <symbol id="i-webhook" viewBox="0 0 24 24"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 012 17c.01-.7.2-1.4.57-2"/><path d="M6 17l3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 116.89-4.06"/><path d="M12 6l3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 010 8"/></symbol>
+  <symbol id="i-queue" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h12"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M13 8h5M13 12h5M13 16h3"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 11-7.8 7.8 5.5 5.5 0 017.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 16v-4M12 16V8M17 16v-7"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></symbol>
+</svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="logo"><svg class="i"><use href="#i-panel"/></svg></span>Code Review Console</a>
+    <nav>
+      <a href="#how" class="hide-sm">How it works</a>
+      <a href="#features" class="hide-sm">Features</a>
+      <a href="#plans" class="hide-sm">Free &amp; paid</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/divmora/code-review-console">GitHub</a>
+    </nav>
+    <button class="theme" id="theme" title="Toggle light/dark" aria-label="Toggle light or dark theme"><svg class="i"><use href="#i-sun"/></svg></button>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <span class="pill">Self-hosted · runs <b>Code Review Bot</b></span>
+      <h1>AI code review for <span class="grad">every repository</span>, from one place</h1>
+      <p class="lead">Code Review Console takes webhooks from GitHub, GitLab and Bitbucket, queues reviews and runs the open-source <a href="https://divmora.github.io/code-review-bot/">Code Review Bot</a> for each pull request, on your own servers or Kubernetes. One admin panel controls which repositories are reviewed, how, and by which model.</p>
+      <div class="cta">
+        <a class="btn primary" href="#start">Get started <svg class="i"><use href="#i-arrow"/></svg></a>
+        <a class="btn" href="mailto:licensing@divmora.com?subject=Code%20Review%20Console%20license">Request a license or trial</a>
+        <a class="btn" href="https://github.com/divmora/code-review-console"><svg class="i"><use href="#i-gh"/></svg>GitHub</a>
+      </div>
+    </div>
+    <div class="app" aria-label="Example of the Code Review Console admin panel" role="img">
+      <div class="side">
+        <b>Code review</b>
+        <span>Repositories</span>
+        <span class="on">Reviews</span>
+        <span>Learnings <small>paid</small></span>
+        <span>Code hosts</span>
+        <span>Rules <small>paid</small></span>
+        <span>Webhooks</span>
+        <span>Settings</span>
+        <span>License</span>
+      </div>
+      <div class="main">
+        <h4>Reviews</h4>
+        <div class="tiles">
+          <div><b>148</b><small>Reviewed</small></div>
+          <div><b>612</b><small>Comments</small></div>
+          <div><b>21s</b><small>Avg time</small></div>
+        </div>
+        <div class="bars" aria-hidden="true">
+          <i style="height:40%"></i><i style="height:62%"></i><i class="sk" style="height:18%"></i><i style="height:75%"></i><i style="height:55%"></i><i style="height:90%"></i><i class="sk" style="height:22%"></i><i style="height:68%"></i><i style="height:80%"></i><i style="height:48%"></i>
+        </div>
+        <div class="rows">
+          <div><code>acme/payments !412</code><span class="st ok">done · 6 comments</span></div>
+          <div><code>acme/web #88</code><span class="st ok">done · 2 comments</span></div>
+          <div><code>acme/api !97</code><span class="st sk">skipped · branch sync</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">How it works</div>
+    <h2>Webhook in, review out</h2>
+    <p class="sub">The console never calls a model itself. Each review runs the <code>codereview</code> CLI with short-lived credentials, so the engine is the same open-source bot you can run by hand.</p>
+    <div class="flow">
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-webhook"/></svg></div><h3>Webhook</h3><p>GitHub, GitLab (system, group or project hooks) and Bitbucket send events. Signatures are verified per host.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-queue"/></svg></div><h3>Decide and queue</h3><p>Skips closed PRs, drafts and repositories that aren't enabled; can wait until the bot is a requested reviewer. One review per PR at a time.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-box"/></svg></div><h3>Run the bot</h3><p>A local process, a locked-down Docker container, or a Kubernetes Job with its own Secret that is deleted after the run.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-msg"/></svg></div><h3>Review and history</h3><p>Inline comments, a summary and scores land on the PR. Results, tokens and timings are kept for the admin panel and dashboard.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="eyebrow">Features</div>
+    <h2>Run code review as a service</h2>
+    <p class="sub">Everything around the review: who gets reviewed, when, with which settings, and what it cost. Features marked <span class="paid" style="margin:0">paid</span> need a license key.</p>
+    <div class="grid g3">
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-git"/></svg></div><h3>GitHub, GitLab, Bitbucket</h3><p>github.com and GitHub Enterprise (token or GitHub App), gitlab.com and self-managed GitLab with signed webhooks, and Bitbucket Cloud. Hosts are managed in the panel, with tokens encrypted at rest.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-panel"/></svg></div><h3>Admin panel</h3><p>Turn repositories on or off as they appear, set review profile, model and instructions per repository, browse every review and webhook, and re-run any review.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-msg"/></svg></div><h3>Chat commands</h3><p>Mention the bot on a PR: <code>review</code>, <code>full review</code>, <code>ask</code>, <code>help</code>. The mention name follows the bot account's token user.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-layers"/></svg></div><h3>Rules <span class="paid">paid</span></h3><p>Settings for a whole host, a group (subgroups included) or a name pattern. The most specific level wins, per setting.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-book"/></svg></div><h3>Team learnings <span class="paid">paid</span></h3><p>Reply to the bot with a team decision and it is remembered for future reviews of that repository or group. <code>@bot remember</code> saves one directly.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-box"/></svg></div><h3>Docker &amp; Kubernetes <span class="paid">paid</span></h3><p>Each review isolated in a container or a Job: read-only root, no capabilities, resource limits, and workload identity for cloud models.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-chart"/></svg></div><h3>Metrics &amp; budgets <span class="paid">paid</span></h3><p>Daily and monthly rollups, token use, and daily token budgets for all repositories or per repository. History beyond 30 days.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-repeat"/></svg></div><h3>Branch-sync skip <span class="paid">paid</span></h3><p>Merge requests that only bring a default branch into another one are skipped, so a 400-file sync doesn't cost a review.</p></div>
+      <div class="card"><div class="ic"><svg class="i"><use href="#i-users"/></svg></div><h3>SSO &amp; audit <span class="paid">paid</span></h3><p>Admin sign-in through any OIDC provider, by email (free) or by domain or group, and an audit log of every admin change.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="plans" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Free &amp; paid</div>
+    <h2>A free core, paid features by license key</h2>
+    <p class="sub">The line is drawn by feature, not by environment: the free core is free everywhere, production included, and paid features need a key everywhere, development and CI included.</p>
+    <div class="tablewrap"><table class="plans">
+      <tr><th></th><th>Free</th><th>Licensed</th></tr>
+      <tr><td>Code hosts</td><td>One GitHub, GitLab and Bitbucket host each</td><td>Any number, each with its own bot identity</td></tr>
+      <tr><td>Executors</td><td>Local process</td><td>Local, Docker and Kubernetes</td></tr>
+      <tr><td>Repository control</td><td>Per repository: on/off, settings, model</td><td>Plus host, group and pattern rules</td></tr>
+      <tr><td>Reviews</td><td>Webhooks, chat commands, re-runs, 30 days of history</td><td>Plus metrics, charts and long history, token budgets, branch-sync skip</td></tr>
+      <tr><td>Team knowledge</td><td>Repository instructions</td><td>Plus team learnings from review replies</td></tr>
+      <tr><td>Admin access</td><td>OIDC sign-in by email</td><td>Plus domain and group rules, audit log</td></tr>
+      <tr><td>Price</td><td>Free</td><td>Per agreement: <a href="mailto:licensing@divmora.com?subject=Code%20Review%20Console%20license">licensing@divmora.com</a></td></tr>
+    </table></div>
+    <p class="sub" style="margin-top:18px">Licensed under the <a href="https://github.com/divmora/code-review-console/blob/main/LICENSE">Elastic License 2.0</a>: you may run, modify and redistribute the console, but not offer it to others as a hosted service or get around the license key. License keys are verified offline; the console never calls home. Trials are available on request.</p>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="eyebrow">Get started</div>
+    <h2>Up in a few minutes with Docker Compose</h2>
+    <p class="sub">Starts the console and PostgreSQL. Add your model and code host in <code>console.yaml</code>, point a webhook at the console, and turn on a repository in the admin panel.</p>
+    <div class="codeblock"><div class="ttl">Terminal <button class="copy" data-copy="qs">Copy</button></div><pre id="qs"><span class="c"># get the console and its example config</span>
+git clone https://github.com/divmora/code-review-console.git
+cd code-review-console
+cp examples/console.yaml console.yaml      <span class="c"># models, code hosts, admin sign-in</span>
+
+docker compose up -d --build               <span class="c"># console + PostgreSQL on :8080</span>
+docker compose exec console code-review-console check-config --config /etc/console/console.yaml
+
+<span class="c"># paid features: paste a license key under License in the admin panel,</span>
+<span class="c"># or set CODEREVIEW_CONSOLE_LICENSE</span></pre></div>
+    <div class="grid g3" style="margin-top:20px">
+      <a class="card" href="https://github.com/divmora/code-review-console/blob/main/docs/deploy.md"><h3>Deploy &amp; upgrade</h3><p>Container image, Kubernetes permissions, environment, license install and CLI compatibility.</p></a>
+      <a class="card" href="https://github.com/divmora/code-review-console/blob/main/docs/gitlab.md"><h3>GitLab webhooks</h3><p>System, group and project hooks, signing tokens, and the bot as a reviewer.</p></a>
+      <a class="card" href="https://github.com/divmora/code-review-console/blob/main/docs/github-app.md"><h3>GitHub App</h3><p>Install the console as a GitHub App with the permissions and events it needs.</p></a>
+      <a class="card" href="https://github.com/divmora/code-review-console/blob/main/docs/admin.md"><h3>Admin sign-in</h3><p>OIDC setup for Google, Okta, Keycloak, Entra ID, GitLab and others.</p></a>
+      <a class="card" href="https://divmora.github.io/code-review-bot/"><h3>The review engine</h3><p>Code Review Bot: models and providers, review settings, and the CLI the console runs.</p></a>
+      <a class="card" href="mailto:licensing@divmora.com?subject=Code%20Review%20Console%20trial"><h3>Trial &amp; licensing</h3><p>Ask for a trial key or a license for the paid features.</p></a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Code Review Console by <a href="https://divmora.com">DIVMORA Technologies</a> · Elastic License 2.0</span>
+    <span><a href="https://github.com/divmora/code-review-console">GitHub</a> · <a href="https://divmora.github.io/code-review-bot/">Code Review Bot</a> · <a href="https://github.com/divmora/code-review-console/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/divmora/code-review-console/blob/main/CONTRIBUTING.md">Contributing</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  // Theme toggle (remembered per browser; storage may be unavailable).
+  var root = document.documentElement, btn = document.getElementById("theme");
+  try { var saved = localStorage.getItem("crc-site-theme"); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  btn.addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") ? root.getAttribute("data-theme") === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("crc-site-theme", next); } catch (e) {}
+  });
+  // Copy buttons.
+  document.querySelectorAll(".copy").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var text = document.getElementById(b.getAttribute("data-copy")).innerText;
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () {
+        b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500);
+      }, function () { b.textContent = "Select & copy"; });
+    });
+  });
+})();
+</script>
+</body>
+</html>

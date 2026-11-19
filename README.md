@@ -4,6 +4,7 @@
 [![License: ELv2](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](LICENSE)
 [![CI/CD](https://github.com/divmora/code-review-console/actions/workflows/ci.yml/badge.svg)](https://github.com/divmora/code-review-console/actions)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/divmora/code-review-console)](go.mod)
+[![Website](https://img.shields.io/badge/website-GitHub%20Pages-blue.svg)](https://divmora.github.io/code-review-console/)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-green.svg)](SECURITY.md)
 
 The control plane for [code-review-bot](https://github.com/divmora/code-review-bot). It turns the open-source, one-PR-per-run CLI into an organisation-wide review service:
