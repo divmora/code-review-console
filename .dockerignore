@@ -1,0 +1,9 @@
+.git
+bin/
+dist/
+*.out
+.env
+.env.*
+*.pem
+console.yaml
+web/node_modules/
