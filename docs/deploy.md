@@ -17,7 +17,7 @@ The console runs the `codereview` CLI for every review, so the two must agree on
 
 | Console | code-review-bot CLI |
 |---|---|
-| 0.1.x | v0.4.0 or later |
+| 0.2.0 and later | v0.4.0 or later |
 
 - The container image already contains a supported CLI.
 - With the `docker` or `kubernetes` executor, `executor.*.image` is the CLI image. A release tag
