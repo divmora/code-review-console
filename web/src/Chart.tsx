@@ -54,16 +54,16 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
   const hp = hover !== null ? points[hover] : null;
   const tipLeft = hover !== null ? Math.min(W - 170, Math.max(0, L + band * hover + band / 2 + 12)) : 0;
   return (
-    <div className="chart" ref={box}>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Jobs per ${granularity}: reviewed, skipped and failed`}>
+    <div className="chart relative w-full" ref={box}>
+      <svg className="block h-auto w-full" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Jobs per ${granularity}: reviewed, skipped and failed`}>
         {points.map((_, i) => (
-          <rect key={"h" + i} x={L + band * i} y={T} width={band} height={H - T - B} fill={hover === i ? "var(--idle-bg)" : "transparent"} fillOpacity={0.5}
+          <rect key={"h" + i} x={L + band * i} y={T} width={band} height={H - T - B} fill={hover === i ? "var(--muted)" : "transparent"} fillOpacity={0.5}
             tabIndex={0} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(i)} onBlur={() => setHover(null)} />
         ))}
         {[0, top / 2, top].map((v) => (
           <g key={"g" + v} pointerEvents="none">
             <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="var(--grid)" strokeWidth={1} />
-            <text x={L - 6} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--muted)">
+            <text x={L - 6} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--muted-foreground)">
               {fmtNum(v)}
             </text>
           </g>
@@ -86,7 +86,7 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
                 return <path key={k} d={d} fill={`var(${c})`} />;
               })}
               {i % every === 0 && (
-                <text x={L + band * i + band / 2} y={H - B + 16} textAnchor="middle" fontSize={11} fill="var(--muted)">
+                <text x={L + band * i + band / 2} y={H - B + 16} textAnchor="middle" fontSize={11} fill="var(--muted-foreground)">
                   {bucketLabel(p.bucket, granularity)}
                 </text>
               )}
@@ -95,10 +95,10 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
         })}
         <line x1={L} x2={W - R} y1={H - B} y2={H - B} stroke="var(--grid)" strokeWidth={1} pointerEvents="none" />
       </svg>
-      <div className={"tip" + (hp ? " show" : "")} id="mTip" ref={(el) => el && (el.style.left = tipLeft + "px", el.style.top = "28px")}>
+      <div className={"tip pointer-events-none absolute z-10 w-40 rounded-md border bg-popover p-2.5 text-xs text-popover-foreground shadow-md [&>div]:flex [&>div]:justify-between [&>div]:gap-3 [&>div>span:first-child]:text-muted-foreground " + (hp ? "show block" : "hidden")} id="mTip" ref={(el) => el && (el.style.left = tipLeft + "px", el.style.top = "28px")}>
         {hp && (
           <>
-            <b>{bucketLabel(hp.bucket, granularity, true)}</b>
+            <b className="mb-1 block font-semibold">{bucketLabel(hp.bucket, granularity, true)}</b>
             {series.map(([k, label]) => (
               <div key={k}>
                 <span>{label}</span>

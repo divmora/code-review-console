@@ -1,8 +1,56 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import {
+  BookOpen,
+  ChartColumn,
+  FolderGit2,
+  KeyRound,
+  ListChecks,
+  LogOut,
+  Monitor,
+  Moon,
+  ScrollText,
+  Server,
+  Settings as SettingsIcon,
+  SlidersHorizontal,
+  Sun,
+  Webhook,
+  type LucideIcon,
+} from "lucide-react";
 import { get, post, setCSRF } from "./api";
 import type { Feature, Me } from "./types";
-import { MeCtx, RefreshMeCtx, ToastProvider } from "./ui";
+import { ConfirmProvider, MeCtx, RefreshMeCtx, ToastProvider } from "./ui";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Repositories from "./pages/Repositories";
 import Reviews from "./pages/Reviews";
 import Learnings from "./pages/Learnings";
@@ -14,16 +62,16 @@ import Audit from "./pages/Audit";
 import License from "./pages/License";
 
 // Each section has its own URL under /admin, so a reload lands on it.
-const sections: { path: string; title: string; el: JSX.Element; paid?: Feature }[] = [
-  { path: "repositories", title: "Repositories", el: <Repositories /> },
-  { path: "reviews", title: "Reviews", el: <Reviews /> },
-  { path: "learnings", title: "Learnings", el: <Learnings />, paid: "learnings" },
-  { path: "hosts", title: "Code hosts", el: <Hosts /> },
-  { path: "rules", title: "Rules", el: <Rules />, paid: "rules" },
-  { path: "webhooks", title: "Webhooks", el: <Webhooks /> },
-  { path: "settings", title: "Settings", el: <Settings /> },
-  { path: "audit", title: "Audit log", el: <Audit />, paid: "audit" },
-  { path: "license", title: "License", el: <License /> },
+const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element; paid?: Feature }[] = [
+  { path: "repositories", title: "Repositories", icon: FolderGit2, el: <Repositories /> },
+  { path: "reviews", title: "Reviews", icon: ChartColumn, el: <Reviews /> },
+  { path: "learnings", title: "Learnings", icon: BookOpen, el: <Learnings />, paid: "learnings" },
+  { path: "hosts", title: "Code hosts", icon: Server, el: <Hosts /> },
+  { path: "rules", title: "Rules", icon: ListChecks, el: <Rules />, paid: "rules" },
+  { path: "webhooks", title: "Webhooks", icon: Webhook, el: <Webhooks /> },
+  { path: "settings", title: "Settings", icon: SlidersHorizontal, el: <Settings /> },
+  { path: "audit", title: "Audit log", icon: ScrollText, el: <Audit />, paid: "audit" },
+  { path: "license", title: "License", icon: KeyRound, el: <License /> },
 ];
 
 // LicenseBanner warns when a license is in its grace period, expired or
@@ -32,20 +80,34 @@ function LicenseBanner({ me }: { me: Me }) {
   const l = me.license;
   if (l.state === "grace")
     return (
-      <div className="banner" role="status">
-        The Divmora license expired on {new Date(l.expires_at!).toLocaleDateString()}. Paid features stop on {new Date(l.grace_until!).toLocaleDateString()}. <Link to="/license">Renew</Link>
-      </div>
+      <Alert role="status" className="banner border-warning/40 bg-warning-soft text-warning">
+        <AlertDescription className="text-warning">
+          <p>
+            The Divmora license expired on {new Date(l.expires_at!).toLocaleDateString()}. Paid features stop on {new Date(l.grace_until!).toLocaleDateString()}.{" "}
+            <Link className="font-semibold underline underline-offset-2" to="/license">
+              Renew
+            </Link>
+          </p>
+        </AlertDescription>
+      </Alert>
     );
   if (l.state === "expired" || l.state === "invalid")
     return (
-      <div className="banner bad" role="status">
-        {l.state === "expired" ? "The Divmora license has expired" : "The Divmora license is not valid"}: paid features are off. <Link to="/license">License</Link>
-      </div>
+      <Alert role="status" variant="destructive" className="banner bad">
+        <AlertDescription>
+          <p>
+            {l.state === "expired" ? "The Divmora license has expired" : "The Divmora license is not valid"}: paid features are off.{" "}
+            <Link className="font-semibold underline underline-offset-2" to="/license">
+              License
+            </Link>
+          </p>
+        </AlertDescription>
+      </Alert>
     );
   return null;
 }
 
-function ThemePicker() {
+function ThemeMenu() {
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem("crc-theme") || "system";
@@ -55,34 +117,125 @@ function ThemePicker() {
   });
   const change = (v: string) => {
     setTheme(v);
-    if (v === "system") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.setAttribute("data-theme", v);
     try {
       localStorage.setItem("crc-theme", v);
     } catch {
       /* private mode: the choice lasts for this page only */
     }
+    const apply = (window as unknown as { __crcApplyTheme?: () => void }).__crcApplyTheme;
+    if (apply) apply();
+    else document.documentElement.classList.toggle("dark", v === "dark");
   };
+  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
   return (
-    <label className="themepick">
-      Theme{" "}
-      <select id="theme" aria-label="Theme" value={theme} onChange={(e) => change(e.target.value)}>
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-    </label>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" id="theme" aria-label="Theme">
+          <Icon />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Theme</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={theme} onValueChange={change}>
+          <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function Title() {
+function current(pathname: string) {
+  return sections.find((x) => pathname.startsWith("/" + x.path));
+}
+
+function AppSidebar({ me }: { me: Me }) {
   const loc = useLocation();
-  const s = sections.find((x) => loc.pathname.startsWith("/" + x.path));
+  const { setOpenMobile } = useSidebar();
+  const logout = () => post("/admin/logout").finally(() => (location.href = "/admin/login"));
+  return (
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <div className="flex items-center gap-2 px-1 py-1.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <SettingsIcon className="size-4" />
+          </div>
+          <div className="grid leading-tight group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-sm font-semibold">Code review</span>
+            <span className="truncate text-xs text-muted-foreground">Divmora console</span>
+          </div>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu className="side" aria-label="Sections">
+              {sections.map((s) => {
+                const locked = s.paid && !me.license.features.includes(s.paid);
+                const active = current(loc.pathname)?.path === s.path;
+                return (
+                  <SidebarMenuItem key={s.path}>
+                    <SidebarMenuButton asChild isActive={active} tooltip={s.title}>
+                      <NavLink to={"/" + s.path} className={active ? "on" : ""} onClick={() => setOpenMobile(false)}>
+                        <s.icon />
+                        <span>{s.title}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                    {locked && (
+                      <SidebarMenuBadge className="paid text-[10px] font-normal text-muted-foreground" title="Needs a license">
+                        licensed
+                      </SidebarMenuBadge>
+                    )}
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <div className="grid gap-1 px-2 pb-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+          <span className="truncate">Signed in as {me.name || me.email}</span>
+          <a className="underline-offset-2 hover:text-foreground hover:underline" href="/dashboard">
+            Status dashboard
+          </a>
+          {me.version && <span>Version {me.version}</span>}
+        </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton id="logout" onClick={logout} tooltip="Sign out">
+              <LogOut />
+              <span>Sign out</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
+  );
+}
+
+function Header({ me }: { me: Me }) {
+  const loc = useLocation();
+  const s = current(loc.pathname);
   const title = s?.title ?? "Repositories";
   useEffect(() => {
     document.title = title + " · Code review admin";
   }, [title]);
-  return <h1 id="pageTitle">{title}</h1>;
+  return (
+    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur">
+      <SidebarTrigger className="-ml-1" />
+      <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
+      <h1 id="pageTitle" className="text-base font-semibold">
+        {title}
+      </h1>
+      {s?.paid && !me.license.features.includes(s.paid) && <Badge variant="secondary">licensed</Badge>}
+      <span className="flex-1" />
+      <ThemeMenu />
+    </header>
+  );
 }
 
 export default function App() {
@@ -98,50 +251,33 @@ export default function App() {
   useEffect(() => {
     loadMe();
   }, []);
-  if (!me) return <main>{err ? <div className="empty">{err}</div> : <div className="empty">Loading…</div>}</main>;
-  const logout = () => post("/admin/logout").finally(() => (location.href = "/admin/login"));
+  if (!me) return <div className="grid min-h-svh place-items-center text-sm text-muted-foreground">{err || "Loading…"}</div>;
   return (
     <MeCtx.Provider value={me}>
-     <RefreshMeCtx.Provider value={loadMe}>
-      <ToastProvider>
-        <div className="layout">
-          <aside>
-            <div className="brand">
-              Code review<span>Divmora console</span>
-            </div>
-            <nav className="side" aria-label="Sections">
-              {sections.map((s) => (
-                <NavLink key={s.path} to={"/" + s.path} className={({ isActive }) => (isActive ? "on" : "")}>
-                  {s.title}
-                  {s.paid && !me.license.features.includes(s.paid) && <span className="paid" title="Needs a license">licensed</span>}
-                </NavLink>
-              ))}
-            </nav>
-            <div className="me">
-              <span>Signed in as {me.name || me.email}</span>
-              <a href="/dashboard">Status dashboard</a>
-              <ThemePicker />
-              <button className="btn" id="logout" onClick={logout}>
-                Sign out
-              </button>
-            </div>
-          </aside>
-          <main>
-            <header>
-              <Title />
-            </header>
-            <LicenseBanner me={me} />
-            <Routes>
-              <Route path="/" element={<Navigate to="/repositories" replace />} />
-              {sections.map((s) => (
-                <Route key={s.path} path={"/" + s.path} element={s.el} />
-              ))}
-              <Route path="*" element={<Navigate to="/repositories" replace />} />
-            </Routes>
-          </main>
-        </div>
-      </ToastProvider>
-     </RefreshMeCtx.Provider>
+      <RefreshMeCtx.Provider value={loadMe}>
+        <TooltipProvider delayDuration={300}>
+          <ToastProvider>
+            <ConfirmProvider>
+              <SidebarProvider>
+                <AppSidebar me={me} />
+                <SidebarInset className="min-w-0">
+                  <Header me={me} />
+                  <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 md:p-6">
+                    <LicenseBanner me={me} />
+                    <Routes>
+                      <Route path="/" element={<Navigate to="/repositories" replace />} />
+                      {sections.map((s) => (
+                        <Route key={s.path} path={"/" + s.path} element={s.el} />
+                      ))}
+                      <Route path="*" element={<Navigate to="/repositories" replace />} />
+                    </Routes>
+                  </div>
+                </SidebarInset>
+              </SidebarProvider>
+            </ConfirmProvider>
+          </ToastProvider>
+        </TooltipProvider>
+      </RefreshMeCtx.Provider>
     </MeCtx.Provider>
   );
 }

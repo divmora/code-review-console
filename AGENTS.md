@@ -76,10 +76,24 @@ Changing this contract means changing the bot's CLI too; keep them in step.
 
 ## Admin UI
 
-Change `web/src`, run `make web`, commit both. The page is served with a strict CSP (`script-src
-'self'; style-src 'self'`): no inline scripts or `style=` attributes in HTML (React's `style`
-prop and `el.style` are fine). The CSRF token comes from `GET /admin/api/me`. New sections need
-a route in `web/src/App.tsx` and an entry in `adminSections` (handlers.go) so reloads land on them.
+React + TypeScript + Vite, styled with **Tailwind CSS v4 and shadcn/ui** (Radix primitives, Lucide
+icons). Change `web/src`, run `make web`, commit both `web/` and `internal/admin/ui`.
+
+- `web/src/components/ui/` holds shadcn components (`npx shadcn@<pinned> add <name>`). After adding
+  one, check its imports: utilities come from `@/lib/utils`. The CLI has written `from "cn"` and
+  installed an unrelated npm package by that name.
+- Shared pieces live in `web/src/ui.tsx`: `Panel` (table card), `SidePanel` (editors and details),
+  `Field`/`FormGrid`, `NativeSelect` and `Tri` (native selects for Inherit/On/Off), `StateBadge`,
+  `Locked`/`LockNote` (license), `useConfirm` (confirm dialogs), toasts. Reuse them, not new CSS.
+- Theme colours are CSS variables in `web/src/index.css` (`.dark` class, set by
+  `public/assets/theme.js`). Use tokens (`text-muted-foreground`, `bg-success-soft`), not hex colours.
+- Strict CSP: `script-src 'self'`; `style-src 'self'` plus a per-request nonce. The server
+  replaces `__CSP_NONCE__` in `index.html` (`handlePage`), and `main.tsx` passes it to `get-nonce`
+  for the `<style>` tag Radix adds to lock scroll under dialogs and sheets. No inline scripts and no
+  `style=` attributes in HTML; React's `style` prop and `el.style` are fine. Don't add libraries that
+  inject `<style>` tags unless they read the nonce.
+- The CSRF token comes from `GET /admin/api/me`. New sections need a route in `web/src/App.tsx` and
+  an entry in `adminSections` (handlers.go) so reloads land on them.
 
 ## Tests
 

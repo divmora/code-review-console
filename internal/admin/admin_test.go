@@ -16,6 +16,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -522,4 +523,35 @@ func randomSigningToken(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return "whsec_" + base64.StdEncoding.EncodeToString(b)
+}
+
+// The app page carries a fresh CSP nonce on every load, in both the CSP
+// header (styles only) and the page's <meta name="csp-nonce">.
+func TestPageNonce(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedDomains: []string{"divmora.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "ana@divmora.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	re := regexp.MustCompile(`<meta name="csp-nonce" content="([^"]+)">`)
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		resp, err := e.client.Get(e.app.URL + "/admin/reviews")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		m := re.FindSubmatch(body)
+		if m == nil || string(m[1]) == "__CSP_NONCE__" {
+			t.Fatalf("page has no nonce: %s", body)
+		}
+		nonce := string(m[1])
+		csp := resp.Header.Get("Content-Security-Policy")
+		if !strings.Contains(csp, "style-src 'self' 'nonce-"+nonce+"'") || !strings.Contains(csp, "script-src 'self';") || strings.Contains(csp, "unsafe") {
+			t.Errorf("CSP %q does not match nonce %q", csp, nonce)
+		}
+		if seen[nonce] {
+			t.Error("nonce reused across requests")
+		}
+		seen[nonce] = true
+	}
 }

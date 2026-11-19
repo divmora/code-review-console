@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
+import { Plug, Plus } from "lucide-react";
 import { del, get, post, put } from "../api";
-import { Empty, errMsg, LockNote, StateBadge, useFeature, useToast } from "../ui";
+import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useToast } from "../ui";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 
 type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
@@ -16,14 +23,22 @@ const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
 function Secret({ label, set, multi, list, help, value, onChange }: { label: string; set: boolean; multi?: boolean; list?: boolean; help?: string; value: string; onChange: (v: string) => void }) {
   const ph = set ? "Set ✓ — leave blank to keep" : list ? "one per line" : "";
   return (
-    <label className="f">
-      {label + (help ? " — " + help : "")}
+    <Field label={label + (help ? " — " + help : "")}>
       {multi ? (
-        <textarea placeholder={ph} autoComplete="off" value={value} onChange={(e) => onChange(e.target.value)} />
+        <Textarea rows={3} className="font-mono text-xs" placeholder={ph} autoComplete="off" spellCheck={false} value={value} onChange={(e) => onChange(e.target.value)} />
       ) : (
-        <input type="password" placeholder={ph} autoComplete="new-password" value={value} onChange={(e) => onChange(e.target.value)} />
+        <Input type="password" placeholder={ph} autoComplete="new-password" value={value} onChange={(e) => onChange(e.target.value)} />
       )}
-    </label>
+    </Field>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-3">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{title}</h3>
+      {children}
+    </div>
   );
 }
 
@@ -57,105 +72,99 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
       .catch((e) => toast(errMsg(e), true));
   };
   return (
-    <div className="panel pad">
-      <div className="fsec">{host ? "Edit " + host.name : "New host"}</div>
-      <div className="hostgrid">
-        <label className="f">
-          Platform
-          <select id="hPlat" value={plat} disabled={!!host} onChange={(e) => setPlat(e.target.value as Host["platform"])}>
-            <option value="gitlab">GitLab</option>
-            <option value="github">GitHub</option>
-            <option value="bitbucket">Bitbucket Cloud</option>
-          </select>
-        </label>
-        <label className="f">
-          {plat === "gitlab" ? "Instance URL" : "API URL"}
-          <input value={v.base} placeholder={defaults[plat]} onChange={set("base")} />
-        </label>
-        <label className="f">
-          Name
-          <input value={v.name} placeholder="shown in the console" onChange={set("name")} />
-        </label>
-        <label className="f">
-          Status
-          <select value={String(v.enabled)} onChange={(e) => setV({ ...v, enabled: e.target.value === "true" })}>
-            <option value="true">Enabled</option>
-            <option value="false">Disabled</option>
-          </select>
-        </label>
-      </div>
-      <div className="fsec">API access</div>
-      <div className="hostgrid">
-        {plat === "github" && (
-          <>
-            <Secret label="Token" help="or use a GitHub App below" set={sec.token} value={v.token} onChange={set("token")} />
-            <label className="f">
-              GitHub App ID
-              <input type="number" value={v.appID} onChange={set("appID")} />
-            </label>
-            <Secret label="GitHub App private key (PEM)" set={sec.app_private_key} multi value={v.appKey} onChange={set("appKey")} />
-          </>
-        )}
-        {plat === "gitlab" && (
-          <>
-            <Secret label="Access token (api scope)" set={sec.token} value={v.token} onChange={set("token")} />
-            <label className="f">
-              TLS
-              <select value={String(v.skipTLS)} onChange={(e) => setV({ ...v, skipTLS: e.target.value === "true" })}>
-                <option value="false">Verify certificates</option>
-                <option value="true">Skip verification (self-signed)</option>
-              </select>
-            </label>
-          </>
-        )}
-        {plat === "bitbucket" && (
-          <>
-            <Secret label="Access token" help="repository or workspace token" set={sec.token} value={v.token} onChange={set("token")} />
-            <label className="f">
-              Account email
-              <input value={v.email} placeholder="with an API token instead" onChange={set("email")} />
-            </label>
-            <Secret label="Atlassian API token" set={sec.api_token} value={v.apiToken} onChange={set("apiToken")} />
-          </>
-        )}
-      </div>
-      <div className="fsec">Webhooks</div>
-      <div className="hostgrid">
-        {plat === "gitlab" ? (
-          <>
-            <Secret label="Signing tokens (whsec_…)" multi list set={sec.signing_tokens > 0} help={sec.signing_tokens ? sec.signing_tokens + " set" : "GitLab 19.0+, recommended"} value={v.signing} onChange={set("signing")} />
-            <Secret label="Secret tokens" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "older hooks"} value={v.secrets} onChange={set("secrets")} />
-            <label className="f">
-              Unsigned webhooks
-              <select value={String(v.reqSig)} onChange={(e) => setV({ ...v, reqSig: e.target.value === "true" })}>
-                <option value="false">Accept with a secret token</option>
-                <option value="true">Reject</option>
-              </select>
-            </label>
-          </>
-        ) : (
-          <Secret label="Webhook secrets" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "one per hook"} value={v.secrets} onChange={set("secrets")} />
-        )}
-      </div>
-      <div className="fsec">Bot identity</div>
-      <div className="hostgrid">
-        <label className="f">
-          Mention name
-          <input value={v.bot} placeholder="default: the token's user" disabled={!identity && !v.bot} onChange={set("bot")} />
-          <LockNote feature="hosts" />
-        </label>
-        <label className="f">
-          Reviewer username
-          <input value={v.reviewer} placeholder="default: the token's user" disabled={!identity && !v.reviewer} onChange={set("reviewer")} />
-        </label>
-      </div>
-      <div className="bar mt">
-        <button className="btn primary" onClick={save}>
-          {host ? "Save host" : "Add host"}
-        </button>
-        <button className="btn" onClick={onCancel}>
+    <div className="grid gap-6">
+      <Section title="Host">
+        <FormGrid className="lg:grid-cols-2">
+          <Field label="Platform">
+            <NativeSelect id="hPlat" value={plat} disabled={!!host} onChange={(e) => setPlat(e.target.value as Host["platform"])}>
+              <option value="gitlab">GitLab</option>
+              <option value="github">GitHub</option>
+              <option value="bitbucket">Bitbucket Cloud</option>
+            </NativeSelect>
+          </Field>
+          <Field label="Status">
+            <NativeSelect value={String(v.enabled)} onChange={(e) => setV({ ...v, enabled: e.target.value === "true" })}>
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </NativeSelect>
+          </Field>
+          <Field label={plat === "gitlab" ? "Instance URL" : "API URL"}>
+            <Input value={v.base} placeholder={defaults[plat]} onChange={set("base")} />
+          </Field>
+          <Field label="Name">
+            <Input value={v.name} placeholder="shown in the console" onChange={set("name")} />
+          </Field>
+        </FormGrid>
+      </Section>
+      <Separator />
+      <Section title="API access">
+        <div className="grid gap-4">
+          {plat === "github" && (
+            <>
+              <Secret label="Token" help="or use a GitHub App below" set={sec.token} value={v.token} onChange={set("token")} />
+              <Field label="GitHub App ID">
+                <Input type="number" value={v.appID} onChange={set("appID")} />
+              </Field>
+              <Secret label="GitHub App private key (PEM)" set={sec.app_private_key} multi value={v.appKey} onChange={set("appKey")} />
+            </>
+          )}
+          {plat === "gitlab" && (
+            <>
+              <Secret label="Access token (api scope)" set={sec.token} value={v.token} onChange={set("token")} />
+              <Field label="TLS">
+                <NativeSelect value={String(v.skipTLS)} onChange={(e) => setV({ ...v, skipTLS: e.target.value === "true" })}>
+                  <option value="false">Verify certificates</option>
+                  <option value="true">Skip verification (self-signed)</option>
+                </NativeSelect>
+              </Field>
+            </>
+          )}
+          {plat === "bitbucket" && (
+            <>
+              <Secret label="Access token" help="repository or workspace token" set={sec.token} value={v.token} onChange={set("token")} />
+              <Field label="Account email">
+                <Input value={v.email} placeholder="with an API token instead" onChange={set("email")} />
+              </Field>
+              <Secret label="Atlassian API token" set={sec.api_token} value={v.apiToken} onChange={set("apiToken")} />
+            </>
+          )}
+        </div>
+      </Section>
+      <Separator />
+      <Section title="Webhooks">
+        <div className="grid gap-4">
+          {plat === "gitlab" ? (
+            <>
+              <Secret label="Signing tokens (whsec_…)" multi list set={sec.signing_tokens > 0} help={sec.signing_tokens ? sec.signing_tokens + " set" : "GitLab 19.0+, recommended"} value={v.signing} onChange={set("signing")} />
+              <Secret label="Secret tokens" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "older hooks"} value={v.secrets} onChange={set("secrets")} />
+              <Field label="Unsigned webhooks">
+                <NativeSelect value={String(v.reqSig)} onChange={(e) => setV({ ...v, reqSig: e.target.value === "true" })}>
+                  <option value="false">Accept with a secret token</option>
+                  <option value="true">Reject</option>
+                </NativeSelect>
+              </Field>
+            </>
+          ) : (
+            <Secret label="Webhook secrets" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "one per hook"} value={v.secrets} onChange={set("secrets")} />
+          )}
+        </div>
+      </Section>
+      <Separator />
+      <Section title="Bot identity">
+        <FormGrid className="lg:grid-cols-2">
+          <Field label="Mention name" hint={<LockNote feature="hosts" />}>
+            <Input value={v.bot} placeholder="default: the token's user" disabled={!identity && !v.bot} onChange={set("bot")} />
+          </Field>
+          <Field label="Reviewer username">
+            <Input value={v.reviewer} placeholder="default: the token's user" disabled={!identity && !v.reviewer} onChange={set("reviewer")} />
+          </Field>
+        </FormGrid>
+      </Section>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={save}>{host ? "Save host" : "Add host"}</Button>
+        <Button variant="outline" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -163,6 +172,7 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
 
 export default function Hosts() {
   const toast = useToast();
+  const confirm = useConfirm();
   const multi = useFeature("hosts");
   const [data, setData] = useState<{ mode: string; key_env?: string; hosts: Host[] } | null>(null);
   const [editing, setEditing] = useState<number | null>(null); // 0 = new
@@ -177,8 +187,8 @@ export default function Hosts() {
       .then((r) => setTests((t) => ({ ...t, [h.id]: r })))
       .catch((e) => setTests((t) => ({ ...t, [h.id]: { ok: false, message: errMsg(e) } })));
   };
-  const remove = (h: Host) => {
-    if (!confirm("Delete " + h.name + "? Webhooks from it will be rejected and its stored tokens removed.")) return;
+  const remove = async (h: Host) => {
+    if (!(await confirm({ title: "Delete " + h.name + "?", description: "Webhooks from it will be rejected and its stored tokens removed.", action: "Delete host", danger: true }))) return;
     del("/admin/api/hosts/" + h.id)
       .then(() => {
         toast("Deleted " + h.name);
@@ -189,102 +199,117 @@ export default function Hosts() {
   const managed = data?.mode === "database";
   const editHost = editing ? data?.hosts.find((h) => h.id === editing) ?? null : null;
   return (
-    <section>
-      <div className="bar">
-        <span className="sub">{data && (managed ? "Managed here; stored encrypted in the database." : `Hosts come from the config file (read-only). Set ${data.key_env || "CODEREVIEW_CONSOLE_SECRET_KEY"} to manage them here.`)}</span>
-        {data && !multi && <span className="sub">· Free: one host per platform.</span>}
-        <span className="spacer" />
+    <section className="grid gap-4">
+      <Toolbar>
+        <span className="text-sm text-muted-foreground">
+          {data && (managed ? "Managed here; stored encrypted in the database." : `Hosts come from the config file (read-only). Set ${data.key_env || "CODEREVIEW_CONSOLE_SECRET_KEY"} to manage them here.`)}
+          {data && !multi && " Free: one host per platform."}
+        </span>
+        <span className="flex-1" />
         {managed && (
-          <button className="btn" onClick={() => setEditing(0)}>
-            Add host
-          </button>
+          <Button variant="outline" onClick={() => setEditing(0)}>
+            <Plus /> Add host
+          </Button>
         )}
-      </div>
-      {editing !== null && (
-        <HostForm key={editing} host={editHost} onCancel={() => setEditing(null)} onSaved={(h) => { setEditing(null); load().then(() => test(h)); }} />
-      )}
-      <div className="panel">
+      </Toolbar>
+      <Panel>
         {!data ? (
           <Empty>Loading…</Empty>
         ) : !data.hosts.length ? (
           <Empty>No code hosts yet. Add GitHub, GitLab or Bitbucket.</Empty>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Host</th>
-                <th>Credentials</th>
-                <th>Webhook URL</th>
-                <th>Check</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">Host</TableHead>
+                <TableHead>Credentials</TableHead>
+                <TableHead>Webhook URL</TableHead>
+                <TableHead>Check</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {data.hosts.map((h) => {
                 const s = h.secrets;
                 const auth = [s.token && "token ✓", h.settings.app_id && `App ${h.settings.app_id}${s.app_private_key ? " ✓" : " (no key)"}`, s.api_token && "API token ✓",
                   s.signing_tokens && `${s.signing_tokens} signing token${s.signing_tokens > 1 ? "s" : ""}`, s.webhook_secrets && `${s.webhook_secrets} webhook secret${s.webhook_secrets > 1 ? "s" : ""}`].filter(Boolean) as string[];
                 const t = tests[h.id];
                 return (
-                  <tr key={h.id}>
-                    <td>
-                      <div>
-                        <b>{h.name}</b>
-                      </div>
-                      <div className="plat">
+                  <TableRow key={h.id}>
+                    <TableCell className="pl-4 align-top">
+                      <div className="font-medium">{h.name}</div>
+                      <Sub>
                         {names[h.platform]} · {h.host}
-                      </div>
-                      <div>
+                      </Sub>
+                      <div className="mt-1.5">
                         {h.licensed ? (
                           <StateBadge kind={h.enabled ? "on" : "idle"}>{h.enabled ? "Enabled" : "Disabled"}</StateBadge>
                         ) : (
                           <StateBadge kind="warn">Inactive: needs a license</StateBadge>
                         )}
                       </div>
-                    </td>
-                    <td>
-                      <span>
+                    </TableCell>
+                    <TableCell className="align-top whitespace-normal">
+                      <div className="flex flex-wrap gap-1">
                         {auth.map((a) => (
-                          <span className="chip" key={a}>
+                          <Badge variant="outline" className="font-normal text-muted-foreground" key={a}>
                             {a}
-                          </span>
+                          </Badge>
                         ))}
-                      </span>
-                      <div className="why">
+                      </div>
+                      <Sub>
                         mention: {h.settings.bot_name ? "@" + h.settings.bot_name : "token user"}
                         {h.settings.reviewer ? " · reviewer: " + h.settings.reviewer : ""}
+                      </Sub>
+                    </TableCell>
+                    <TableCell className="max-w-80 align-top whitespace-normal">
+                      <code className="hosturl break-all">{h.webhook_url}</code>
+                      <Sub>Events: {h.events.join(", ")}</Sub>
+                    </TableCell>
+                    <TableCell className="max-w-56 align-top whitespace-normal">
+                      {t && (t.pending ? <span className="text-sm text-muted-foreground">testing…</span> : <StateBadge kind={t.ok ? "on" : "off"}>{t.message}</StateBadge>)}
+                    </TableCell>
+                    <TableCell className="pr-4 text-right align-top">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => test(h)}>
+                          <Plug /> Test
+                        </Button>
+                        {managed && (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => setEditing(h.id)}>
+                              Edit
+                            </Button>
+                            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => remove(h)}>
+                              Delete
+                            </Button>
+                          </>
+                        )}
                       </div>
-                    </td>
-                    <td>
-                      <code className="hosturl">{h.webhook_url}</code>
-                      <div className="why">Events: {h.events.join(", ")}</div>
-                    </td>
-                    <td>{t && (t.pending ? <span className="muted">testing…</span> : <StateBadge kind={t.ok ? "on" : "off"}>{t.message}</StateBadge>)}</td>
-                    <td className="nowrap">
-                      <button className="btn" onClick={() => test(h)}>
-                        Test
-                      </button>{" "}
-                      {managed && (
-                        <>
-                          <button className="btn" onClick={() => { setEditing(h.id); window.scrollTo(0, 0); }}>
-                            Edit
-                          </button>{" "}
-                          <button className="btn danger" onClick={() => remove(h)}>
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
-      <p className="sub">
+      </Panel>
+      <Note>
         Each host is a GitHub (github.com or Enterprise), GitLab (gitlab.com or self-managed) or Bitbucket Cloud account the console reviews for. Tokens and webhook secrets are encrypted with <code>CODEREVIEW_CONSOLE_SECRET_KEY</code> before they are stored and are never shown again: leave a secret blank to keep it. Point each code host's webhook at the URL shown, with the events listed. Several hooks on one host (a GitLab system hook plus group hooks) can each have their own secret: add one per line.
-      </p>
+      </Note>
+
+      <SidePanel open={editing !== null} onClose={() => setEditing(null)} title={editHost ? "Edit " + editHost.name : "New host"} description="Credentials are encrypted before they are stored.">
+        {editing !== null && (
+          <HostForm
+            key={editing}
+            host={editHost}
+            onCancel={() => setEditing(null)}
+            onSaved={(h) => {
+              setEditing(null);
+              load().then(() => test(h));
+            }}
+          />
+        )}
+      </SidePanel>
     </section>
   );
 }

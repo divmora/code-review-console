@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
+import { RefreshCw, Search } from "lucide-react";
 import { get, qs } from "../api";
 import { ago } from "../format";
-import { Empty, errMsg, StateBadge, useToast } from "../ui";
+import { Empty, errMsg, NativeSelect, Note, Panel, StateBadge, Sub, Toolbar, useToast } from "../ui";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Hook = {
   id: number; received_at: string; platform: string; host: string; project: string; event: string; kind: string;
@@ -32,78 +36,81 @@ export default function Webhooks() {
     return () => window.clearTimeout(t);
   }, [project, outcome]);
   return (
-    <section>
-      <div className="bar">
-        <input type="search" placeholder="Filter by project" aria-label="Filter webhooks by project" value={project} onChange={(e) => setProject(e.target.value)} />
-        <select aria-label="Outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+    <section className="grid gap-4">
+      <Toolbar>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+          <Input type="search" className="pl-8" placeholder="Filter by project" aria-label="Filter webhooks by project" value={project} onChange={(e) => setProject(e.target.value)} />
+        </div>
+        <NativeSelect className="w-auto" aria-label="Outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
           <option value="">All outcomes</option>
           {outcomes.map((o) => (
             <option key={o} value={o}>
               {o[0].toUpperCase() + o.slice(1)}
             </option>
           ))}
-        </select>
-        <span className="sub">Last 24 h: {outcomes.map((k) => (counts[k] || 0) + " " + k).join(" · ")}</span>
-        <span className="spacer" />
-        <button className="btn" onClick={() => load()}>
-          Refresh
-        </button>
-      </div>
-      <div className="panel">
+        </NativeSelect>
+        <span className="text-sm text-muted-foreground">Last 24 h: {outcomes.map((k) => (counts[k] || 0) + " " + k).join(" · ")}</span>
+        <span className="flex-1" />
+        <Button variant="outline" onClick={() => load()}>
+          <RefreshCw /> Refresh
+        </Button>
+      </Toolbar>
+      <Panel>
         {!hooks ? (
           <Empty>Loading…</Empty>
         ) : !hooks.length ? (
           <Empty>No webhook deliveries match.</Empty>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Project</th>
-                <th>Event</th>
-                <th>Outcome</th>
-                <th>Reason</th>
-                <th>Auth</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">When</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Event</TableHead>
+                <TableHead>Outcome</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead className="pr-4">Auth</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {hooks.map((e) => {
                 const what = [e.kind || e.event, e.action].filter(Boolean).join(" · ") + (e.number ? " · !" + e.number : "");
                 return (
-                  <tr key={e.id}>
-                    <td className="muted nowrap" title={new Date(e.received_at).toLocaleString()}>
+                  <TableRow key={e.id}>
+                    <TableCell className="pl-4 align-top text-muted-foreground" title={new Date(e.received_at).toLocaleString()}>
                       {ago(e.received_at)}
-                    </td>
-                    <td>
-                      <div>{e.project || "—"}</div>
-                      <div className="plat">{e.platform + (e.host ? " · " + e.host : "")}</div>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <div className="font-medium">{e.project || "—"}</div>
+                      <Sub>{e.platform + (e.host ? " · " + e.host : "")}</Sub>
+                    </TableCell>
+                    <TableCell className="align-top">
                       <div>{what || "—"}</div>
-                      <div className="plat">{e.event + (e.sender ? " · by " + e.sender : "")}</div>
-                    </td>
-                    <td>
+                      <Sub>{e.event + (e.sender ? " · by " + e.sender : "")}</Sub>
+                    </TableCell>
+                    <TableCell className="align-top">
                       <StateBadge kind={badge(e.outcome)}>{e.outcome}</StateBadge>
-                    </td>
-                    <td className="reason">{e.reason}</td>
-                    <td className="muted">{e.auth}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="reason min-w-64 align-top text-sm whitespace-normal text-muted-foreground">{e.reason}</TableCell>
+                    <TableCell className="pr-4 align-top text-muted-foreground">{e.auth}</TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
+      </Panel>
       {more && (
-        <div className="bar mt">
-          <button className="btn" onClick={() => load(true)}>
+        <div>
+          <Button variant="outline" onClick={() => load(true)}>
             Load older
-          </button>
+          </Button>
         </div>
       )}
-      <p className="sub">
+      <Note>
         Every webhook delivery and what the console did with it. <b>Ignored</b> is normal for events that should not start a review (approvals, label or reviewer changes, edits without new commits) and for repositories that are not enabled. <b>Rejected</b> means the signature or token did not match. History is kept for the days set in Settings (14 by default).
-      </p>
+      </Note>
     </section>
   );
 }

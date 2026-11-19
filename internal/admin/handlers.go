@@ -1,8 +1,11 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +55,16 @@ func mustRead(name string) []byte {
 
 // uiCSP allows only the app's own files: no inline scripts or styles.
 const uiCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+// pageCSP is uiCSP for the app page, plus a per-request nonce for the one
+// <style> tag Radix adds to lock page scroll under dialogs (the page reads
+// it from <meta name="csp-nonce">). Inline scripts stay forbidden.
+func pageCSP(nonce string) string {
+	return strings.Replace(uiCSP, "style-src 'self'", "style-src 'self' 'nonce-"+nonce+"'", 1)
+}
+
+// nonceMarker is the placeholder in the built index.html.
+var nonceMarker = []byte("__CSP_NONCE__")
 
 // Register mounts the admin routes.
 func (a *Admin) Register(mux *http.ServeMux) {
@@ -117,10 +130,16 @@ func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/login?next="+url.QueryEscape(r.URL.Path), http.StatusFound)
 		return
 	}
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		http.Error(w, "nonce", http.StatusInternalServerError)
+		return
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(b)
 	noStore(w)
-	w.Header().Set("Content-Security-Policy", uiCSP)
+	w.Header().Set("Content-Security-Policy", pageCSP(nonce))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(uiIndex)
+	_, _ = w.Write(bytes.Replace(uiIndex, nonceMarker, []byte(nonce), 1))
 }
 
 func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) {
