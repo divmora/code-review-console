@@ -19,6 +19,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
@@ -171,7 +172,7 @@ func testServer(t *testing.T) *Server {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour // keep jobs pending
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +235,7 @@ func TestGitLabWebhookToken(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,11 +336,11 @@ func TestAllowlist(t *testing.T) {
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.Allowlist = true
 
-	if _, err := New(cfg, &fakeExec{}, quiet, Deps{}); err == nil {
+	if _, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)}); err == nil {
 		t.Fatal("allowlist without a store must fail")
 	}
 	st := storetest.New()
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +398,7 @@ func TestJobHistoryPersists(t *testing.T) {
 	cfg.Model = "m"
 	st := storetest.New()
 	_, _ = st.InsertJob(context.Background(), store.Job{Kind: "review", Platform: "github", Repo: "o/old", State: "done", Finished: time.Now()})
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,6 +428,7 @@ func TestRuntimeSettingsWithoutRestart(t *testing.T) {
 	cfg.Repos.Allowlist = true
 	st := storetest.New()
 	svc := settings.New(cfg, st)
+	svc.Lic = licensetest.Full(t)
 	if _, _, err := svc.Seed(context.Background()); err != nil {
 		t.Fatal(err)
 	}

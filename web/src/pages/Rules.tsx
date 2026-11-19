@@ -1,8 +1,12 @@
+// Copyright (c) DIVMORA Technologies. All rights reserved.
+// Licensed under the Divmora Enterprise License; see LICENSE-ENTERPRISE.
+// Use requires a valid Divmora license. Do not modify or remove license checks.
+
 import { Fragment, useEffect, useState } from "react";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
 import type { Repo, Rule } from "../types";
-import { Chips, Empty, errMsg, SettingsEditor, settingsChips, Tri, useToast } from "../ui";
+import { Chips, Empty, errMsg, Locked, SettingsEditor, settingsChips, Tri, useFeature, useToast } from "../ui";
 
 type Flag = "enabled" | "require_reviewer" | "skip_branch_sync" | "score_labels" | "commit_status";
 const flags: [Flag, string, string, string][] = [
@@ -39,6 +43,7 @@ function RuleEditor({ rule, onSave, onDelete }: { rule: Rule; onSave: (b: any) =
 
 export default function Rules() {
   const toast = useToast();
+  const licensed = useFeature("rules");
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [editing, setEditing] = useState<number | null>(null);
@@ -93,12 +98,19 @@ export default function Rules() {
 
   return (
     <section>
+      {!licensed && (
+        <Locked feature="rules">
+          Settings for a whole host, a group or a name pattern are part of the licensed console. Without a license, repositories follow the global settings and their own mode; any rules below are kept but ignored.
+        </Locked>
+      )}
       <div className="bar">
         <span className="sub">Settings for a whole host, or for a group, organisation or name pattern on a host.</span>
         <span className="spacer" />
-        <button className="btn" onClick={() => setAdding(!adding)}>
-          Add rule
-        </button>
+        {licensed && (
+          <button className="btn" onClick={() => setAdding(!adding)}>
+            Add rule
+          </button>
+        )}
       </div>
       {adding && (
         <div className="panel pad">
@@ -166,9 +178,15 @@ export default function Rules() {
                       <td className="muted">{n + (n === 1 ? " known repository" : " known repositories")}</td>
                       <td className="muted">{rule.updated_by ? rule.updated_by + " · " + ago(rule.updated_at) : "—"}</td>
                       <td>
-                        <button className="btn" onClick={() => setEditing(editing === rule.id ? null : rule.id)}>
-                          {editing === rule.id ? "Close" : "Edit"}
-                        </button>
+                        {licensed ? (
+                          <button className="btn" onClick={() => setEditing(editing === rule.id ? null : rule.id)}>
+                            {editing === rule.id ? "Close" : "Edit"}
+                          </button>
+                        ) : (
+                          <button className="btn danger" onClick={() => remove(rule)}>
+                            Delete
+                          </button>
+                        )}
                       </td>
                     </tr>
                     {editing === rule.id && (

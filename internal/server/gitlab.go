@@ -178,7 +178,7 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		acc := s.access(r.Context(), ref)
-		if sync, why := settings.BranchSync(acc.SkipBranchSync, s.settings.Get(r.Context()).SyncSourceBranches,
+		if sync, why := settings.BranchSync(acc.SkipBranchSync, s.settings.Runtime(r.Context()).SyncSourceBranches,
 			a.SourceBranch, a.TargetBranch, p.Project.DefaultBranch); sync {
 			ignored(w, why)
 			return

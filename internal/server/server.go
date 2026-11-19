@@ -17,6 +17,7 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/admin"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -67,7 +68,7 @@ func (s *Server) pruneLoop() {
 	defer t.Stop()
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		ret := s.settings.Get(ctx).ReviewRetention()
+		ret := s.settings.Runtime(ctx).ReviewRetention()
 		if n, err := s.store.PruneJobs(ctx, time.Now().Add(-ret), time.Now().Add(-hourlyMetricsKept)); err != nil {
 			s.logger.Warn("could not prune review history", "error", err)
 		} else if n > 0 {
@@ -91,6 +92,9 @@ type Deps struct {
 	// Hosts is shared with the admin panel; nil builds one from the
 	// config file (and the store, without encryption).
 	Hosts *hosts.Registry
+	// License, when Settings is nil, goes to the settings built here;
+	// otherwise the license is Settings.Lic. nil = the free core.
+	License *license.Manager
 }
 
 // New validates config and builds a server.
@@ -99,12 +103,14 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts}
 	if s.settings == nil {
 		s.settings = settings.New(cfg, deps.Store)
+		s.settings.Lic = deps.License
 	}
 	if cfg.Repos.Allowlist && deps.Store == nil {
 		return nil, errors.New("repos.allowlist needs database.url (the allowlist is managed in the admin panel)")
 	}
 	if s.hosts == nil {
 		s.hosts = hosts.New(cfg, deps.Store, nil, logger)
+		s.hosts.Lic = s.settings.Lic
 		if _, err := s.hosts.Init(context.Background()); err != nil {
 			return nil, err
 		}
@@ -134,7 +140,7 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 	if s.store != nil {
 		s.queue.OnFinish = s.persistJob
 		s.loadHistory()
-		s.hooks = newHookWriter(s.store, func() time.Duration { return s.settings.Get(context.Background()).WebhookRetention() }, logger)
+		s.hooks = newHookWriter(s.store, func() time.Duration { return s.settings.Runtime(context.Background()).WebhookRetention() }, logger)
 		s.stopPrune = make(chan struct{})
 		go s.pruneLoop()
 	}
@@ -231,7 +237,7 @@ func (s *Server) Handler() http.Handler {
 	// The dashboard can be switched on and off from the admin console, so
 	// its routes always exist and check the setting per request.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if !s.settings.Get(r.Context()).DashboardEnabled {
+		if !s.settings.Runtime(r.Context()).DashboardEnabled {
 			http.NotFound(w, r)
 			return
 		}
@@ -331,7 +337,7 @@ func (s *Server) gate(ctx context.Context, ref vcs.Ref) (bool, *config.Overrides
 // database every repository is reviewed with the global settings; on a
 // database error the allowlist decides (fail closed when it is on).
 func (s *Server) access(ctx context.Context, ref vcs.Ref) store.Access {
-	eff := s.settings.Get(ctx)
+	eff := s.settings.Runtime(ctx)
 	base := eff.Base()
 	if s.store == nil {
 		return store.Resolve(store.Repo{Platform: ref.Platform, Host: ref.Host, Path: ref.Repo, Mode: store.ModeInherit}, nil, base)
@@ -347,12 +353,18 @@ func (s *Server) access(ctx context.Context, ref vcs.Ref) store.Access {
 		s.logger.Error("rule lookup failed", "repo", ref.String(), "error", err)
 		return fallback
 	}
+	if !s.lic().Has(license.Rules) {
+		rules = nil // group and pattern rules are a paid feature
+	}
 	acc := store.Resolve(*repo, rules, base)
 	if !acc.Enabled {
 		s.logger.Info("repository not enabled", "repo", ref.String(), "source", acc.Source)
 	}
 	return acc
 }
+
+// lic is the installed license (nil = the free core).
+func (s *Server) lic() *license.Manager { return s.settings.Lic }
 
 func (s *Server) persistJob(r Record) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

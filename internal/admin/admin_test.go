@@ -26,6 +26,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/store"
@@ -139,7 +140,9 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 	}
 	mux := http.NewServeMux()
 	box, _ := secrets.New("a test passphrase that is long enough for a key")
+	a.Lic = licensetest.Full(t)
 	a.Hosts = hosts.New(&config.Config{}, st, box, quiet)
+	a.Hosts.Lic = a.Lic
 	if _, err := a.Hosts.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}

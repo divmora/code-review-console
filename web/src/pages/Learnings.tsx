@@ -1,7 +1,11 @@
+// Copyright (c) DIVMORA Technologies. All rights reserved.
+// Licensed under the Divmora Enterprise License; see LICENSE-ENTERPRISE.
+// Use requires a valid Divmora license. Do not modify or remove license checks.
+
 import { Fragment, useEffect, useState } from "react";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
-import { Empty, errMsg, useToast } from "../ui";
+import { Empty, errMsg, Locked, useFeature, useToast } from "../ui";
 
 type Learning = {
   id: number; platform: string; host: string; scope: string; text: string; path: string;
@@ -48,6 +52,7 @@ function Editor({ l, onSave, onCancel, onDelete }: { l: Learning; onSave: (b: Pa
 
 export default function Learnings() {
   const toast = useToast();
+  const licensed = useFeature("learnings");
   const [list, setList] = useState<Learning[] | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
@@ -89,6 +94,11 @@ export default function Learnings() {
 
   return (
     <section>
+      {!licensed && (
+        <Locked feature="learnings">
+          Capturing team decisions from review replies, <code>@bot remember</code>, and applying them to reviews are part of the licensed console. Without a license nothing new is learned and existing learnings are not applied.
+        </Locked>
+      )}
       <div className="bar">
         <input type="search" placeholder="Search learnings" aria-label="Search learnings" value={q} onChange={(e) => setQ(e.target.value)} />
         <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -99,9 +109,11 @@ export default function Learnings() {
         </select>
         <span className="sub">{list && `${counts.active} active · ${counts.pending} waiting · ${counts.disabled} disabled`}</span>
         <span className="spacer" />
-        <button className="btn" onClick={() => setAdding(!adding)}>
-          Add learning
-        </button>
+        {licensed && (
+          <button className="btn" onClick={() => setAdding(!adding)}>
+            Add learning
+          </button>
+        )}
       </div>
       {adding && (
         <div className="panel pad">
@@ -176,7 +188,7 @@ export default function Learnings() {
                       )}
                     </td>
                     <td>
-                      <select aria-label="Status" value={l.status}
+                      <select aria-label="Status" value={l.status} disabled={!licensed}
                         onChange={(e) => save(l, { status: e.target.value as Learning["status"] }).then((x) => toast("Learning " + x.status)).catch((x) => toast(errMsg(x), true))}>
                         <option value="active">Active</option>
                         <option value="pending">Waiting</option>
@@ -193,9 +205,15 @@ export default function Learnings() {
                       <div className="why">{ago(l.updated_at)}</div>
                     </td>
                     <td className="nowrap">
-                      <button className="btn" onClick={() => setEditing(editing === l.id ? null : l.id)}>
-                        {editing === l.id ? "Close" : "Edit"}
-                      </button>
+                      {licensed ? (
+                        <button className="btn" onClick={() => setEditing(editing === l.id ? null : l.id)}>
+                          {editing === l.id ? "Close" : "Edit"}
+                        </button>
+                      ) : (
+                        <button className="btn danger" onClick={() => remove(l)}>
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                   {editing === l.id && (

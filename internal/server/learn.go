@@ -1,3 +1,7 @@
+// Copyright (c) DIVMORA Technologies. All rights reserved.
+// Licensed under the Divmora Enterprise License; see LICENSE-ENTERPRISE.
+// Use requires a valid Divmora license. Do not modify or remove license checks.
+
 package server
 
 import (
@@ -17,6 +21,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/store"
@@ -32,7 +37,7 @@ const maxJobLearnings = 100
 // learningsFor returns the active learnings that apply to a repository:
 // host-wide first, then groups and patterns, then the repository itself.
 func (s *Server) learningsFor(ctx context.Context, ref vcs.Ref) []config.Learning {
-	if s.store == nil || !s.settings.Get(ctx).LearningsEnabled {
+	if s.store == nil || !s.settings.Runtime(ctx).LearningsEnabled {
 		return nil
 	}
 	all, err := s.store.ListLearnings(ctx)
@@ -80,7 +85,7 @@ func (s *Server) saveLearning(ctx context.Context, ref vcs.Ref, text, path, sour
 		return nil, errors.New("learnings need a database")
 	}
 	status := store.LearningActive
-	if !s.settings.Get(ctx).LearningsAutoActivate {
+	if !s.settings.Runtime(ctx).LearningsAutoActivate {
 		status = store.LearningPending
 	}
 	text = strings.TrimSpace(text)
@@ -96,6 +101,9 @@ func (s *Server) remember(tgt target, ref vcs.Ref, text, author, sourceRef strin
 	return s.queue.Submit(&Job{
 		Key: "remember:" + sourceRef, Label: "remember " + ref.String(), Meta: meta(ref, "remember", "command"),
 		Run: func(ctx context.Context, rep *Report) error {
+			if !s.lic().Has(license.Learnings) {
+				return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, "Team learnings are part of the licensed Divmora console; this console has no license for them, so nothing was saved.")
+			}
 			if strings.TrimSpace(text) == "" {
 				return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, "Tell me what to remember: `@"+tgt.botName+" remember <a rule for future reviews>`.")
 			}
@@ -128,7 +136,7 @@ type learnInput struct {
 // learnFromReply runs "codereview learn" on a reply to one of the bot's
 // comments and stores the learning, if any. It is quiet: nothing is posted.
 func (s *Server) learnFromReply(tgt target, ref vcs.Ref, in learnInput, sourceRef string, react func(context.Context, string)) error {
-	if s.store == nil || !s.settings.Get(context.Background()).LearningsEnabled || isBotOutput(in.Reply) {
+	if s.store == nil || !s.settings.Runtime(context.Background()).LearningsEnabled || isBotOutput(in.Reply) {
 		return nil
 	}
 	return s.queue.Submit(&Job{
@@ -299,7 +307,7 @@ func (s *Server) bitbucketComment(ctx context.Context, tgt target, ref vcs.Ref, 
 // known to answer the bot, "learned" when a learning was saved.
 func (s *Server) replyToBot(tgt target, ref vcs.Ref, fetch func(ctx context.Context) (parentComment, error), react func(context.Context, string),
 	reply, author, sourceRef string) {
-	if s.store == nil || !s.settings.Get(context.Background()).LearningsEnabled {
+	if s.store == nil || !s.settings.Runtime(context.Background()).LearningsEnabled {
 		return
 	}
 	go func() {

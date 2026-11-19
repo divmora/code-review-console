@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
@@ -133,7 +134,7 @@ func runE2E(t *testing.T, exec executor.Executor) {
 	cfg.Model = "fake"
 	cfg.Server.Debounce = 0
 	st := storetest.New()
-	s, err := New(cfg, exec, quiet, Deps{Store: st})
+	s, err := New(cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useRef, useState } from "react";
-import type { Me, Overrides } from "./types";
+import { Link } from "react-router-dom";
+import type { Feature, Me, Overrides } from "./types";
 
 // ---- toast ----
 
@@ -36,13 +37,54 @@ export const useMe = () => useContext(MeCtx)!;
 export const RefreshMeCtx = createContext<() => void>(() => {});
 export const useRefreshMe = () => useContext(RefreshMeCtx);
 
+// ---- license ----
+
+export const featureTitles: Record<Feature, string> = {
+  hosts: "Multiple code hosts and bot identities",
+  rules: "Group and pattern rules",
+  learnings: "Team learnings",
+  executors: "Docker and Kubernetes executors",
+  budgets: "Token budgets",
+  metrics: "Metrics and long history",
+  audit: "Audit log",
+  branch_sync: "Branch-sync skip",
+  sso_rules: "SSO domain and group rules",
+};
+
+// useFeature reports whether the installed license turns on a paid feature.
+export function useFeature(f: Feature): boolean {
+  return useMe().license.features.includes(f);
+}
+
+// Locked explains a paid feature the license does not cover.
+export function Locked({ feature, children }: { feature: Feature; children?: ReactNode }) {
+  return (
+    <div className="panel pad locked" role="note">
+      <b>{featureTitles[feature]}</b> <span className="chip">licensed</span>
+      <p className="sub">
+        {children ?? "This is part of the licensed Divmora console."} <Link to="/license">Install a license</Link> or contact{" "}
+        <a href="mailto:licensing@divmora.com">licensing@divmora.com</a>.
+      </p>
+    </div>
+  );
+}
+
+// LockNote marks a single paid setting inside a form.
+export function LockNote({ feature }: { feature: Feature }) {
+  return useFeature(feature) ? null : (
+    <span className="locknote">
+      Needs a license with {featureTitles[feature].toLowerCase()} · <Link to="/license">License</Link>
+    </span>
+  );
+}
+
 // ---- small pieces ----
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
-export function StateBadge({ kind, children }: { kind: "on" | "off" | "idle"; children: ReactNode }) {
+export function StateBadge({ kind, children }: { kind: "on" | "off" | "idle" | "warn"; children: ReactNode }) {
   return <span className={"state " + kind}>{children}</span>;
 }
 

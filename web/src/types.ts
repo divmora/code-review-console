@@ -10,6 +10,21 @@ export type Overrides = {
   instructions?: string;
 };
 
+export type Feature = "hosts" | "rules" | "learnings" | "executors" | "budgets" | "metrics" | "audit" | "branch_sync" | "sso_rules";
+
+export type LicenseStatus = {
+  state: "none" | "active" | "grace" | "expired" | "invalid";
+  source?: string;
+  id?: string;
+  customer?: string;
+  plan?: string;
+  expires_at?: string;
+  grace_until?: string;
+  features: Feature[];
+  error?: string;
+  managed: boolean;
+};
+
 export type Me = {
   email: string;
   name: string;
@@ -18,6 +33,8 @@ export type Me = {
   profiles: string[];
   allowlist: boolean;
   require_reviewer: boolean;
+  license: LicenseStatus;
+  free_retention_days: number;
 };
 
 export type Access = {

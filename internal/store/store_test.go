@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -224,6 +225,18 @@ func TestJobResultsFiltersModelsSettings(t *testing.T) {
 	_ = p.PutSetting(ctx, "public_dashboard", map[string]bool{"enabled": true}, "a@x.com")
 	if found, err := p.GetSetting(ctx, "public_dashboard", &v); !found || err != nil || !v.Enabled {
 		t.Errorf("setting: %v %v %+v", found, err, v)
+	}
+	// A value the audit log must not copy (a license key).
+	if err := p.PutSettingAudited(ctx, "license", map[string]string{"key": "DIV1.secret"}, map[string]string{"id": "lic-1"}, "a@x.com"); err != nil {
+		t.Fatal(err)
+	}
+	var lic struct{ Key string }
+	if found, _ := p.GetSetting(ctx, "license", &lic); !found || lic.Key != "DIV1.secret" {
+		t.Errorf("stored value: %+v", lic)
+	}
+	entries, _ := p.ListAudit(ctx, 5)
+	if len(entries) == 0 || entries[0].Target != "license" || strings.Contains(fmt.Sprint(entries[0].Detail), "DIV1.secret") {
+		t.Errorf("audit must hold the detail, not the value: %+v", entries[0])
 	}
 }
 

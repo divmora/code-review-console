@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/store"
 )
@@ -206,6 +207,9 @@ type Registry struct {
 	notes []string
 	// OnChange runs after hosts change (e.g. to refresh bot identities).
 	OnChange func()
+	// Lic gates the Hosts feature: without it only the first host of each
+	// platform is active, and per-host bot identities are ignored.
+	Lic *license.Manager
 }
 
 // New returns a Registry. st and box may be nil.
@@ -318,15 +322,58 @@ func (r *Registry) All() []Host {
 	return append([]Host(nil), r.list...)
 }
 
-// Enabled returns the enabled hosts of a platform ("" for all).
+// Enabled returns the active hosts of a platform ("" for all): enabled,
+// and within what the license covers.
 func (r *Registry) Enabled(platform string) []Host {
 	var out []Host
 	for _, h := range r.All() {
-		if h.Enabled && (platform == "" || h.Platform == platform) {
+		if h.Enabled && (platform == "" || h.Platform == platform) && r.Active(h) {
+			if !r.Lic.Has(license.Hosts) {
+				h.BotName, h.Reviewer = "", "" // the token user
+			}
 			out = append(out, h)
 		}
 	}
 	return out
+}
+
+// Active reports whether the license covers h: with the Hosts feature every
+// host; without it only the first enabled host of each platform (the
+// oldest, or the first in the config file).
+func (r *Registry) Active(h Host) bool {
+	if r.Lic.Has(license.Hosts) {
+		return true
+	}
+	first, ok := r.first(h.Platform)
+	return ok && first.ID == h.ID && first.Host == h.Host
+}
+
+func (r *Registry) first(platform string) (Host, bool) {
+	var best Host
+	found := false
+	for _, h := range r.All() { // sorted by platform+host; config hosts have ID 0
+		if h.Enabled && h.Platform == platform && (!found || (h.ID != 0 && h.ID < best.ID)) {
+			best, found = h, true
+		}
+	}
+	return best, found
+}
+
+// CheckLicense returns a *license.Error when saving h would need the Hosts
+// feature: a second host on a platform, or a custom bot identity.
+func (r *Registry) CheckLicense(h Host) error {
+	if r.Lic.Has(license.Hosts) {
+		return nil
+	}
+	if h.BotName != "" || h.Reviewer != "" {
+		return &license.Error{Feature: license.Hosts}
+	}
+	for _, o := range r.All() {
+		if o.Platform == h.Platform && o.ID != h.ID {
+			return &license.Error{Feature: license.Hosts}
+		}
+	}
+	return nil
 }
 
 // Find returns the enabled host of a platform by web host. With a single

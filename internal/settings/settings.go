@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/store"
 )
 
@@ -86,6 +87,9 @@ type Effective struct {
 type Service struct {
 	cfg *config.Config
 	st  store.Store
+	// Lic switches paid settings off in Runtime when it lacks their
+	// feature (nil = the free core).
+	Lic *license.Manager
 
 	mu     sync.Mutex
 	cached *Effective
@@ -206,6 +210,31 @@ func days(d time.Duration, def int) int {
 	return max(1, int(d.Hours()/24))
 }
 
+// Runtime returns the settings the console acts on: Get, with the paid
+// settings the license does not cover switched off. Get (what admins saved)
+// is what the admin panel shows and edits, so a license that lapses and is
+// renewed keeps them.
+func (s *Service) Runtime(ctx context.Context) Effective {
+	return s.Get(ctx).Licensed(s.Lic)
+}
+
+// Licensed returns e with the paid settings lic does not cover switched off.
+func (e Effective) Licensed(lic *license.Manager) Effective {
+	if !lic.Has(license.Learnings) {
+		e.LearningsEnabled = false
+	}
+	if !lic.Has(license.Budgets) {
+		e.DailyTokenBudget, e.RepoDailyTokenBudget = 0, 0
+	}
+	if !lic.Has(license.BranchSync) {
+		e.SkipBranchSync, e.SyncSourceBranches = false, nil
+	}
+	if !lic.Has(license.Metrics) && e.ReviewRetentionDays > license.FreeRetentionDays {
+		e.ReviewRetentionDays = license.FreeRetentionDays
+	}
+	return e
+}
+
 // ReviewRetention and WebhookRetention as durations.
 func (e Effective) ReviewRetention() time.Duration {
 	return time.Duration(max(1, e.ReviewRetentionDays)) * 24 * time.Hour
@@ -220,24 +249,6 @@ func (e Effective) WebhookRetention() time.Duration {
 func (e Effective) Base() store.Base {
 	return store.Base{Allowlist: e.Allowlist, RequireReviewer: e.RequireReviewer, SkipBranchSync: e.SkipBranchSync,
 		ScoreLabels: e.ScoreLabels, CommitStatus: e.CommitStatus, ReviewDefaults: e.ReviewDefaults}
-}
-
-// BranchSync reports whether a merge/pull request from source to target is
-// a branch sync to skip (when skip is on): the source is the default
-// branch, or matches one of the patterns. It returns the reason.
-func BranchSync(skip bool, patterns []string, source, target, defaultBranch string) (bool, string) {
-	if !skip || source == "" || source == target {
-		return false, ""
-	}
-	if defaultBranch != "" && source == defaultBranch {
-		return true, fmt.Sprintf("branch sync from the default branch (%s into %s)", source, target)
-	}
-	for _, p := range patterns {
-		if ok, _ := path.Match(p, source); ok {
-			return true, fmt.Sprintf("branch sync from %s into %s (matches %q)", source, target, p)
-		}
-	}
-	return false, ""
 }
 
 // SeedActor is the audit actor for the initial copy of the config file.

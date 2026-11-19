@@ -7,6 +7,8 @@ Each release publishes:
 | Container image | `ghcr.io/divmora/code-review-console:X.Y.Z` (linux/amd64, linux/arm64) | the console, the admin UI, and the pinned `codereview` CLI for the local executor |
 | Binaries | the GitHub release (linux, macOS, Windows; amd64, arm64) | the console only; install the CLI from [code-review-bot](https://github.com/divmora/code-review-bot/releases) |
 
+Both include the free core and the enterprise features; a license key turns the latter on.
+
 The admin UI is built into the binary: there is nothing else to serve.
 
 ## CLI compatibility
@@ -25,11 +27,35 @@ The console runs the `codereview` CLI for every review, so the two must agree on
 - Always run `code-review-console check-config --config console.yaml` after an upgrade. It asks
   the CLI the executor actually runs to validate the config, and fails if that CLI is too old.
 
+## License
+
+Without a key the console runs the **free core**: reviews for one host per platform, the local
+executor, repository on/off, `@bot` commands, 30 days of history, the dashboard and admin sign-in
+by email. Paid features need a Divmora license key (a `DIV1.…` token, or the armored
+`-----BEGIN DIVMORA LICENSE KEY-----` block) for product `code-review-console`. The README lists
+the features.
+
+The key is read from the first of these that is set:
+
+1. `CODEREVIEW_CONSOLE_LICENSE`: the key itself
+2. `license.file` in the config: a file holding the key (for example a mounted Secret)
+3. the key pasted under **License** in the admin panel (stored in the database, audited without
+   the key itself)
+
+Keys are verified offline against Divmora's public key; nothing is sent anywhere. A new key
+applies at once, except for the executor type, which is checked when the console starts:
+`executor.type: docker` or `kubernetes` without the `executors` feature stops startup with a clear
+error. When a license expires, paid features keep working for its grace period (14 days unless
+the license says otherwise), with a banner in the admin panel. After that the console goes back
+to the free core. It never stops reviewing, and settings for paid features are kept for when the
+license is renewed.
+
 ## Environment
 
 | Variable | Needed for |
 |---|---|
 | `DATABASE_URL` | PostgreSQL 13+ (`database.url: ${DATABASE_URL}`). Required for the admin panel, the allowlist, learnings and history. Migrations run at startup under an advisory lock, so several replicas can start together. |
+| `CODEREVIEW_CONSOLE_LICENSE` | The Divmora license key (see [License](#license)) |
 | `CODEREVIEW_CONSOLE_SECRET_KEY` | Managing code hosts in the admin panel. 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. Without it, hosts come from the config file and are read-only. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Admin sign-in ([admin.md](admin.md)) |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, ... and webhook secrets | Code hosts from the config file (seeded into the database on first start when the secret key is set) |

@@ -13,6 +13,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
@@ -27,7 +28,7 @@ func TestRequireReviewerGitLab(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.RequireReviewer = true
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestPerInstanceIdentity(t *testing.T) {
 			cfg.GitLab[i].BotName = cfg.BotName
 		}
 	}
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestClosedMergeRequests(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour // keep reviews waiting
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +223,7 @@ func TestDistinctEventsSameSecondAreNotDuplicates(t *testing.T) {
 	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func TestBranchSyncSkipped(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.RequireReviewer = true
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +293,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +341,7 @@ func TestReviewNow(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.RequireReviewer = true // an explicit request ignores this
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +367,7 @@ func TestTokenBudgets(t *testing.T) {
 	cfg.Model = "m"
 	st := storetest.New()
 	exec := &fakeExec{}
-	s, err := New(cfg, exec, quiet, Deps{Store: st})
+	s, err := New(cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

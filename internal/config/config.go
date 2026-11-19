@@ -40,6 +40,14 @@ type Config struct {
 	Admin    Admin    `yaml:"admin"`
 	Repos    Repos    `yaml:"repos"`
 	Executor Executor `yaml:"executor"`
+	// License points at a Divmora license key file. The key can also come
+	// from $CODEREVIEW_CONSOLE_LICENSE, or be pasted in the admin panel.
+	License License `yaml:"license"`
+}
+
+// License configures where the license key is read from.
+type License struct {
+	File string `yaml:"file"`
 }
 
 // GitHub configures GitHub webhooks and API access.

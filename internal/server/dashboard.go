@@ -45,7 +45,7 @@ func securityHeaders(w http.ResponseWriter, nonce string) {
 }
 
 func (s *Server) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
-	eff := s.settings.Get(r.Context())
+	eff := s.settings.Runtime(r.Context())
 	if !eff.DashboardEnabled {
 		http.NotFound(w, r)
 		return
@@ -86,7 +86,7 @@ type statusResponse struct {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w, "")
-	eff := s.settings.Get(r.Context())
+	eff := s.settings.Runtime(r.Context())
 	if !eff.DashboardEnabled {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "the status dashboard is off"})
 		return

@@ -163,7 +163,7 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		acc := s.access(r.Context(), ref)
-		if sync, why := settings.BranchSync(acc.SkipBranchSync, s.settings.Get(r.Context()).SyncSourceBranches,
+		if sync, why := settings.BranchSync(acc.SkipBranchSync, s.settings.Runtime(r.Context()).SyncSourceBranches,
 			pr.Source.Branch.Name, pr.Destination.Branch.Name, p.Repository.MainBranch.Name); sync {
 			ignored(w, why)
 			return

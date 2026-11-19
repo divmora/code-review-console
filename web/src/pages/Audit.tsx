@@ -1,15 +1,26 @@
+// Copyright (c) DIVMORA Technologies. All rights reserved.
+// Licensed under the Divmora Enterprise License; see LICENSE-ENTERPRISE.
+// Use requires a valid Divmora license. Do not modify or remove license checks.
+
 import { useEffect, useState } from "react";
 import { get } from "../api";
-import { Empty, errMsg, useToast } from "../ui";
+import { Empty, errMsg, Locked, useFeature, useToast } from "../ui";
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; detail: unknown };
 
 export default function Audit() {
   const toast = useToast();
   const [list, setList] = useState<Entry[] | null>(null);
+  const licensed = useFeature("audit");
   useEffect(() => {
-    get<Entry[]>("/admin/api/audit").then((l) => setList(l || [])).catch((e) => toast(errMsg(e), true));
-  }, []);
+    if (licensed) get<Entry[]>("/admin/api/audit").then((l) => setList(l || [])).catch((e) => toast(errMsg(e), true));
+  }, [licensed]);
+  if (!licensed)
+    return (
+      <section>
+        <Locked feature="audit">Every admin change is still recorded; viewing the audit log is part of the licensed console.</Locked>
+      </section>
+    );
   return (
     <section>
       <div className="panel">

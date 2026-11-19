@@ -292,6 +292,9 @@ type Store interface {
 	// GetSetting decodes a global setting into out; found is false if unset.
 	GetSetting(ctx context.Context, key string, out any) (found bool, err error)
 	PutSetting(ctx context.Context, key string, value any, actor string) error
+	// PutSettingAudited stores value but records detail in the audit log
+	// (for values that must not be copied there, like a license key).
+	PutSettingAudited(ctx context.Context, key string, value, detail any, actor string) error
 
 	CreateSession(ctx context.Context, idHash []byte, s Session) error
 	GetSession(ctx context.Context, idHash []byte) (*Session, error)
@@ -1377,6 +1380,10 @@ func (p *Postgres) GetSetting(ctx context.Context, key string, out any) (bool, e
 }
 
 func (p *Postgres) PutSetting(ctx context.Context, key string, value any, actor string) error {
+	return p.PutSettingAudited(ctx, key, value, value, actor)
+}
+
+func (p *Postgres) PutSettingAudited(ctx context.Context, key string, value, detail any, actor string) error {
 	js, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -1392,7 +1399,7 @@ func (p *Postgres) PutSetting(ctx context.Context, key string, value any, actor 
 		key, js, actor); err != nil {
 		return err
 	}
-	if err := audit(ctx, tx, actor, "setting.put", key, value); err != nil {
+	if err := audit(ctx, tx, actor, "setting.put", key, detail); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

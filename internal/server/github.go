@@ -148,7 +148,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 		ref := vcs.Ref{Platform: vcs.GitHub, Host: host, Repo: p.Repository.FullName, Number: firstNonZero(p.Number, p.PullRequest.Number)}
 		acc := s.access(r.Context(), ref)
-		if sync, why := settings.BranchSync(acc.SkipBranchSync, s.settings.Get(r.Context()).SyncSourceBranches,
+		if sync, why := settings.BranchSync(acc.SkipBranchSync, s.settings.Runtime(r.Context()).SyncSourceBranches,
 			p.PullRequest.Head.Ref, p.PullRequest.Base.Ref, p.Repository.DefaultBranch); sync {
 			ignored(w, why)
 			return

@@ -1,8 +1,9 @@
 # AGENTS.md — Divmora Code Review Console
 
 Org-wide rules: [divmora/.github AGENTS.md](https://github.com/divmora/.github/blob/main/AGENTS.md).
-License: **BSL 1.1** (Tier 2). The engine it drives, `code-review-bot`, is Apache 2.0; never copy
-console code into the bot repo.
+License: **open core**. The free core is BSL 1.1 (with free production use), and the paid features are
+under the proprietary Divmora Enterprise License (`LICENSE-ENTERPRISE`). The engine it drives,
+`code-review-bot`, is Apache 2.0; never copy console code into the bot repo.
 
 ## Layout
 
@@ -58,6 +59,21 @@ Changing this contract means changing the bot's CLI too; keep them in step.
   and extracts them (`codereview learn`). The console never calls a model itself.
 - Host secrets are encrypted before the store sees them; APIs and audit entries expose only
   whether a secret is set. Webhooks are verified against the matched host's secrets only.
+
+## Licensing (open core)
+
+- Paid features are listed in `internal/ee/license` (`license.All`). The license is a Divmora DIV1
+  token (github.com/divmora/license-go) for product `code-review-console`, issued by the license
+  portal and verified offline against the keys in `internal/ee/license/keys.go`.
+- A nil `*license.Manager` is the free core. Gate at one place per feature:
+  `settings.Runtime` (learnings, budgets, branch-sync skip, retention), rules dropped before
+  `store.Resolve`, `hosts.Registry.Enabled`/`CheckLicense`, admin APIs (`a.require` → 402), the
+  executor at startup, SSO rules in `authorize`. The admin panel shows and saves stored values;
+  runtime ignores the unlicensed ones, so a renewed license restores them.
+- Code that implements a paid feature goes in a file with the Enterprise header (or under `ee/`).
+  New paid features: add to `license.All`/`Titles`, the README table, `LICENSE-ENTERPRISE` §1(b),
+  the UI (`featureTitles`, `useFeature`, `<Locked>`) and the portal's product entry.
+- Tests: `licensetest.Full(t)` for licensed setups; keep a free-core test for every gate.
 
 ## Admin UI
 

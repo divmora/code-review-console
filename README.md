@@ -1,7 +1,7 @@
 # Divmora Code Review Console
 
 [![Latest Release](https://img.shields.io/github/v/release/divmora/code-review-console?logo=github)](https://github.com/divmora/code-review-console/releases)
-[![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1-blue.svg)](https://github.com/divmora/.github/blob/main/LICENSING.md)
+[![License: BSL 1.1 + Enterprise](https://img.shields.io/badge/License-BSL_1.1_%2B_Enterprise-blue.svg)](#license)
 [![CI/CD](https://github.com/divmora/code-review-console/actions/workflows/ci.yml/badge.svg)](https://github.com/divmora/code-review-console/actions)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/divmora/code-review-console)](go.mod)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-green.svg)](SECURITY.md)
@@ -121,6 +121,15 @@ The console imports only `pkg/vcs` from code-review-bot (code host API clients).
 
 ## License
 
-**Business Source License 1.1.** Free for non-production use: development, testing, staging, QA, CI/CD validation, evaluation. **Production use, resale or offering it as a hosted service requires a commercial license** from DIVMORA Technologies (licensing@divmora.com). Each version converts to Apache 2.0 three years after its release. See [LICENSE](LICENSE) and the [licensing policy](https://github.com/divmora/.github/blob/main/LICENSING.md).
+Two licenses, split by feature rather than by environment:
+
+| | Free core | Enterprise features |
+|---|---|---|
+| What | Reviews for one GitHub, GitLab and Bitbucket host each; local executor; repository on/off; `@bot` commands; review history for 30 days; status dashboard; admin sign-in by email | More hosts per platform and per-host bot identities; host, group and pattern rules; team learnings; Docker and Kubernetes executors; token budgets; metrics and long history; audit log viewer; branch-sync skip; SSO domain and group rules |
+| License | [Business Source License 1.1](LICENSE) | [Divmora Enterprise License](LICENSE-ENTERPRISE) |
+| Free use | Yes, **including production**, except reselling it or running it as a hosted service for others | **No.** Every environment (development, CI, staging, production) needs a license key and a commercial agreement |
+| Becomes Apache 2.0 | Three years after each release | Never |
+
+Install a key under **License** in the admin panel, or with `CODEREVIEW_CONSOLE_LICENSE` or `license.file` ([docs/deploy.md](docs/deploy.md#license)). Keys are verified offline. Licenses and trials: licensing@divmora.com.
 
 The review engine, [code-review-bot](https://github.com/divmora/code-review-bot), is Apache 2.0 and free in any environment.

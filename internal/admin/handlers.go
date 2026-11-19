@@ -18,6 +18,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
@@ -104,10 +105,12 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/settings", a.requireAPI(a.apiGetSettings))
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
+	mux.HandleFunc("GET /admin/api/license", a.requireAPI(a.apiGetLicense))
+	mux.HandleFunc("PUT /admin/api/license", a.requireAPI(a.apiPutLicense))
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
+var adminSections = map[string]bool{"repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.session(r); !ok {
@@ -123,7 +126,7 @@ func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	eff := a.settings().Get(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
+		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
 	})
 }
 
@@ -138,7 +141,10 @@ func (a *Admin) view(ctx context.Context, repos []store.Repo) ([]repoView, error
 	if err != nil {
 		return nil, err
 	}
-	eff := a.settings().Get(ctx)
+	eff := a.settings().Runtime(ctx)
+	if !a.Lic.Has(license.Rules) {
+		rules = nil // group and pattern rules are a paid feature
+	}
 	out := make([]repoView, 0, len(repos))
 	for _, r := range repos {
 		out = append(out, repoView{Repo: r, Effective: store.Resolve(r, rules, eff.Base())})
@@ -322,6 +328,9 @@ type ruleReq struct {
 }
 
 func (a *Admin) apiCreateRule(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Rules) {
+		return
+	}
 	var req ruleReq
 	if !decode(w, r, &req) {
 		return
@@ -361,6 +370,9 @@ type ruleUpdateReq struct {
 }
 
 func (a *Admin) apiUpdateRule(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Rules) {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
@@ -501,6 +513,9 @@ func (a *Admin) apiWebhooks(w http.ResponseWriter, r *http.Request, s *store.Ses
 }
 
 func (a *Admin) apiAudit(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Audit) {
+		return
+	}
 	limit := 200
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
 		limit = n
@@ -543,6 +558,9 @@ type hostView struct {
 	Secrets    hosts.Status   `json:"secrets"`
 	WebhookURL string         `json:"webhook_url"`
 	Events     []string       `json:"events"`
+	// Licensed is false for a host the license does not cover (a second
+	// host on a platform without the hosts feature): it is not used.
+	Licensed bool `json:"licensed"`
 }
 
 var hookEvents = map[string][]string{
@@ -553,7 +571,8 @@ var hookEvents = map[string][]string{
 
 func (a *Admin) viewHost(h hosts.Host) hostView {
 	return hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
-		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Events: hookEvents[h.Platform]}
+		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Events: hookEvents[h.Platform],
+		Licensed: !h.Enabled || a.Hosts.Active(h)}
 }
 
 func (a *Admin) apiListHosts(w http.ResponseWriter, r *http.Request, s *store.Session) {
@@ -643,6 +662,10 @@ func (a *Admin) apiCreateHost(w http.ResponseWriter, r *http.Request, s *store.S
 			return
 		}
 	}
+	if err := a.Hosts.CheckLicense(h); err != nil {
+		writeLicenseError(w, err)
+		return
+	}
 	a.saveHost(w, r, s, h, http.StatusCreated)
 }
 
@@ -672,8 +695,11 @@ func (a *Admin) apiUpdateHost(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "the platform of a host cannot change; add a new host"})
 		return
 	}
-	oldHost := h.Host
+	oldHost, oldBot, oldReviewer := h.Host, h.BotName, h.Reviewer
 	req.apply(&h)
+	if (h.BotName != oldBot || h.Reviewer != oldReviewer) && (h.BotName != "" || h.Reviewer != "") && !a.require(w, license.Hosts) {
+		return
+	}
 	if err := h.Normalize(); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -841,6 +867,9 @@ func (a *Admin) apiRerun(w http.ResponseWriter, r *http.Request, s *store.Sessio
 
 // apiMetrics returns rollup buckets for charts. Defaults: daily, last 30 days.
 func (a *Admin) apiMetrics(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Metrics) {
+		return
+	}
 	q := r.URL.Query()
 	g := q.Get("granularity")
 	span := map[string]time.Duration{store.Hourly: 48 * time.Hour, store.Daily: 30 * 24 * time.Hour, store.Monthly: 365 * 24 * time.Hour}
@@ -913,6 +942,9 @@ func (req *learningReq) check() error {
 }
 
 func (a *Admin) apiCreateLearning(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Learnings) {
+		return
+	}
 	var req learningReq
 	if !decode(w, r, &req) {
 		return
@@ -939,6 +971,9 @@ func (a *Admin) apiCreateLearning(w http.ResponseWriter, r *http.Request, s *sto
 }
 
 func (a *Admin) apiUpdateLearning(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Learnings) {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})

@@ -23,7 +23,7 @@ LABEL org.opencontainers.image.title="code-review-console" \
       org.opencontainers.image.description="Divmora Code Review Console: webhooks, queue, executors and admin UI for code-review-bot" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/divmora/code-review-console" \
-      org.opencontainers.image.licenses="BUSL-1.1" \
+      org.opencontainers.image.licenses="BUSL-1.1 AND LicenseRef-Divmora-Enterprise" \
       org.opencontainers.image.vendor="DIVMORA Technologies"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \

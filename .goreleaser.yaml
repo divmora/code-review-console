@@ -39,6 +39,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - LICENSE-ENTERPRISE
       - CONTRIBUTING.md
       - SECURITY.md
 

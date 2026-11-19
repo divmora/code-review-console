@@ -14,6 +14,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
@@ -27,7 +28,7 @@ func TestLearningsForScopes(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	st := storetest.New()
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestLearnFromReplyAndRemember(t *testing.T) {
 	cfg.Model = "m"
 	st := storetest.New()
 	exec := &fakeExec{res: &executor.Result{Raw: json.RawMessage(`{"learning":true,"text":"Account numbers are compared without leading zeros.","path":"","reason":"convention","usage":{"InputTokens":400,"OutputTokens":60}}`)}}
-	s, err := New(cfg, exec, quiet, Deps{Store: st})
+	s, err := New(cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

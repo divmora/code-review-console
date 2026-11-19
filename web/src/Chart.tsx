@@ -1,3 +1,7 @@
+// Copyright (c) DIVMORA Technologies. All rights reserved.
+// Licensed under the Divmora Enterprise License; see LICENSE-ENTERPRISE.
+// Use requires a valid Divmora license. Do not modify or remove license checks.
+
 import { useEffect, useRef, useState } from "react";
 import { fmtNum } from "./format";
 

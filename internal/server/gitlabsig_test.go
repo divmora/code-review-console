@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 )
 
 var testSigningKey = []byte("0123456789abcdef0123456789abcdef")
@@ -105,7 +106,7 @@ func TestGitLabSigningKeyAndConfig(t *testing.T) {
 		{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "x", RequireSignature: true},
 	} {
 		cfg.GitLab = []config.GitLab{g}
-		if _, err := New(cfg, &fakeExec{}, quiet, Deps{}); err == nil {
+		if _, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)}); err == nil {
 			t.Errorf("config %+v should be rejected", g)
 		}
 	}
@@ -118,7 +119,7 @@ func TestGitLabSignedWebhook(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestSeveralHooksOneInstance(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

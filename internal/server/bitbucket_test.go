@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 )
 
 func bbSign(secret string, body []byte) string {
@@ -28,7 +29,7 @@ func TestBitbucketWebhook(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestBitbucketWebhook(t *testing.T) {
 	if c, b := send("pullrequest:fulfilled", pr("1", "MERGED", "feat", ""), "bbsecret"); c != http.StatusOK || !strings.Contains(b, "cancelled") {
 		t.Errorf("merge should cancel the waiting review: %d %s", c, b)
 	}
-	s.settings.Get(context.Background()) // no store: settings come from the config
+	s.settings.Runtime(context.Background()) // no store: settings come from the config
 	s.cfg.Repos.RequireReviewer = true
 	if c, b := send("pullrequest:updated", pr("3", "OPEN", "feat", `{"nickname":"alice"}`), "bbsecret"); c != http.StatusOK || !strings.Contains(b, "@review-bot is not a reviewer") {
 		t.Errorf("reviewer required: %d %s", c, b)

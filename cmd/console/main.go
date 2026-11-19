@@ -18,6 +18,7 @@ import (
 
 	"github.com/divmora/code-review-console/internal/admin"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -109,10 +110,6 @@ func serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	exec, err := newExecutor(cfg)
-	if err != nil {
-		return err
-	}
 	var deps server.Deps
 	if cfg.Database.URL != "" {
 		st, err := store.Open(ctx, cfg.Database.URL)
@@ -123,7 +120,17 @@ func serve(ctx context.Context, args []string) error {
 		deps.Store = st
 		logger.Info("database connected; schema up to date")
 	}
+	lic := loadLicense(ctx, cfg, deps.Store, logger)
+	if err := requireExecutor(cfg, lic); err != nil {
+		return err
+	}
+	exec, err := newExecutor(cfg)
+	if err != nil {
+		return err
+	}
+	deps.License = lic
 	deps.Settings = settings.New(cfg, deps.Store)
+	deps.Settings.Lic = lic
 	if deps.Store != nil {
 		seeded, differs, err := deps.Settings.Seed(ctx)
 		switch {
@@ -141,6 +148,7 @@ func serve(ctx context.Context, args []string) error {
 		return err
 	}
 	deps.Hosts = hosts.New(cfg, deps.Store, box, logger)
+	deps.Hosts.Lic = lic
 	notes, err := deps.Hosts.Init(ctx)
 	if err != nil {
 		return fmt.Errorf("hosts: %w", err)
@@ -160,6 +168,7 @@ func serve(ctx context.Context, args []string) error {
 			return err
 		}
 		adm.Settings = deps.Settings
+		adm.Lic = lic
 		adm.Hosts = deps.Hosts
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
@@ -186,6 +195,9 @@ func checkConfig(ctx context.Context, args []string) error {
 	exec, err := newExecutor(cfg)
 	if err != nil {
 		return err
+	}
+	if err := requireExecutor(cfg, loadLicense(ctx, cfg, nil, slog.New(slog.DiscardHandler))); err != nil {
+		fmt.Printf("note: %v\n      (a key pasted in the admin panel is read from the database when the console starts)\n", err)
 	}
 	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled, cfg.Repos.Allowlist, cfg.Database.URL != "")
 	if len(cfg.Models) == 0 && cfg.Model == "" {
@@ -229,6 +241,62 @@ func checkConfig(ctx context.Context, args []string) error {
 	fmt.Printf("engine config: ok (codereview %s)\nmodel chain: %s\n", rep.Version, strings.Join(rep.Chain, " -> "))
 	if rep.Verify != "" {
 		fmt.Println("verify model:", rep.Verify)
+	}
+	return nil
+}
+
+// loadLicense reads the license key: $CODEREVIEW_CONSOLE_LICENSE, then
+// license.file, then a key pasted in the admin panel (database). Without a
+// valid key the console runs the free core.
+func loadLicense(ctx context.Context, cfg *config.Config, st store.Store, logger *slog.Logger) *license.Manager {
+	lic := license.Default()
+	key, source := strings.TrimSpace(os.Getenv("CODEREVIEW_CONSOLE_LICENSE")), "env"
+	if key == "" && cfg.License.File != "" {
+		b, err := os.ReadFile(cfg.License.File)
+		if err != nil {
+			lic.Fail("file", err)
+			logger.Error("license file unreadable; running the free core", "file", cfg.License.File, "error", err)
+			return lic
+		}
+		key, source = strings.TrimSpace(string(b)), "file"
+	}
+	if key == "" && st != nil {
+		var stored admin.StoredLicense
+		if found, err := st.GetSetting(ctx, admin.LicenseSetting, &stored); err != nil {
+			logger.Error("could not read the stored license; running the free core", "error", err)
+		} else if found {
+			key, source = stored.Key, "database"
+		}
+	}
+	if key == "" {
+		logger.Info("no license: running the free core (paid features are off)")
+		return lic
+	}
+	if err := lic.Install(key, source); err != nil {
+		lic.Fail(source, err)
+		logger.Error("license is not valid; running the free core", "source", source, "error", err)
+		return lic
+	}
+	st2 := lic.Status()
+	switch st2.State {
+	case license.InGrace:
+		logger.Warn("license expired; paid features keep working during the grace period", "customer", st2.Customer, "expired", st2.Expires, "grace_until", st2.Expires.Add(license.Grace))
+	case license.Expired:
+		logger.Error("license expired; running the free core", "customer", st2.Customer, "expired", st2.Expires)
+	default:
+		logger.Info("license", "customer", st2.Customer, "plan", st2.Plan, "expires", st2.Expires, "features", st2.Features, "source", source)
+	}
+	return lic
+}
+
+// requireExecutor refuses the docker and kubernetes executors without a
+// license that covers them.
+func requireExecutor(cfg *config.Config, lic *license.Manager) error {
+	if cfg.Executor.Type == "local" {
+		return nil
+	}
+	if err := lic.Require(license.Executors); err != nil {
+		return fmt.Errorf("executor.type %s: %w", cfg.Executor.Type, err)
 	}
 	return nil
 }

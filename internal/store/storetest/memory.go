@@ -540,7 +540,11 @@ func (m *Memory) GetSetting(_ context.Context, key string, out any) (bool, error
 	return true, json.Unmarshal(raw, out)
 }
 
-func (m *Memory) PutSetting(_ context.Context, key string, value any, actor string) error {
+func (m *Memory) PutSetting(ctx context.Context, key string, value any, actor string) error {
+	return m.PutSettingAudited(ctx, key, value, value, actor)
+}
+
+func (m *Memory) PutSettingAudited(_ context.Context, key string, value, detail any, actor string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	js, err := json.Marshal(value)
@@ -548,7 +552,7 @@ func (m *Memory) PutSetting(_ context.Context, key string, value any, actor stri
 		return err
 	}
 	m.settings[key] = js
-	m.addAudit(actor, "setting.put", key, value)
+	m.addAudit(actor, "setting.put", key, detail)
 	return nil
 }
 

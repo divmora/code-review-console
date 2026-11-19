@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
@@ -39,7 +40,7 @@ func TestWebhookHistoryAndRepoRecording(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Repos.Allowlist = true
 	st := storetest.New()
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st})
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

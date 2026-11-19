@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { get, post, qs } from "../api";
 import JobsChart, { Point, series } from "../Chart";
 import { ago, fmtDur, fmtNum } from "../format";
-import { Empty, errMsg, StateBadge, useToast } from "../ui";
+import { Empty, errMsg, Locked, StateBadge, useFeature, useMe, useToast } from "../ui";
 
 type Job = {
   id: number; kind: string; platform: string; host: string; repo: string; number: number; url: string; trigger: string;
@@ -125,9 +125,11 @@ export default function Reviews() {
   useEffect(() => {
     get<{ hosts: { host: string; name: string }[] }>("/admin/api/hosts").then((d) => setHosts(d.hosts || [])).catch(() => {});
   }, []);
+  const hasMetrics = useFeature("metrics");
+  const me = useMe();
   useEffect(() => {
-    get<Metrics>("/admin/api/metrics" + qs({ granularity: gran, host: f.host })).then(setMetrics).catch((e) => toast(errMsg(e), true));
-  }, [gran, f.host]);
+    if (hasMetrics) get<Metrics>("/admin/api/metrics" + qs({ granularity: gran, host: f.host })).then(setMetrics).catch((e) => toast(errMsg(e), true));
+  }, [gran, f.host, hasMetrics]);
   useEffect(() => {
     const t = window.setTimeout(() => setF((x) => ({ ...x, repo: repoQ.trim() })), 300);
     return () => window.clearTimeout(t);
@@ -176,11 +178,13 @@ export default function Reviews() {
   return (
     <section>
       <div className="bar">
-        <select aria-label="Period" value={gran} onChange={(e) => setGran(e.target.value)}>
-          <option value="hour">Last 48 hours</option>
-          <option value="day">Last 30 days</option>
-          <option value="month">Last 12 months</option>
-        </select>
+        {hasMetrics && (
+          <select aria-label="Period" value={gran} onChange={(e) => setGran(e.target.value)}>
+            <option value="hour">Last 48 hours</option>
+            <option value="day">Last 30 days</option>
+            <option value="month">Last 12 months</option>
+          </select>
+        )}
         <span className="spacer" />
         <input type="url" className="rn-url" placeholder="Paste a PR/MR URL to review it now" aria-label="Pull request URL" value={url} onChange={(e) => setURL(e.target.value)} />
         <label className="sub">
@@ -190,6 +194,13 @@ export default function Reviews() {
           Review now
         </button>
       </div>
+      {!hasMetrics && (
+        <Locked feature="metrics">
+          Totals, charts and token use, and history kept longer than {me.free_retention_days} days, are part of the licensed console. Every review is listed below.
+        </Locked>
+      )}
+      {hasMetrics && (
+      <>
       <div className="tiles">
         {tiles.map(([l, v]) => (
           <div className="tile" key={l}>
@@ -208,6 +219,8 @@ export default function Reviews() {
         </div>
         {metrics && <JobsChart points={pts} granularity={metrics.granularity} />}
       </div>
+      </>
+      )}
       <div className="bar mt">
         <select aria-label="Host" value={f.host} onChange={set("host")}>
           <option value="">All hosts</option>

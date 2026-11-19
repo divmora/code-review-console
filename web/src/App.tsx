@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { get, post, setCSRF } from "./api";
-import type { Me } from "./types";
+import type { Feature, Me } from "./types";
 import { MeCtx, RefreshMeCtx, ToastProvider } from "./ui";
 import Repositories from "./pages/Repositories";
 import Reviews from "./pages/Reviews";
@@ -11,18 +11,39 @@ import Rules from "./pages/Rules";
 import Webhooks from "./pages/Webhooks";
 import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
+import License from "./pages/License";
 
 // Each section has its own URL under /admin, so a reload lands on it.
-const sections = [
+const sections: { path: string; title: string; el: JSX.Element; paid?: Feature }[] = [
   { path: "repositories", title: "Repositories", el: <Repositories /> },
   { path: "reviews", title: "Reviews", el: <Reviews /> },
-  { path: "learnings", title: "Learnings", el: <Learnings /> },
+  { path: "learnings", title: "Learnings", el: <Learnings />, paid: "learnings" },
   { path: "hosts", title: "Code hosts", el: <Hosts /> },
-  { path: "rules", title: "Rules", el: <Rules /> },
+  { path: "rules", title: "Rules", el: <Rules />, paid: "rules" },
   { path: "webhooks", title: "Webhooks", el: <Webhooks /> },
   { path: "settings", title: "Settings", el: <Settings /> },
-  { path: "audit", title: "Audit log", el: <Audit /> },
+  { path: "audit", title: "Audit log", el: <Audit />, paid: "audit" },
+  { path: "license", title: "License", el: <License /> },
 ];
+
+// LicenseBanner warns when a license is in its grace period, expired or
+// not valid (a missing license is the normal free core: no banner).
+function LicenseBanner({ me }: { me: Me }) {
+  const l = me.license;
+  if (l.state === "grace")
+    return (
+      <div className="banner" role="status">
+        The Divmora license expired on {new Date(l.expires_at!).toLocaleDateString()}. Paid features stop on {new Date(l.grace_until!).toLocaleDateString()}. <Link to="/license">Renew</Link>
+      </div>
+    );
+  if (l.state === "expired" || l.state === "invalid")
+    return (
+      <div className="banner bad" role="status">
+        {l.state === "expired" ? "The Divmora license has expired" : "The Divmora license is not valid"}: paid features are off. <Link to="/license">License</Link>
+      </div>
+    );
+  return null;
+}
 
 function ThemePicker() {
   const [theme, setTheme] = useState(() => {
@@ -92,6 +113,7 @@ export default function App() {
               {sections.map((s) => (
                 <NavLink key={s.path} to={"/" + s.path} className={({ isActive }) => (isActive ? "on" : "")}>
                   {s.title}
+                  {s.paid && !me.license.features.includes(s.paid) && <span className="paid" title="Needs a license">licensed</span>}
                 </NavLink>
               ))}
             </nav>
@@ -108,6 +130,7 @@ export default function App() {
             <header>
               <Title />
             </header>
+            <LicenseBanner me={me} />
             <Routes>
               <Route path="/" element={<Navigate to="/repositories" replace />} />
               {sections.map((s) => (

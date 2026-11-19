@@ -24,6 +24,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
@@ -51,6 +52,9 @@ type Admin struct {
 	// Hosts is the code host registry shared with the server; nil hides
 	// the Hosts page.
 	Hosts *hosts.Registry
+	// Lic is the installed license (nil = the free core). License keys
+	// pasted in the panel are stored under licenseKey.
+	Lic *license.Manager
 	// Reviewer queues reviews requested from the panel (the server); nil
 	// hides "Review now" and re-runs.
 	Reviewer interface {
@@ -289,7 +293,7 @@ func (a *Admin) authorize(id identity) string {
 				return ""
 			}
 		}
-		if _, domain, ok := strings.Cut(email, "@"); ok {
+		if _, domain, ok := strings.Cut(email, "@"); ok && a.Lic.Has(license.SSORules) {
 			for _, d := range o.AllowedDomains {
 				if strings.EqualFold(strings.TrimPrefix(d, "@"), domain) {
 					return ""
@@ -298,6 +302,9 @@ func (a *Admin) authorize(id identity) string {
 		}
 	}
 	for _, g := range id.Groups {
+		if !a.Lic.Has(license.SSORules) {
+			break // domain and group rules are a paid feature
+		}
 		for _, want := range o.AllowedGroups {
 			if g == want {
 				return ""
@@ -306,6 +313,9 @@ func (a *Admin) authorize(id identity) string {
 	}
 	if email != "" && !id.Verified {
 		return "email not verified by the identity provider"
+	}
+	if !a.Lic.Has(license.SSORules) && len(o.AllowedDomains)+len(o.AllowedGroups) > 0 {
+		return "not in allowed_emails (allowed_domains and allowed_groups need a Divmora license with the sso_rules feature)"
 	}
 	return "not in allowed_emails, allowed_domains or allowed_groups"
 }

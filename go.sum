@@ -6,6 +6,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/divmora/code-review-bot v0.3.0 h1:sZiwAj/W8NO0k8pMh6pEwQu/8suyyryYtMkTOVBw5DQ=
 github.com/divmora/code-review-bot v0.3.0/go.mod h1:B8vDAhh4WRNnjX3oC0xDdOuP6y/d64jGzq7sGW2QfmA=
+github.com/divmora/license-go v1.4.3 h1:6hMFLOQFcsiYwq2g8OnkjYrGBW1aqUxmE3eBFrkJsKc=
+github.com/divmora/license-go v1.4.3/go.mod h1:wHISCzQ18JTl6eMy77sIVM7+0UZJ/gSrXov0+SqIOio=
 github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bFY/oTyCes=
 github.com/emicklei/go-restful/v3 v3.13.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/fxamacker/cbor/v2 v2.9.1 h1:2rWm8B193Ll4VdjsJY28jxs70IdDsHRWgQYAI80+rMQ=

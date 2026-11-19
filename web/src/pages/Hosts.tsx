@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { del, get, post, put } from "../api";
-import { Empty, errMsg, StateBadge, useToast } from "../ui";
+import { Empty, errMsg, LockNote, StateBadge, useFeature, useToast } from "../ui";
 
 type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
   secrets: { token: boolean; app_private_key: boolean; api_token: boolean; webhook_secrets: number; signing_tokens: number };
-  webhook_url: string; events: string[];
+  webhook_url: string; events: string[]; licensed: boolean;
 };
 
 const names = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
@@ -29,6 +29,7 @@ function Secret({ label, set, multi, list, help, value, onChange }: { label: str
 
 function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h: Host) => void; onCancel: () => void }) {
   const toast = useToast();
+  const identity = useFeature("hosts");
   const st = host?.settings ?? {};
   const sec = host?.secrets ?? { token: false, app_private_key: false, api_token: false, webhook_secrets: 0, signing_tokens: 0 };
   const [plat, setPlat] = useState<Host["platform"]>(host?.platform ?? "gitlab");
@@ -140,11 +141,12 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
       <div className="hostgrid">
         <label className="f">
           Mention name
-          <input value={v.bot} placeholder="default: the token's user" onChange={set("bot")} />
+          <input value={v.bot} placeholder="default: the token's user" disabled={!identity && !v.bot} onChange={set("bot")} />
+          <LockNote feature="hosts" />
         </label>
         <label className="f">
           Reviewer username
-          <input value={v.reviewer} placeholder="default: the token's user" onChange={set("reviewer")} />
+          <input value={v.reviewer} placeholder="default: the token's user" disabled={!identity && !v.reviewer} onChange={set("reviewer")} />
         </label>
       </div>
       <div className="bar mt">
@@ -161,6 +163,7 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
 
 export default function Hosts() {
   const toast = useToast();
+  const multi = useFeature("hosts");
   const [data, setData] = useState<{ mode: string; key_env?: string; hosts: Host[] } | null>(null);
   const [editing, setEditing] = useState<number | null>(null); // 0 = new
   const [tests, setTests] = useState<Record<number, { pending?: boolean; ok?: boolean; message?: string }>>({});
@@ -189,6 +192,7 @@ export default function Hosts() {
     <section>
       <div className="bar">
         <span className="sub">{data && (managed ? "Managed here; stored encrypted in the database." : `Hosts come from the config file (read-only). Set ${data.key_env || "CODEREVIEW_CONSOLE_SECRET_KEY"} to manage them here.`)}</span>
+        {data && !multi && <span className="sub">· Free: one host per platform.</span>}
         <span className="spacer" />
         {managed && (
           <button className="btn" onClick={() => setEditing(0)}>
@@ -231,7 +235,11 @@ export default function Hosts() {
                         {names[h.platform]} · {h.host}
                       </div>
                       <div>
-                        <StateBadge kind={h.enabled ? "on" : "idle"}>{h.enabled ? "Enabled" : "Disabled"}</StateBadge>
+                        {h.licensed ? (
+                          <StateBadge kind={h.enabled ? "on" : "idle"}>{h.enabled ? "Enabled" : "Disabled"}</StateBadge>
+                        ) : (
+                          <StateBadge kind="warn">Inactive: needs a license</StateBadge>
+                        )}
                       </div>
                     </td>
                     <td>

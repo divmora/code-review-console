@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
+	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
 
@@ -91,5 +93,22 @@ func TestIsBranchSync(t *testing.T) {
 	}
 	if New(&config.Config{}, nil).Get(context.Background()).SkipBranchSync != true {
 		t.Error("skipping branch syncs should be the default")
+	}
+}
+
+func TestLicensedSwitchesOffPaidSettings(t *testing.T) {
+	e := Effective{LearningsEnabled: true, DailyTokenBudget: 5, RepoDailyTokenBudget: 3, SkipBranchSync: true,
+		SyncSourceBranches: []string{"develop"}, ReviewRetentionDays: 180, Allowlist: true}
+	free := e.Licensed(nil)
+	if free.LearningsEnabled || free.DailyTokenBudget != 0 || free.RepoDailyTokenBudget != 0 || free.SkipBranchSync ||
+		free.SyncSourceBranches != nil || free.ReviewRetentionDays != license.FreeRetentionDays || !free.Allowlist {
+		t.Errorf("free core: %+v", free)
+	}
+	if full := e.Licensed(licensetest.Full(t)); full.ReviewRetentionDays != 180 || !full.LearningsEnabled || full.DailyTokenBudget != 5 || !full.SkipBranchSync {
+		t.Errorf("licensed: %+v", full)
+	}
+	short := Effective{ReviewRetentionDays: 7}
+	if got := short.Licensed(nil).ReviewRetentionDays; got != 7 {
+		t.Errorf("a retention under the free cap stays: %d", got)
 	}
 }
