@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,6 +25,8 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
@@ -133,6 +136,11 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
+	box, _ := secrets.New("a test passphrase that is long enough for a key")
+	a.Hosts = hosts.New(&config.Config{}, st, box, quiet)
+	if _, err := a.Hosts.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	a.Register(mux)
 	app.Config.Handler = mux
 	jar, _ := cookiejar.New(nil)
@@ -275,12 +283,48 @@ func TestLoginAndManageRepos(t *testing.T) {
 	}
 
 	for _, path := range []string{"/admin/settings", "/admin/rules", "/admin/webhooks"} {
-		if code, body := e.do(t, "GET", path, "", nil); code != 200 || !bytes.Contains(body, []byte("Hosts &amp; groups")) {
+		if code, body := e.do(t, "GET", path, "", nil); code != 200 || !bytes.Contains(body, []byte("Code hosts")) {
 			t.Errorf("%s should serve the admin page so reloads land there: %d", path, code)
 		}
 	}
 	if code, _ := e.do(t, "GET", "/admin/nope", "", nil); code != 404 {
 		t.Errorf("unknown section: %d", code)
+	}
+
+	// Code hosts: secrets go in, never come out, and are kept on edit.
+	gl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" && r.Header.Get("PRIVATE-TOKEN") == "glpat-SECRET" {
+			_, _ = io.WriteString(w, `{"username":"gitlab-bot"}`)
+			return
+		}
+		w.WriteHeader(401)
+	}))
+	defer gl.Close()
+	newHost := map[string]any{"platform": "gitlab", "base_url": gl.URL, "token": "glpat-SECRET",
+		"signing_tokens": []string{"whsec_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}
+	code, body = e.do(t, "POST", "/admin/api/hosts", csrf, newHost)
+	if code != 201 || bytes.Contains(body, []byte("glpat-SECRET")) || !bytes.Contains(body, []byte(`"token":true`)) || !bytes.Contains(body, []byte(`/webhooks/gitlab`)) {
+		t.Fatalf("create host: %d %s", code, body)
+	}
+	var hv struct{ ID int64 }
+	_ = json.Unmarshal(body, &hv)
+	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, newHost); code != http.StatusConflict {
+		t.Errorf("duplicate host: %d", code)
+	}
+	if code, body := e.do(t, "GET", "/admin/api/hosts", "", nil); code != 200 || bytes.Contains(body, []byte("glpat-SECRET")) || bytes.Contains(body, []byte("whsec_")) {
+		t.Errorf("list must not reveal secrets: %s", body)
+	}
+	if code, body := e.do(t, "PUT", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, map[string]any{"name": "Our GitLab", "enabled": true}); code != 200 || !bytes.Contains(body, []byte(`"token":true`)) {
+		t.Errorf("editing without a token must keep it: %d %s", code, body)
+	}
+	if code, body := e.do(t, "POST", fmt.Sprintf("/admin/api/hosts/%d/test", hv.ID), csrf, nil); code != 200 || !bytes.Contains(body, []byte(`"user":"gitlab-bot"`)) {
+		t.Errorf("test host: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://other.example", "token": "x"}); code != 400 {
+		t.Errorf("a GitLab host without webhook credentials must be rejected: %d", code)
+	}
+	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, nil); code != 200 {
+		t.Errorf("delete host: %d", code)
 	}
 
 	r, _ := e.st.FindRepo(context.Background(), "github", "github.com", "org/api")

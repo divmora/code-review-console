@@ -17,7 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/version"
@@ -53,13 +56,18 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/api/rules/{id}", a.requireAPI(a.apiUpdateRule))
 	mux.HandleFunc("DELETE /admin/api/rules/{id}", a.requireAPI(a.apiDeleteRule))
 	mux.HandleFunc("GET /admin/api/webhooks", a.requireAPI(a.apiWebhooks))
+	mux.HandleFunc("GET /admin/api/hosts", a.requireAPI(a.apiListHosts))
+	mux.HandleFunc("POST /admin/api/hosts", a.requireAPI(a.apiCreateHost))
+	mux.HandleFunc("PUT /admin/api/hosts/{id}", a.requireAPI(a.apiUpdateHost))
+	mux.HandleFunc("DELETE /admin/api/hosts/{id}", a.requireAPI(a.apiDeleteHost))
+	mux.HandleFunc("POST /admin/api/hosts/{id}/test", a.requireAPI(a.apiTestHost))
 	mux.HandleFunc("GET /admin/api/settings", a.requireAPI(a.apiGetSettings))
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
 }
 
 // adminSections are the admin UI's pages (see the routes in admin.html).
-var adminSections = map[string]bool{"repositories": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
+var adminSections = map[string]bool{"repositories": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.session(r)
@@ -473,4 +481,208 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func (a *Admin) serverError(w http.ResponseWriter, err error) {
 	a.logger.Error("admin request failed", "error", err)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+}
+
+// ---- code hosts ----
+
+// hostView is a host as the admin UI sees it: settings, which secrets are
+// set (never their values), and where to point the webhook.
+type hostView struct {
+	ID         int64          `json:"id"`
+	Platform   string         `json:"platform"`
+	Host       string         `json:"host"`
+	BaseURL    string         `json:"base_url"`
+	Name       string         `json:"name"`
+	Enabled    bool           `json:"enabled"`
+	Settings   hosts.Settings `json:"settings"`
+	Secrets    hosts.Status   `json:"secrets"`
+	WebhookURL string         `json:"webhook_url"`
+	Events     []string       `json:"events"`
+}
+
+var hookEvents = map[string][]string{
+	hosts.GitHub:    {"Pull requests", "Issue comments"},
+	hosts.GitLab:    {"Merge request events", "Comments"},
+	hosts.Bitbucket: {"Pull request: Created", "Updated", "Merged", "Declined", "Comment created"},
+}
+
+func (a *Admin) viewHost(h hosts.Host) hostView {
+	return hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
+		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Events: hookEvents[h.Platform]}
+}
+
+func (a *Admin) apiListHosts(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if a.Hosts == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"mode": "none", "hosts": []hostView{}})
+		return
+	}
+	out := []hostView{}
+	for _, h := range a.Hosts.All() {
+		out = append(out, a.viewHost(h))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"mode": a.Hosts.Mode(), "hosts": out, "key_env": secrets.EnvKey})
+}
+
+// hostReq creates or updates a host. Secret fields: absent (null) keeps
+// the current value, "" or [] clears it, anything else replaces it.
+type hostReq struct {
+	Platform       string         `json:"platform"`
+	BaseURL        string         `json:"base_url"`
+	Name           string         `json:"name"`
+	Enabled        *bool          `json:"enabled"`
+	Settings       hosts.Settings `json:"settings"`
+	Token          *string        `json:"token"`
+	AppPrivateKey  *string        `json:"app_private_key"`
+	APIToken       *string        `json:"api_token"`
+	WebhookSecrets *[]string      `json:"webhook_secrets"`
+	SigningTokens  *[]string      `json:"signing_tokens"`
+}
+
+func (req hostReq) apply(h *hosts.Host) {
+	if req.BaseURL != "" {
+		h.BaseURL = req.BaseURL
+	}
+	h.Name = strings.TrimSpace(req.Name)
+	if req.Enabled != nil {
+		h.Enabled = *req.Enabled
+	}
+	h.Settings = req.Settings
+	if req.Token != nil {
+		h.Token = strings.TrimSpace(*req.Token)
+	}
+	if req.AppPrivateKey != nil {
+		h.AppPrivateKey = strings.TrimSpace(*req.AppPrivateKey)
+	}
+	if req.APIToken != nil {
+		h.APIToken = strings.TrimSpace(*req.APIToken)
+	}
+	if req.WebhookSecrets != nil {
+		h.WebhookSecrets = *req.WebhookSecrets
+	}
+	if req.SigningTokens != nil {
+		h.SigningTokens = *req.SigningTokens
+	}
+}
+
+func (a *Admin) saveHost(w http.ResponseWriter, r *http.Request, s *store.Session, h hosts.Host, status int) {
+	saved, err := a.Hosts.Save(r.Context(), h, s.Email)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	a.logger.Info("admin saved host", "by", s.Email, "platform", saved.Platform, "host", saved.Host, "enabled", saved.Enabled)
+	if fresh, ok := a.Hosts.Get(saved.ID); ok {
+		saved = fresh
+	}
+	writeJSON(w, status, a.viewHost(saved))
+}
+
+func (a *Admin) apiCreateHost(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if a.Hosts == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "hosts are not available"})
+		return
+	}
+	var req hostReq
+	if !decode(w, r, &req) {
+		return
+	}
+	h := hosts.Host{Platform: req.Platform, Enabled: true}
+	req.apply(&h)
+	if err := h.Normalize(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	for _, x := range a.Hosts.All() {
+		if x.Platform == h.Platform && x.Host == h.Host {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": h.Platform + " host " + h.Host + " already exists; edit it instead"})
+			return
+		}
+	}
+	a.saveHost(w, r, s, h, http.StatusCreated)
+}
+
+func (a *Admin) hostByID(w http.ResponseWriter, r *http.Request) (hosts.Host, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || a.Hosts == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return hosts.Host{}, false
+	}
+	h, ok := a.Hosts.Get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "host not found"})
+	}
+	return h, ok
+}
+
+func (a *Admin) apiUpdateHost(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	h, ok := a.hostByID(w, r)
+	if !ok {
+		return
+	}
+	var req hostReq
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Platform != "" && req.Platform != h.Platform {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "the platform of a host cannot change; add a new host"})
+		return
+	}
+	oldHost := h.Host
+	req.apply(&h)
+	if err := h.Normalize(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if h.Host != oldHost {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "the URL points at another host (" + h.Host + "); add it as a new host"})
+		return
+	}
+	a.saveHost(w, r, s, h, http.StatusOK)
+}
+
+func (a *Admin) apiDeleteHost(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	h, ok := a.hostByID(w, r)
+	if !ok {
+		return
+	}
+	if err := a.Hosts.Delete(r.Context(), h.ID, s.Email); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// apiTestHost checks a host's credentials by asking who the token belongs to.
+func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	h, ok := a.hostByID(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	var c interface {
+		CurrentUser(context.Context) (string, error)
+	}
+	switch h.Platform {
+	case hosts.GitHub:
+		if h.Token == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": h.AppID != 0, "message": "GitHub App: credentials are checked when a webhook arrives (an App has no user)"})
+			return
+		}
+		c = vcs.NewGitHub(h.BaseURL, vcs.StaticToken(h.Token))
+	case hosts.GitLab:
+		c = vcs.NewGitLab(h.BaseURL, h.Token, h.SkipTLSVerify)
+	case hosts.Bitbucket:
+		c = vcs.NewBitbucket(h.BaseURL, vcs.BitbucketAuth{Token: h.Token, Email: h.Email, APIToken: h.APIToken})
+	}
+	user, err := c.CurrentUser(ctx)
+	if err != nil {
+		msg := err.Error()
+		if h.Platform == hosts.Bitbucket && h.Token != "" {
+			msg += " (access tokens have no user: set the reviewer name for this host)"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": msg})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "message": "connected as @" + user})
 }

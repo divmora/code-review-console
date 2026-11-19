@@ -98,6 +98,11 @@ td.reason { max-width: 380px; color: var(--muted); font-size: 13px; }
 .nowrap { white-space: nowrap; }
 .why { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .h2 { font-size: 15px; margin: 0 0 10px; }
+.secret-set { color: var(--ok); font-size: 12px; }
+.fsec { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+.hostgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; }
+.hostgrid textarea { min-height: 60px; }
+.hosturl { font-size: 12px; word-break: break-all; }
 code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding: 0 4px; }
 </style>
 </head>
@@ -107,7 +112,8 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   <div class="brand">Code review<span>Divmora console</span></div>
   <nav class="side" aria-label="Sections">
     <a href="/admin/repositories" data-tab="repos">Repositories</a>
-    <a href="/admin/rules" data-tab="rules">Hosts &amp; groups</a>
+    <a href="/admin/hosts" data-tab="hosts">Code hosts</a>
+    <a href="/admin/rules" data-tab="rules">Rules</a>
     <a href="/admin/webhooks" data-tab="hooks">Webhooks</a>
     <a href="/admin/settings" data-tab="settings">Settings</a>
     <a href="/admin/audit" data-tab="audit">Audit log</a>
@@ -148,9 +154,20 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     <p class="sub hidden" id="reviewerNote"><b>Reviewer required:</b> even in an enabled repository, a merge request is reviewed only when the bot user is one of its reviewers. Adding the bot as a reviewer starts a review; <code>@codereview review</code> comments still work.</p>
   </section>
 
+  <section id="tab-hosts" class="hidden">
+    <div class="bar">
+      <span class="sub" id="hostMode"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="hostAdd">Add host</button>
+    </div>
+    <div class="panel hidden pad" id="hostForm"></div>
+    <div class="panel" id="hostList"><div class="empty">Loading…</div></div>
+    <p class="sub">Each host is a GitHub (github.com or Enterprise), GitLab (gitlab.com or self-managed) or Bitbucket Cloud account the console reviews for. Tokens and webhook secrets are encrypted with <code>CODEREVIEW_CONSOLE_SECRET_KEY</code> before they are stored and are never shown again: leave a secret blank to keep it. Point each code host's webhook at the URL shown, with the events listed. Several hooks on one host (a GitLab system hook plus group hooks) can each have their own secret: add one per line.</p>
+  </section>
+
   <section id="tab-rules" class="hidden">
     <div class="bar">
-      <span class="sub">Defaults for a whole host, or for a group, organisation or name pattern on a host.</span>
+      <span class="sub">Settings for a whole host, or for a group, organisation or name pattern on a host.</span>
       <span class="spacer"></span>
       <button class="btn" id="rAddToggle">Add rule</button>
     </div>
@@ -571,6 +588,139 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     api("GET", "/admin/api/settings").then(function (eff) { current = eff; renderSettings(); }).catch(function (e) { toast(e.message, true); });
   }
 
+  var hostData = { mode: "", hosts: [] };
+  var editingHost = null; // null = closed, 0 = new, id = edit
+  var hostDefaults = { github: "https://api.github.com", gitlab: "https://gitlab.com", bitbucket: "https://api.bitbucket.org/2.0" };
+  function loadHosts() {
+    return api("GET", "/admin/api/hosts").then(function (d) { hostData = d; renderHosts(); }).catch(function (e) { toast(e.message, true); });
+  }
+  function secretInput(id, label, set, multi, help) {
+    var ph = set ? "Set ✓ — leave blank to keep" : (multi ? "one per line" : "");
+    var input = multi ? el("textarea", { id: id, placeholder: ph, autocomplete: "off" }) : el("input", { id: id, type: "password", placeholder: ph, autocomplete: "new-password" });
+    return el("label", { cls: "f" }, [label + (help ? " — " + help : ""), input]);
+  }
+  function renderHostForm() {
+    var box = document.getElementById("hostForm");
+    if (editingHost === null) { box.classList.add("hidden"); box.replaceChildren(); return; }
+    box.classList.remove("hidden");
+    var h = editingHost ? hostData.hosts.filter(function (x) { return x.id === editingHost; })[0] : null;
+    var st = h ? h.settings : {}, sec = h ? h.secrets : {};
+    var plat = h ? h.platform : (box.dataset.plat || "gitlab");
+    var platSel = el("select", { id: "hPlat", disabled: !!h, onchange: function (ev) { box.dataset.plat = ev.target.value; renderHostForm(); } },
+      [["gitlab", "GitLab"], ["github", "GitHub"], ["bitbucket", "Bitbucket Cloud"]].map(function (o) { return el("option", { value: o[0], selected: o[0] === plat }, [o[1]]); }));
+    var fields = [
+      el("div", { cls: "fsec", text: h ? "Edit " + h.name : "New host" }),
+      el("div", { cls: "hostgrid" }, [
+        el("label", { cls: "f" }, ["Platform", platSel]),
+        el("label", { cls: "f" }, [plat === "gitlab" ? "Instance URL" : "API URL", el("input", { id: "hBase", value: h ? h.base_url : "", placeholder: hostDefaults[plat] })]),
+        el("label", { cls: "f" }, ["Name", el("input", { id: "hName", value: h ? h.name : "", placeholder: "shown in the console" })]),
+        el("label", { cls: "f" }, ["Status", el("select", { id: "hEnabled" }, [el("option", { value: "true", selected: !h || h.enabled }, ["Enabled"]), el("option", { value: "false", selected: h && !h.enabled }, ["Disabled"])])])
+      ]),
+      el("div", { cls: "fsec", text: "API access" })
+    ];
+    var auth = [];
+    if (plat === "github") {
+      auth.push(secretInput("hToken", "Token", sec.token, false, "or use a GitHub App below"));
+      auth.push(el("label", { cls: "f" }, ["GitHub App ID", el("input", { id: "hAppID", type: "number", value: st.app_id || "" })]));
+      auth.push(secretInput("hAppKey", "GitHub App private key (PEM)", sec.app_private_key, true));
+    } else if (plat === "gitlab") {
+      auth.push(secretInput("hToken", "Access token (api scope)", sec.token));
+      auth.push(el("label", { cls: "f" }, ["TLS", el("select", { id: "hSkipTLS" }, [el("option", { value: "false", selected: !st.skip_tls_verify }, ["Verify certificates"]), el("option", { value: "true", selected: !!st.skip_tls_verify }, ["Skip verification (self-signed)"])])]));
+    } else {
+      auth.push(secretInput("hToken", "Access token", sec.token, false, "repository or workspace token"));
+      auth.push(el("label", { cls: "f" }, ["Account email", el("input", { id: "hEmail", value: st.email || "", placeholder: "with an API token instead" })]));
+      auth.push(secretInput("hAPIToken", "Atlassian API token", sec.api_token));
+    }
+    fields.push(el("div", { cls: "hostgrid" }, auth));
+    fields.push(el("div", { cls: "fsec", text: "Webhooks" }));
+    var hooks = [];
+    if (plat === "gitlab") {
+      hooks.push(secretInput("hSigning", "Signing tokens (whsec_…)", sec.signing_tokens > 0, true, sec.signing_tokens ? sec.signing_tokens + " set" : "GitLab 19.0+, recommended"));
+      hooks.push(secretInput("hSecrets", "Secret tokens", sec.webhook_secrets > 0, true, sec.webhook_secrets ? sec.webhook_secrets + " set" : "older hooks"));
+      hooks.push(el("label", { cls: "f" }, ["Unsigned webhooks", el("select", { id: "hReqSig" }, [el("option", { value: "false", selected: !st.require_signature }, ["Accept with a secret token"]), el("option", { value: "true", selected: !!st.require_signature }, ["Reject"])])]));
+    } else {
+      hooks.push(secretInput("hSecrets", "Webhook secrets", sec.webhook_secrets > 0, true, sec.webhook_secrets ? sec.webhook_secrets + " set" : "one per hook"));
+    }
+    fields.push(el("div", { cls: "hostgrid" }, hooks));
+    fields.push(el("div", { cls: "fsec", text: "Bot identity" }));
+    fields.push(el("div", { cls: "hostgrid" }, [
+      el("label", { cls: "f" }, ["Mention name", el("input", { id: "hBot", value: st.bot_name || "", placeholder: "default: the token's user" })]),
+      el("label", { cls: "f" }, ["Reviewer username", el("input", { id: "hReviewer", value: st.reviewer || "", placeholder: "default: the token's user" })])
+    ]));
+    fields.push(el("div", { cls: "bar mt" }, [
+      el("button", { cls: "btn primary", text: h ? "Save host" : "Add host", onclick: function () { saveHost(h, plat); } }),
+      el("button", { cls: "btn", text: "Cancel", onclick: function () { editingHost = null; renderHostForm(); } })
+    ]));
+    box.replaceChildren.apply(box, fields);
+  }
+  function lines(id) {
+    var n = document.getElementById(id);
+    if (!n) return undefined;
+    var v = n.value.split("\n").map(function (x) { return x.trim(); }).filter(Boolean);
+    return v.length ? v : undefined; // blank keeps the current values
+  }
+  function val(id) { var n = document.getElementById(id); return n ? n.value.trim() : ""; }
+  function saveHost(h, plat) {
+    var body = { platform: plat, base_url: val("hBase"), name: val("hName"), enabled: val("hEnabled") === "true",
+      settings: { bot_name: val("hBot"), reviewer: val("hReviewer") } };
+    if (plat === "github") body.settings.app_id = parseInt(val("hAppID") || "0", 10);
+    if (plat === "gitlab") { body.settings.skip_tls_verify = val("hSkipTLS") === "true"; body.settings.require_signature = val("hReqSig") === "true"; }
+    if (plat === "bitbucket") body.settings.email = val("hEmail");
+    if (val("hToken")) body.token = val("hToken");
+    if (val("hAppKey")) body.app_private_key = document.getElementById("hAppKey").value;
+    if (val("hAPIToken")) body.api_token = val("hAPIToken");
+    var ws = lines("hSecrets"), sg = lines("hSigning");
+    if (ws) body.webhook_secrets = ws;
+    if (sg) body.signing_tokens = sg;
+    api(h ? "PUT" : "POST", "/admin/api/hosts" + (h ? "/" + h.id : ""), body).then(function (saved) {
+      editingHost = null; toast("Saved " + saved.name); return loadHosts().then(function () { testHost(saved); });
+    }).catch(function (e) { toast(e.message, true); });
+  }
+  var hostTests = {};
+  function testHost(h) {
+    hostTests[h.id] = { pending: true }; renderHosts();
+    api("POST", "/admin/api/hosts/" + h.id + "/test").then(function (r) { hostTests[h.id] = r; renderHosts(); })
+      .catch(function (e) { hostTests[h.id] = { ok: false, message: e.message }; renderHosts(); });
+  }
+  function renderHosts() {
+    var managed = hostData.mode === "database";
+    document.getElementById("hostMode").textContent = managed ? "Managed here; stored encrypted in the database." :
+      "Hosts come from the config file (read-only). Set " + (hostData.key_env || "CODEREVIEW_CONSOLE_SECRET_KEY") + " to manage them here.";
+    document.getElementById("hostAdd").classList.toggle("hidden", !managed);
+    renderHostForm();
+    var box = document.getElementById("hostList");
+    if (!hostData.hosts.length) { box.replaceChildren(el("div", { cls: "empty", text: "No code hosts yet. Add GitHub, GitLab or Bitbucket." })); return; }
+    var names = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
+    var rows = hostData.hosts.map(function (h) {
+      var s = h.secrets, auth = [];
+      if (s.token) auth.push("token ✓");
+      if (h.settings.app_id) auth.push("App " + h.settings.app_id + (s.app_private_key ? " ✓" : " (no key)"));
+      if (s.api_token) auth.push("API token ✓");
+      if (s.signing_tokens) auth.push(s.signing_tokens + " signing token" + (s.signing_tokens > 1 ? "s" : ""));
+      if (s.webhook_secrets) auth.push(s.webhook_secrets + " webhook secret" + (s.webhook_secrets > 1 ? "s" : ""));
+      var t = hostTests[h.id];
+      var status = t ? (t.pending ? el("span", { cls: "muted", text: "testing…" }) : el("span", { cls: "state " + (t.ok ? "on" : "off"), text: t.message })) : null;
+      return el("tr", null, [
+        el("td", null, [el("div", null, [el("b", { text: h.name })]), el("div", { cls: "plat", text: names[h.platform] + " · " + h.host }),
+          el("div", null, [el("span", { cls: "state " + (h.enabled ? "on" : "idle"), text: h.enabled ? "Enabled" : "Disabled" })])]),
+        el("td", null, [el("span", null, auth.map(function (a) { return el("span", { cls: "chip", text: a }); })),
+          el("div", { cls: "why", text: "mention: " + (h.settings.bot_name ? "@" + h.settings.bot_name : "token user") + (h.settings.reviewer ? " · reviewer: " + h.settings.reviewer : "") })]),
+        el("td", null, [el("code", { cls: "hosturl", text: h.webhook_url }), el("div", { cls: "why", text: "Events: " + h.events.join(", ") })]),
+        el("td", null, [status]),
+        el("td", { cls: "nowrap" }, [
+          el("button", { cls: "btn", text: "Test", onclick: function () { testHost(h); } }), " ",
+          managed ? el("button", { cls: "btn", text: "Edit", onclick: function () { editingHost = h.id; renderHosts(); window.scrollTo(0, 0); } }) : null, " ",
+          managed ? el("button", { cls: "btn danger", text: "Delete", onclick: function () {
+            if (!confirm("Delete " + h.name + "? Webhooks from it will be rejected and its stored tokens removed.")) return;
+            api("DELETE", "/admin/api/hosts/" + h.id).then(function () { toast("Deleted " + h.name); loadHosts(); }).catch(function (e) { toast(e.message, true); });
+          } }) : null
+        ])
+      ]);
+    });
+    var head = el("tr", null, ["Host", "Credentials", "Webhook URL", "Check", ""].map(function (x) { return el("th", { text: x }); }));
+    box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, rows)]));
+  }
+
   function loadAudit() {
     api("GET", "/admin/api/audit").then(function (entries) {
       var box = document.getElementById("audit");
@@ -586,21 +736,22 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     }).catch(function (e) { toast(e.message, true); });
   }
 
-  var routes = { repositories: "repos", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
-  var titles = { repos: "Repositories", rules: "Hosts & groups", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
+  var routes = { repositories: "repos", hosts: "hosts", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
+  var titles = { repos: "Repositories", hosts: "Code hosts", rules: "Rules", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
   function tabFromPath() {
     var seg = location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
     return routes[seg] || "repos";
   }
   function show(tab) {
-    editing = null; editingRule = null;
+    editing = null; editingRule = null; editingHost = null;
     document.querySelectorAll(".side a").forEach(function (a) { a.classList.toggle("on", a.dataset.tab === tab); });
-    ["repos", "rules", "hooks", "settings", "audit"].forEach(function (t) {
+    ["repos", "hosts", "rules", "hooks", "settings", "audit"].forEach(function (t) {
       document.getElementById("tab-" + t).classList.toggle("hidden", tab !== t);
     });
     document.getElementById("pageTitle").textContent = titles[tab];
     document.title = titles[tab] + " · Code review admin";
     if (tab === "rules") renderRules();
+    if (tab === "hosts") loadHosts();
     if (tab === "hooks") loadHooks();
     if (tab === "settings") loadSettings();
     if (tab === "repos" && repos.length) reloadRepos();
@@ -633,6 +784,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   document.getElementById("hRefresh").addEventListener("click", function () { loadHooks(); });
   document.getElementById("hMore").addEventListener("click", function () { loadHooks(true); });
   document.getElementById("sSave").addEventListener("click", function () { saveSettings(current ? current.review_defaults : {}); });
+  document.getElementById("hostAdd").addEventListener("click", function () { editingHost = 0; renderHostForm(); });
   document.getElementById("rAddToggle").addEventListener("click", function () { document.getElementById("rAddForm").classList.toggle("hidden"); });
   document.getElementById("rSave").addEventListener("click", function () {
     var body = { platform: document.getElementById("rPlat").value, host: document.getElementById("rHost").value.trim(),

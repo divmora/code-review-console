@@ -19,6 +19,8 @@ import (
 	"github.com/divmora/code-review-console/internal/admin"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/server"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
@@ -134,6 +136,19 @@ func serve(ctx context.Context, args []string) error {
 			logger.Info("config file value ignored: the database value wins (change it in the admin panel)", "setting", d)
 		}
 	}
+	box, err := secrets.FromEnv()
+	if err != nil {
+		return err
+	}
+	deps.Hosts = hosts.New(cfg, deps.Store, box, logger)
+	notes, err := deps.Hosts.Init(ctx)
+	if err != nil {
+		return fmt.Errorf("hosts: %w", err)
+	}
+	for _, n := range notes {
+		logger.Info(n)
+	}
+	logger.Info("hosts loaded", "count", len(deps.Hosts.All()), "managed_in", deps.Hosts.Mode())
 	if cfg.Admin.Enabled {
 		if deps.Store == nil {
 			return errors.New("admin.enabled needs database.url")
@@ -145,6 +160,7 @@ func serve(ctx context.Context, args []string) error {
 			return err
 		}
 		adm.Settings = deps.Settings
+		adm.Hosts = deps.Hosts
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
 	}

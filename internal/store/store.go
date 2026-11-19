@@ -62,6 +62,22 @@ type Job struct {
 	Model     string
 }
 
+// HostRow is a code host as stored: Config holds non-secret settings and
+// Secrets the encrypted secrets (see internal/hosts). The store never sees
+// secret values in clear.
+type HostRow struct {
+	ID        int64           `json:"id"`
+	Platform  string          `json:"platform"`
+	Host      string          `json:"host"`
+	BaseURL   string          `json:"base_url"`
+	Name      string          `json:"name"`
+	Enabled   bool            `json:"enabled"`
+	Config    json.RawMessage `json:"config"`
+	Secrets   string          `json:"-"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	UpdatedBy string          `json:"updated_by"`
+}
+
 // WebhookEvent is one webhook delivery and what the console did with it.
 // Project, Kind and Action come from the payload; for rejected deliveries
 // they are unverified.
@@ -157,6 +173,12 @@ type Store interface {
 	// UpdateRule replaces a rule's settings (not its scope).
 	UpdateRule(ctx context.Context, id int64, in Rule, actor string) (*Rule, error)
 	DeleteRule(ctx context.Context, id int64, actor string) error
+
+	// Code hosts. PutHost creates or updates by (platform, host); audit
+	// details never include secrets.
+	ListHosts(ctx context.Context) ([]HostRow, error)
+	PutHost(ctx context.Context, h HostRow, actor string) (*HostRow, error)
+	DeleteHost(ctx context.Context, id int64, actor string) error
 
 	// Webhook history.
 	InsertWebhookEvents(ctx context.Context, events []WebhookEvent) error
@@ -335,6 +357,21 @@ var migrations = []string{
 	ALTER TABLE repo_rules ADD COLUMN skip_branch_sync boolean;
 	ALTER TABLE repo_rules ADD COLUMN score_labels boolean;
 	ALTER TABLE repo_rules ADD COLUMN commit_status boolean;`,
+	// 6: code hosts managed in the admin panel; secrets are encrypted by the
+	// console before they reach the database
+	`CREATE TABLE hosts (
+		id          bigserial PRIMARY KEY,
+		platform    text NOT NULL,
+		host        text NOT NULL,
+		base_url    text NOT NULL,
+		name        text NOT NULL DEFAULT '',
+		enabled     boolean NOT NULL DEFAULT true,
+		config      jsonb NOT NULL DEFAULT '{}',
+		secrets     text NOT NULL DEFAULT '',
+		updated_at  timestamptz NOT NULL DEFAULT now(),
+		updated_by  text NOT NULL DEFAULT '',
+		UNIQUE (platform, host)
+	);`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -621,6 +658,77 @@ func (p *Postgres) DeleteRule(ctx context.Context, id int64, actor string) error
 		return err
 	}
 	if err := audit(ctx, tx, actor, "rule.delete", ruleTarget(r), map[string]any{"enabled": r.Enabled}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const hostCols = `id, platform, host, base_url, name, enabled, config, secrets, updated_at, updated_by`
+
+func scanHost(row pgx.Row) (*HostRow, error) {
+	var h HostRow
+	err := row.Scan(&h.ID, &h.Platform, &h.Host, &h.BaseURL, &h.Name, &h.Enabled, &h.Config, &h.Secrets, &h.UpdatedAt, &h.UpdatedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &h, err
+}
+
+func hostAudit(h *HostRow) map[string]any {
+	return map[string]any{"base_url": h.BaseURL, "name": h.Name, "enabled": h.Enabled, "config": h.Config, "secrets_set": h.Secrets != ""}
+}
+
+func (p *Postgres) ListHosts(ctx context.Context) ([]HostRow, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+hostCols+` FROM hosts ORDER BY platform, host`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []HostRow{}
+	for rows.Next() {
+		h, err := scanHost(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *h)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) PutHost(ctx context.Context, in HostRow, actor string) (*HostRow, error) {
+	if len(in.Config) == 0 {
+		in.Config = json.RawMessage("{}")
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	h, err := scanHost(tx.QueryRow(ctx, `
+		INSERT INTO hosts (platform, host, base_url, name, enabled, config, secrets, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (platform, host) DO UPDATE SET base_url = EXCLUDED.base_url, name = EXCLUDED.name, enabled = EXCLUDED.enabled,
+			config = EXCLUDED.config, secrets = EXCLUDED.secrets, updated_by = EXCLUDED.updated_by, updated_at = now()
+		RETURNING `+hostCols, strings.ToLower(in.Platform), strings.ToLower(in.Host), in.BaseURL, in.Name, in.Enabled, in.Config, in.Secrets, actor))
+	if err != nil {
+		return nil, err
+	}
+	if err := audit(ctx, tx, actor, "host.put", h.Platform+":"+h.Host, hostAudit(h)); err != nil {
+		return nil, err
+	}
+	return h, tx.Commit(ctx)
+}
+
+func (p *Postgres) DeleteHost(ctx context.Context, id int64, actor string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	h, err := scanHost(tx.QueryRow(ctx, `DELETE FROM hosts WHERE id=$1 RETURNING `+hostCols, id))
+	if err != nil {
+		return err
+	}
+	if err := audit(ctx, tx, actor, "host.delete", h.Platform+":"+h.Host, map[string]any{}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

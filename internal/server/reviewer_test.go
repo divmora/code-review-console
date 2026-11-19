@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/hosts"
 )
 
 func TestRequireReviewerGitLab(t *testing.T) {
@@ -87,7 +88,7 @@ func TestRequireReviewerGitLab(t *testing.T) {
 func TestRequireReviewerGitHub(t *testing.T) {
 	s := testServer(t)
 	s.cfg.Repos.RequireReviewer = true
-	s.selfLogins["github.com"] = "review-bot"
+	s.selfLogins["127.0.0.1:1"] = "review-bot" // identity is keyed by the configured host (the fake API host here)
 	h := s.Handler()
 	send := func(action string, extra string) int {
 		body := []byte(`{"action":"` + action + `","number":7,"repository":{"full_name":"o/r","html_url":"https://github.com/o/r"}` + extra + `}`)
@@ -133,7 +134,7 @@ func TestPerInstanceIdentity(t *testing.T) {
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.2:1"] = "y-token-user"
 
-	x, y := s.gitlabTarget(cfg.GitLab[0]), s.gitlabTarget(cfg.GitLab[1])
+	x, y := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1")), s.gitlabTarget(mustHost(t, s, "127.0.0.2:1"))
 	if x.botName != "xbot" || s.reviewerFor(x, "127.0.0.1:1") != "x-reviewer" {
 		t.Errorf("instance x identity: %q %q", x.botName, s.reviewerFor(x, "127.0.0.1:1"))
 	}
@@ -293,7 +294,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	}
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.1:1"] = "gitlab-bot"
-	tgt := s.gitlabTarget(cfg.GitLab[0])
+	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"))
 	if tgt.botName != "gitlab-bot" {
 		t.Errorf("mention should default to the token user: %q", tgt.botName)
 	}
@@ -316,4 +317,13 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	if c := send("@codereview please review"); c != http.StatusOK {
 		t.Errorf("@codereview is not this bot's name here: %d", c)
 	}
+}
+
+func mustHost(t *testing.T, s *Server, host string) hosts.Host {
+	t.Helper()
+	h, ok := s.hosts.Find(hosts.GitLab, host)
+	if !ok {
+		t.Fatalf("no gitlab host %s", host)
+	}
+	return h
 }

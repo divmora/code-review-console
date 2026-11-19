@@ -21,6 +21,7 @@ type Memory struct {
 	repos    map[int64]*store.Repo
 	rules    map[int64]*store.Rule
 	hooks    []store.WebhookEvent
+	hosts    map[int64]*store.HostRow
 	jobs     []store.Job
 	sessions map[string]store.Session
 	audit    []store.AuditEntry
@@ -30,7 +31,7 @@ type Memory struct {
 
 // New returns an empty store.
 func New() *Memory {
-	return &Memory{repos: map[int64]*store.Repo{}, rules: map[int64]*store.Rule{}, sessions: map[string]store.Session{},
+	return &Memory{repos: map[int64]*store.Repo{}, rules: map[int64]*store.Rule{}, hosts: map[int64]*store.HostRow{}, sessions: map[string]store.Session{},
 		models: map[string]store.ModelProfile{}, settings: map[string][]byte{}}
 }
 
@@ -191,6 +192,55 @@ func (m *Memory) DeleteRule(_ context.Context, id int64, actor string) error {
 	}
 	delete(m.rules, id)
 	m.addAudit(actor, "rule.delete", r.Platform+":"+r.Host+"/"+r.Pattern, map[string]any{})
+	return nil
+}
+
+func (m *Memory) ListHosts(context.Context) ([]store.HostRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.HostRow{}
+	for _, h := range m.hosts {
+		out = append(out, *h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Platform+out[i].Host < out[j].Platform+out[j].Host })
+	return out, nil
+}
+
+func (m *Memory) PutHost(_ context.Context, in store.HostRow, actor string) (*store.HostRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	in.Platform, in.Host = strings.ToLower(in.Platform), strings.ToLower(in.Host)
+	var h *store.HostRow
+	for _, x := range m.hosts {
+		if x.Platform == in.Platform && x.Host == in.Host {
+			h = x
+		}
+	}
+	if h == nil {
+		m.nextID++
+		h = &store.HostRow{ID: m.nextID}
+		m.hosts[h.ID] = h
+	}
+	id := h.ID
+	*h = in
+	h.ID, h.UpdatedBy, h.UpdatedAt = id, actor, time.Now()
+	if len(h.Config) == 0 {
+		h.Config = json.RawMessage("{}")
+	}
+	m.addAudit(actor, "host.put", h.Platform+":"+h.Host, map[string]any{"secrets_set": h.Secrets != ""})
+	c := *h
+	return &c, nil
+}
+
+func (m *Memory) DeleteHost(_ context.Context, id int64, actor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h, ok := m.hosts[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	delete(m.hosts, id)
+	m.addAudit(actor, "host.delete", h.Platform+":"+h.Host, map[string]any{})
 	return nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/hosts"
 )
 
 // target is a code host connection for one webhook: a client for light
@@ -20,20 +21,19 @@ import (
 type target struct {
 	client  vcs.Client
 	secrets func(ctx context.Context) (map[string]string, error)
-	gitlab  *config.GitLab // set for GitLab targets
+	host    hosts.Host
 	// botName is the mention handle on this host; reviewer the username
 	// that counts as the bot (empty: the token's user).
 	botName, reviewer string
 }
 
-func (s *Server) githubTarget(installation int64) target {
-	var tokens vcs.TokenSource = vcs.StaticToken(s.cfg.GitHub.Token)
-	if s.ghApp != nil && installation != 0 {
-		tokens = s.ghApp.Installation(installation)
+func (s *Server) githubTarget(h hosts.Host, installation int64) target {
+	var tokens vcs.TokenSource = vcs.StaticToken(h.Token)
+	if app := s.ghApp(h.ID); app != nil && installation != 0 {
+		tokens = app.Installation(installation)
 	}
-	api := s.cfg.GitHub.APIURL
 	return target{
-		client: vcs.NewGitHub(api, tokens),
+		client: vcs.NewGitHub(h.BaseURL, tokens),
 		secrets: func(ctx context.Context) (map[string]string, error) {
 			// Installation tokens are short-lived (about an hour) and scoped
 			// to the installation's repositories.
@@ -41,22 +41,41 @@ func (s *Server) githubTarget(installation int64) target {
 			if err != nil {
 				return nil, fmt.Errorf("github token: %w", err)
 			}
-			return map[string]string{"GITHUB_TOKEN": tok, "GITHUB_API_URL": api}, nil
+			return map[string]string{"GITHUB_TOKEN": tok, "GITHUB_API_URL": h.BaseURL}, nil
 		},
-		botName:  s.mention(s.cfg.GitHub.BotName, s.githubHost()),
-		reviewer: s.cfg.GitHub.Reviewer,
+		host:     h,
+		botName:  s.mention(h.BotName, h.Host),
+		reviewer: h.Reviewer,
 	}
 }
 
-func (s *Server) gitlabTarget(inst config.GitLab) target {
+func (s *Server) gitlabTarget(h hosts.Host) target {
 	return target{
-		client: vcs.NewGitLab(inst.BaseURL, inst.Token, inst.SkipTLSVerify),
+		client: vcs.NewGitLab(h.BaseURL, h.Token, h.SkipTLSVerify),
 		secrets: func(context.Context) (map[string]string, error) {
-			return map[string]string{"GITLAB_TOKEN": inst.Token}, nil
+			return map[string]string{"GITLAB_TOKEN": h.Token}, nil
 		},
-		gitlab:   &inst,
-		botName:  s.mention(inst.BotName, hostOf(inst.BaseURL)),
-		reviewer: inst.Reviewer,
+		host:     h,
+		botName:  s.mention(h.BotName, h.Host),
+		reviewer: h.Reviewer,
+	}
+}
+
+func (s *Server) bitbucketTarget(h hosts.Host) target {
+	return target{
+		client: vcs.NewBitbucket(h.BaseURL, vcs.BitbucketAuth{Token: h.Token, Email: h.Email, APIToken: h.APIToken}),
+		secrets: func(context.Context) (map[string]string, error) {
+			env := map[string]string{}
+			if h.Token != "" {
+				env["BITBUCKET_TOKEN"] = h.Token
+			} else {
+				env["BITBUCKET_API_TOKEN"] = h.APIToken
+			}
+			return env, nil
+		},
+		host:     h,
+		botName:  s.mention(h.BotName, h.Host),
+		reviewer: h.Reviewer,
 	}
 }
 
@@ -74,6 +93,14 @@ type engineConfig struct {
 	BotName        string                         `yaml:"bot_name,omitempty"`
 	GitHub         *engineGitHub                  `yaml:"github,omitempty"`
 	GitLab         []engineGitLab                 `yaml:"gitlab,omitempty"`
+	Bitbucket      *engineBitbucket               `yaml:"bitbucket,omitempty"`
+}
+
+type engineBitbucket struct {
+	APIURL   string `yaml:"api_url,omitempty"`
+	Token    string `yaml:"token,omitempty"`
+	Email    string `yaml:"email,omitempty"`
+	APIToken string `yaml:"api_token,omitempty"`
 }
 
 type engineGitHub struct {
@@ -97,8 +124,22 @@ func (s *Server) jobConfig(ctx context.Context, tgt target) ([]byte, map[string]
 	if tgt.botName != "" {
 		ec.BotName = tgt.botName // placeholders (@<bot> summary) follow the host's handle
 	}
-	if tgt.gitlab != nil {
-		ec.GitLab = []engineGitLab{{BaseURL: tgt.gitlab.BaseURL, Token: "${GITLAB_TOKEN}", SkipTLSVerify: tgt.gitlab.SkipTLSVerify}}
+	// Code host settings for this job; secrets stay in env vars.
+	switch h := tgt.host; h.Platform {
+	case hosts.GitHub:
+		if h.BaseURL != "https://api.github.com" {
+			ec.GitHub = &engineGitHub{APIURL: h.BaseURL}
+		}
+	case hosts.GitLab:
+		ec.GitLab = []engineGitLab{{BaseURL: h.BaseURL, Token: "${GITLAB_TOKEN}", SkipTLSVerify: h.SkipTLSVerify}}
+	case hosts.Bitbucket:
+		bb := &engineBitbucket{APIURL: h.BaseURL}
+		if h.Token != "" {
+			bb.Token = "${BITBUCKET_TOKEN}"
+		} else {
+			bb.Email, bb.APIToken = h.Email, "${BITBUCKET_API_TOKEN}"
+		}
+		ec.Bitbucket = bb
 	}
 	b, err := yaml.Marshal(ec)
 	if err != nil {
@@ -134,9 +175,6 @@ func buildEngineConfig(cfg *config.Config, models map[string]config.ModelProfile
 		AllowRepoModel: cfg.AllowRepoModel,
 		Review:         cfg.Review,
 		BotName:        cfg.BotName,
-	}
-	if cfg.GitHub.APIURL != "" && cfg.GitHub.APIURL != "https://api.github.com" {
-		ec.GitHub = &engineGitHub{APIURL: cfg.GitHub.APIURL}
 	}
 	return ec, env
 }
@@ -333,15 +371,7 @@ func (s *Server) dispatch(tgt target, ref vcs.Ref, cmd command, ov *config.Overr
 // top-level bot_name, else the token's user, so command hints and
 // mentions reach the real bot account, else "codereview".
 func (s *Server) mention(explicit, host string) string {
-	return firstNonEmpty(explicit, s.cfg.BotName, s.selfLogins[host], "codereview")
-}
-
-// githubHost is the host GitHub repositories are recorded under.
-func (s *Server) githubHost() string {
-	if u := s.cfg.GitHub.APIURL; u != "" && u != "https://api.github.com" {
-		return hostOf(u)
-	}
-	return "github.com"
+	return firstNonEmpty(explicit, s.cfg.BotName, s.self(host), "codereview")
 }
 
 // reviewerFor is the username that counts as the bot on host.
@@ -349,7 +379,7 @@ func (s *Server) reviewerFor(tgt target, host string) string {
 	if tgt.reviewer != "" {
 		return tgt.reviewer
 	}
-	return s.selfLogins[host]
+	return s.self(host)
 }
 
 func tail(s string, n int) string {

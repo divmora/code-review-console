@@ -23,6 +23,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 )
@@ -46,6 +47,9 @@ type Admin struct {
 	// Settings are the runtime settings shared with the server; nil means
 	// config-file values only.
 	Settings *settings.Service
+	// Hosts is the code host registry shared with the server; nil hides
+	// the Hosts page.
+	Hosts *hosts.Registry
 }
 
 func (a *Admin) settings() *settings.Service {

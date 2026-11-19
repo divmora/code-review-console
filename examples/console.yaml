@@ -44,6 +44,16 @@ gitlab:
     # reviewer: acme-review-bot        # username that counts for require_reviewer
   # - base_url: https://gitlab.other.example   # more instances: own token, hooks and bot
 
+# Bitbucket Cloud: an access token, or an account email + Atlassian API token.
+# bitbucket:
+#   - token: ${BITBUCKET_TOKEN}
+#     webhook_secret: ${BITBUCKET_WEBHOOK_SECRET}
+#     reviewer: acme-review-bot          # access tokens have no user: name the bot account
+
+# Hosts above are the initial configuration: with CODEREVIEW_CONSOLE_SECRET_KEY set
+# (openssl rand -base64 32), they are copied into the database, encrypted, on first
+# start and managed under "Code hosts" in the admin panel from then on.
+
 # ---- Where reviews run ----
 # Each review runs the codereview CLI once. Credentials are minted per job
 # (GitHub App installation tokens) and passed as environment variables.

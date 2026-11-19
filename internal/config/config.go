@@ -29,10 +29,11 @@ type Config struct {
 	// AllowRepoModel lets a repository's .codereview.yaml pick a profile.
 	AllowRepoModel bool `yaml:"allow_repo_model"`
 	// Review is passed to the CLI as-is (limits, verify, defaults, ...).
-	Review  map[string]any `yaml:"review"`
-	GitHub  GitHub         `yaml:"github"`
-	GitLab  []GitLab       `yaml:"gitlab"`
-	BotName string         `yaml:"bot_name"`
+	Review    map[string]any `yaml:"review"`
+	GitHub    GitHub         `yaml:"github"`
+	GitLab    []GitLab       `yaml:"gitlab"`
+	Bitbucket []Bitbucket    `yaml:"bitbucket"`
+	BotName   string         `yaml:"bot_name"`
 
 	Server   Server   `yaml:"server"`
 	Database Database `yaml:"database"`
@@ -64,6 +65,17 @@ type Identity struct {
 	// Reviewer is the username that counts as the bot for
 	// repos.require_reviewer. Default: the token's user.
 	Reviewer string `yaml:"reviewer"`
+}
+
+// Bitbucket configures Bitbucket Cloud. Use a repository/workspace access
+// token (Token) or an Atlassian API token with the account email.
+type Bitbucket struct {
+	APIURL        string `yaml:"api_url"` // default https://api.bitbucket.org/2.0
+	Token         string `yaml:"token"`
+	Email         string `yaml:"email"`
+	APIToken      string `yaml:"api_token"`
+	WebhookSecret string `yaml:"webhook_secret"`
+	Identity      `yaml:",inline"`
 }
 
 // GitLab configures one GitLab instance (gitlab.com or self-managed).

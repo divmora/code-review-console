@@ -14,6 +14,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/settings"
 )
 
@@ -86,29 +87,21 @@ func glEventKey(host string, body []byte) string {
 	return host + "|" + hex.EncodeToString(sum[:])
 }
 
-// gitlabInstance picks the configured instance for a webhook. GitLab sends
-// X-Gitlab-Instance with the instance URL; a single instance is used as-is.
-func (s *Server) gitlabInstance(r *http.Request, projectURL string) (config.GitLab, bool) {
-	if h := r.Header.Get("X-Gitlab-Instance"); h != "" {
-		if u, err := url.Parse(h); err == nil && u.Host != "" {
-			if g, ok := s.cfg.GitLabFor(u.Host); ok {
-				return g, true
+// gitlabInstance picks the GitLab host for a webhook. GitLab sends
+// X-Gitlab-Instance with the instance URL; a single host is used as-is.
+func (s *Server) gitlabInstance(r *http.Request, projectURL string) (hosts.Host, bool) {
+	for _, raw := range []string{r.Header.Get("X-Gitlab-Instance"), projectURL} {
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			if h, ok := s.hosts.Find(hosts.GitLab, u.Host); ok {
+				return h, true
 			}
 		}
 	}
-	if u, err := url.Parse(projectURL); err == nil && u.Host != "" {
-		if g, ok := s.cfg.GitLabFor(u.Host); ok {
-			return g, true
-		}
-	}
-	if len(s.cfg.GitLab) == 1 {
-		return s.cfg.GitLab[0], true
-	}
-	return config.GitLab{}, false
+	return s.hosts.Find(hosts.GitLab, "")
 }
 
 func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
-	if len(s.cfg.GitLab) == 0 {
+	if len(s.hosts.Enabled(hosts.GitLab)) == 0 {
 		http.Error(w, "gitlab is not configured", http.StatusNotFound)
 		return
 	}
@@ -136,8 +129,9 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown gitlab instance", http.StatusUnauthorized)
 		return
 	}
-	method, delivery, err := verifyGitLab(r.Header, body, inst, time.Now())
-	hm.Host = hostOf(inst.BaseURL)
+	method, delivery, err := verifyGitLab(r.Header, body, config.GitLab{WebhookSecrets: inst.WebhookSecrets,
+		SigningTokens: inst.SigningTokens, RequireSignature: inst.RequireSignature}, time.Now())
+	hm.Host = inst.Host
 	if err != nil {
 		hm.Auth, hm.Reason = "failed", err.Error()
 		s.logger.Warn("gitlab webhook rejected", "instance", inst.BaseURL, "reason", err.Error())
@@ -150,7 +144,7 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate delivery"})
 		return
 	}
-	host := hostOf(inst.BaseURL)
+	host := inst.Host
 	tgt := s.gitlabTarget(inst)
 	event := r.Header.Get("X-Gitlab-Event")
 	log := s.logger.With("event", event, "project", p.Project.PathWithNamespace)
@@ -256,11 +250,4 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 	default:
 		ignored(w, "event "+p.ObjectKind)
 	}
-}
-
-func hostOf(base string) string {
-	if u, err := url.Parse(base); err == nil {
-		return u.Host
-	}
-	return base
 }

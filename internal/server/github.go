@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
+	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/settings"
 )
 
@@ -85,10 +86,32 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hm := hookMetaOf(r.Context())
-	hm.Event, hm.Delivery, hm.Host = r.Header.Get("X-GitHub-Event"), r.Header.Get("X-GitHub-Delivery"), "github.com"
-	if !verifyGitHub(s.cfg.GitHub.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
-		hm.Auth, hm.Reason = "failed", "X-Hub-Signature-256 does not match webhook_secret"
-		s.logger.Warn("github webhook signature mismatch", "delivery", r.Header.Get("X-GitHub-Delivery"))
+	hm.Event, hm.Delivery = r.Header.Get("X-GitHub-Event"), r.Header.Get("X-GitHub-Delivery")
+	// The payload names the host (github.com or a GitHub Enterprise
+	// server); it is only trusted once that host's secret verifies it.
+	var p ghPayload
+	_ = json.Unmarshal(body, &p)
+	host := ""
+	if u, err := url.Parse(p.Repository.HTMLURL); err == nil && u.Host != "" {
+		host = strings.ToLower(u.Host)
+	}
+	h, ok := s.hosts.Find(hosts.GitHub, host)
+	if !ok {
+		h, ok = s.hosts.Find(hosts.GitHub, "")
+	}
+	hm.Host = firstNonEmpty(host, h.Host)
+	if !ok {
+		hm.Auth, hm.Reason = "failed", "no GitHub host configured for "+firstNonEmpty(host, "this delivery")
+		http.Error(w, "unknown github host", http.StatusUnauthorized)
+		return
+	}
+	verified := false
+	for _, secret := range h.WebhookSecrets {
+		verified = verified || verifyGitHub(secret, body, r.Header.Get("X-Hub-Signature-256"))
+	}
+	if !verified {
+		hm.Auth, hm.Reason = "failed", "X-Hub-Signature-256 does not match the webhook secret of "+h.Host
+		s.logger.Warn("github webhook signature mismatch", "host", h.Host, "delivery", r.Header.Get("X-GitHub-Delivery"))
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
@@ -98,19 +121,15 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pong"})
 		return
 	}
-	var p ghPayload
-	if err := json.Unmarshal(body, &p); err != nil {
+	if p.Repository.FullName == "" {
 		http.Error(w, "bad payload", http.StatusBadRequest)
 		return
 	}
-	host := "github.com"
-	if u, err := url.Parse(p.Repository.HTMLURL); err == nil && u.Host != "" {
-		host = u.Host
-	}
+	host = firstNonEmpty(host, h.Host)
 	hm.Host, hm.Project, hm.Action, hm.Sender = host, p.Repository.FullName, p.Action, p.Sender.Login
 	hm.Kind, hm.Number = event, firstNonZero(p.Number, p.PullRequest.Number, p.Issue.Number)
 	s.seen(r.Context(), vcs.GitHub, host, p.Repository.FullName)
-	tgt := s.githubTarget(p.Installation.ID)
+	tgt := s.githubTarget(h, p.Installation.ID)
 	log := s.logger.With("event", event, "action", p.Action, "repo", p.Repository.FullName, "delivery", r.Header.Get("X-GitHub-Delivery"))
 
 	switch event {
@@ -134,7 +153,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		requireReviewer := acc.RequireReviewer
-		self := s.reviewerFor(tgt, host)
+		self := s.reviewerFor(tgt, h.Host)
 		requested := p.Action == "review_requested" && self != "" && strings.EqualFold(p.RequestedReviewer.Login, self)
 		switch p.Action {
 		case "opened", "reopened", "synchronize", "ready_for_review":
@@ -175,7 +194,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "not a new pull request comment")
 			return
 		}
-		if p.Comment.User.Type == "Bot" || p.Sender.Type == "Bot" || isBotOutput(p.Comment.Body) || s.isSelf(host, p.Comment.User.Login) {
+		if p.Comment.User.Type == "Bot" || p.Sender.Type == "Bot" || isBotOutput(p.Comment.Body) || s.isSelf(h.Host, p.Comment.User.Login) {
 			ignored(w, "comment from a bot")
 			return
 		}
@@ -210,7 +229,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 // isSelf reports whether login is the token user (PAT mode), compared
 // case-insensitively. In App mode the bot is detected by user type.
 func (s *Server) isSelf(host, login string) bool {
-	self := s.selfLogins[host]
+	self := s.self(host)
 	return self != "" && strings.EqualFold(self, login)
 }
 

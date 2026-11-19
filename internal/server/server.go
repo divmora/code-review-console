@@ -9,15 +9,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/admin"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/version"
@@ -29,8 +31,12 @@ type Server struct {
 	exec   executor.Executor
 	logger *slog.Logger
 	queue  *Queue
-	ghApp  *vcs.GitHubApp
-	// identities of the bot per host, to ignore its own comments.
+	// hosts is the code host registry (admin panel or config file).
+	hosts *hosts.Registry
+	// idMu guards ghApps and selfLogins, rebuilt when hosts change.
+	idMu   sync.RWMutex
+	ghApps map[int64]*vcs.GitHubApp // by host ID
+	// identities of the bot per web host, to ignore its own comments.
 	selfLogins map[string]string
 	store      store.Store  // optional: allowlist, overrides, history
 	admin      *admin.Admin // optional: admin panel
@@ -51,65 +57,48 @@ type Deps struct {
 	Admin *admin.Admin
 	// Settings is shared with the admin panel; nil builds one.
 	Settings *settings.Service
+	// Hosts is shared with the admin panel; nil builds one from the
+	// config file (and the store, without encryption).
+	Hosts *hosts.Registry
 }
 
 // New validates config and builds a server.
 func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps Deps) (*Server, error) {
-	s := &Server{cfg: cfg, exec: exec, logger: logger, selfLogins: map[string]string{}, store: deps.Store, admin: deps.Admin, settings: deps.Settings}
+	s := &Server{cfg: cfg, exec: exec, logger: logger, selfLogins: map[string]string{}, ghApps: map[int64]*vcs.GitHubApp{},
+		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts}
 	if s.settings == nil {
 		s.settings = settings.New(cfg, deps.Store)
 	}
 	if cfg.Repos.Allowlist && deps.Store == nil {
 		return nil, errors.New("repos.allowlist needs database.url (the allowlist is managed in the admin panel)")
 	}
-	gh := cfg.GitHub
-	githubOn := gh.WebhookSecret != "" || gh.AppID != 0
-	if githubOn {
-		if gh.WebhookSecret == "" {
-			return nil, errors.New("github.webhook_secret is required to accept GitHub webhooks")
-		}
-		if gh.AppID != 0 {
-			key := []byte(gh.PrivateKey)
-			if len(key) == 0 && gh.PrivateKeyFile != "" {
-				var err error
-				if key, err = os.ReadFile(gh.PrivateKeyFile); err != nil {
-					return nil, fmt.Errorf("read github.private_key_file: %w", err)
-				}
-			}
-			a, err := vcs.NewGitHubApp(gh.AppID, key, gh.APIURL)
-			if err != nil {
-				return nil, err
-			}
-			s.ghApp = a
-		} else if gh.Token == "" {
-			return nil, errors.New("github: set app_id + private key (recommended) or token")
+	if s.hosts == nil {
+		s.hosts = hosts.New(cfg, deps.Store, nil, logger)
+		if _, err := s.hosts.Init(context.Background()); err != nil {
+			return nil, err
 		}
 	}
-	for _, g := range cfg.GitLab {
-		if len(g.AllSecrets()) == 0 && len(g.AllSigningTokens()) == 0 {
-			return nil, fmt.Errorf("gitlab %s: set signing_token (recommended, GitLab 19.0+) and/or webhook_secret", g.BaseURL)
-		}
-		for _, tok := range g.AllSigningTokens() {
-			if _, err := gitlabSigningKey(tok); err != nil {
-				return nil, fmt.Errorf("gitlab %s: %w", g.BaseURL, err)
-			}
-		}
-		if g.RequireSignature && len(g.AllSigningTokens()) == 0 {
-			return nil, fmt.Errorf("gitlab %s: require_signature needs signing_token", g.BaseURL)
-		}
-		if g.Token == "" {
-			return nil, fmt.Errorf("gitlab %s: token is required", g.BaseURL)
+	for _, h := range s.hosts.Enabled("") {
+		if err := h.Validate(); err != nil {
+			return nil, fmt.Errorf("host %s: %w", h.Host, err)
 		}
 	}
-	if !githubOn && len(cfg.GitLab) == 0 {
-		return nil, errors.New("nothing to serve: configure github (webhook_secret + app or token) and/or gitlab instances")
+	if len(s.hosts.Enabled("")) == 0 && (deps.Store == nil || s.hosts.Mode() != "database") {
+		return nil, errors.New("nothing to serve: configure github, gitlab and/or bitbucket hosts (or set " + secrets.EnvKey + " and add them in the admin panel)")
 	}
 	// Models can also be managed in the admin UI, so a missing model is only
 	// fatal without a database.
 	if cfg.Model == "" && len(cfg.Models) != 1 && deps.Store == nil {
 		return nil, errors.New("model config: set model: (a profile name or provider:model), or one model profile")
 	}
-	s.learnIdentities()
+	if err := s.refreshHosts(); err != nil {
+		return nil, err
+	}
+	s.hosts.OnChange = func() {
+		if err := s.refreshHosts(); err != nil {
+			s.logger.Error("could not apply host changes", "error", err)
+		}
+	}
 	s.queue = NewQueue(cfg.Server.Workers, cfg.Server.QueueSize, cfg.Server.JobTimeout, cfg.Server.Dashboard.History, logger)
 	if s.store != nil {
 		s.queue.OnFinish = s.persistJob
@@ -119,34 +108,81 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 	return s, nil
 }
 
-// learnIdentities records the token users so the bot ignores its own
-// comments in token (non-App) mode. Failures are logged, not fatal.
-func (s *Server) learnIdentities() {
+// refreshHosts rebuilds GitHub App clients and learns each host's token
+// user (the bot's identity), after startup and whenever hosts change.
+// Identity lookups that fail are logged, not fatal.
+func (s *Server) refreshHosts() error {
+	apps := map[int64]*vcs.GitHubApp{}
+	logins := map[string]string{}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if s.ghApp == nil && s.cfg.GitHub.Token != "" {
-		gh := vcs.NewGitHub(s.cfg.GitHub.APIURL, vcs.StaticToken(s.cfg.GitHub.Token))
-		if login, err := gh.CurrentUser(ctx); err == nil {
-			host := "github.com"
-			if u := s.cfg.GitHub.APIURL; u != "https://api.github.com" {
-				host = hostOf(u)
+	for _, h := range s.hosts.Enabled("") {
+		switch h.Platform {
+		case hosts.GitHub:
+			if h.AppID != 0 {
+				key, err := h.AppKey()
+				if err != nil {
+					return fmt.Errorf("github %s: %w", h.Host, err)
+				}
+				a, err := vcs.NewGitHubApp(h.AppID, key, h.BaseURL)
+				if err != nil {
+					return fmt.Errorf("github %s: %w", h.Host, err)
+				}
+				apps[h.ID] = a
+				continue // the App's identity is its slug; set bot_name
 			}
-			s.selfLogins[host] = login
-			s.logger.Info("github identity", "host", host, "token_user", login,
-				"reviewer", firstNonEmpty(s.cfg.GitHub.Reviewer, login), "mention", "@"+s.mention(s.cfg.GitHub.BotName, host))
-		} else {
-			s.logger.Warn("could not read GitHub token user", "error", err)
 		}
-	}
-	for _, g := range s.cfg.GitLab {
-		if login, err := vcs.NewGitLab(g.BaseURL, g.Token, g.SkipTLSVerify).CurrentUser(ctx); err == nil {
-			s.selfLogins[hostOf(g.BaseURL)] = login
-			s.logger.Info("gitlab identity", "instance", g.BaseURL, "token_user", login,
-				"reviewer", firstNonEmpty(g.Reviewer, login), "mention", "@"+s.mention(g.BotName, hostOf(g.BaseURL)))
-		} else {
-			s.logger.Warn("could not read GitLab token user", "instance", g.BaseURL, "error", err)
+		c := s.apiClient(h)
+		if c == nil {
+			continue
 		}
+		login, err := c.CurrentUser(ctx)
+		if err != nil || login == "" {
+			s.logger.Warn("could not read the token user", "platform", h.Platform, "host", h.Host, "error", err)
+			continue
+		}
+		logins[h.Host] = login
+		s.logger.Info(h.Platform+" identity", "host", h.Host, "token_user", login,
+			"reviewer", firstNonEmpty(h.Reviewer, login), "mention", "@"+firstNonEmpty(h.BotName, s.cfg.BotName, login))
 	}
+	s.idMu.Lock()
+	s.ghApps, s.selfLogins = apps, logins
+	s.idMu.Unlock()
+	return nil
+}
+
+// userClient is the part of a code host client used for identity.
+type userClient interface {
+	CurrentUser(ctx context.Context) (string, error)
+}
+
+// apiClient returns a token client for a host (nil for GitHub Apps).
+func (s *Server) apiClient(h hosts.Host) userClient {
+	switch h.Platform {
+	case hosts.GitHub:
+		if h.Token == "" {
+			return nil
+		}
+		return vcs.NewGitHub(h.BaseURL, vcs.StaticToken(h.Token))
+	case hosts.GitLab:
+		return vcs.NewGitLab(h.BaseURL, h.Token, h.SkipTLSVerify)
+	case hosts.Bitbucket:
+		return vcs.NewBitbucket(h.BaseURL, vcs.BitbucketAuth{Token: h.Token, Email: h.Email, APIToken: h.APIToken})
+	}
+	return nil
+}
+
+// self returns the bot's login on a web host ("" when unknown).
+func (s *Server) self(host string) string {
+	s.idMu.RLock()
+	defer s.idMu.RUnlock()
+	return s.selfLogins[host]
+}
+
+func (s *Server) ghApp(hostID int64) *vcs.GitHubApp {
+	s.idMu.RLock()
+	defer s.idMu.RUnlock()
+	return s.ghApps[hostID]
 }
 
 // Handler returns the HTTP routes.
@@ -154,6 +190,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhooks/github", s.recordHooks("github", s.handleGitHub))
 	mux.HandleFunc("POST /webhooks/gitlab", s.recordHooks("gitlab", s.handleGitLab))
+	mux.HandleFunc("POST /webhooks/bitbucket", s.recordHooks("bitbucket", s.handleBitbucket))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		p, run := s.queue.Stats()
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": version.Version, "pending": p, "running": run})
@@ -321,6 +358,8 @@ func webURL(ref vcs.Ref) string {
 		return fmt.Sprintf("https://%s/%s/pull/%d", ref.Host, ref.Repo, ref.Number)
 	case vcs.GitLab:
 		return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", ref.Host, ref.Repo, ref.Number)
+	case vcs.Bitbucket:
+		return fmt.Sprintf("https://%s/%s/pull-requests/%d", ref.Host, ref.Repo, ref.Number)
 	}
 	return ""
 }

@@ -14,6 +14,12 @@ The control plane for [code-review-bot](https://github.com/divmora/code-review-b
 - **Chat commands**: `@codereview review`, `full review`, `help`, or any question in a PR comment. The handle is configurable with `bot_name`.
 - **Admin** with OIDC single sign-on: a repository allowlist with group and pattern rules, review settings per group or repository, an audit log and persistent history in PostgreSQL.
 
+### Code hosts (GitHub, GitLab, Bitbucket)
+
+Hosts are managed under **Code hosts** in the admin panel: github.com or GitHub Enterprise (token or GitHub App), gitlab.com or self-managed GitLab, and Bitbucket Cloud (access token, or account email plus API token). Each host shows the webhook URL to configure (`/webhooks/github`, `/webhooks/gitlab`, `/webhooks/bitbucket`) and the events to send, and a **Test** button that checks the token.
+
+Set `CODEREVIEW_CONSOLE_SECRET_KEY` (32 random bytes, `openssl rand -base64 32`, kept outside the database): tokens, App keys, webhook secrets and signing tokens are encrypted with it (AES-256-GCM) before they are stored, and the admin panel never shows them again. Losing the key means entering the secrets again. The `github:`, `gitlab:` and `bitbucket:` sections of the config file are the initial configuration: on first start they are copied into the database, and from then on the admin panel is where hosts change. Without the key (or without a database) the config file is used as is and the Hosts page is read-only.
+
 ### Several GitLab instances and hooks
 
 One console serves any number of GitLab instances. Repositories, rules and webhook history are keyed by host, so `acme/app` on `gitlab.x.example` and on `gitlab.y.example` are separate, and so are their rules. Each instance has its own token, and so its own bot user; set `bot_name` (mention handle) and `reviewer` (the username that counts for `require_reviewer`) per instance when they differ from the defaults.
