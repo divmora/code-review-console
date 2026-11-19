@@ -24,6 +24,15 @@ type Overrides struct {
 	AutoReview   *bool   `json:"auto_review,omitempty"`
 	Drafts       *bool   `json:"drafts,omitempty"`
 	Instructions string  `json:"instructions,omitempty"` // appended to repo instructions
+	// Learnings are team decisions attached by the console per job (from
+	// its learnings store); they are not set in the admin UI's repo form.
+	Learnings []Learning `json:"learnings,omitempty"`
+}
+
+// Learning is one team decision as the CLI expects it.
+type Learning struct {
+	Text string `json:"text"`
+	Path string `json:"path,omitempty"`
 }
 
 // Validate checks values so the admin UI can reject them at once instead

@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,6 +63,10 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/reviews/{id}", a.requireAPI(a.apiGetReview))
 	mux.HandleFunc("POST /admin/api/reviews/{id}/rerun", a.requireAPI(a.apiRerun))
 	mux.HandleFunc("GET /admin/api/metrics", a.requireAPI(a.apiMetrics))
+	mux.HandleFunc("GET /admin/api/learnings", a.requireAPI(a.apiListLearnings))
+	mux.HandleFunc("POST /admin/api/learnings", a.requireAPI(a.apiCreateLearning))
+	mux.HandleFunc("PUT /admin/api/learnings/{id}", a.requireAPI(a.apiUpdateLearning))
+	mux.HandleFunc("DELETE /admin/api/learnings/{id}", a.requireAPI(a.apiDeleteLearning))
 	mux.HandleFunc("GET /admin/api/hosts", a.requireAPI(a.apiListHosts))
 	mux.HandleFunc("POST /admin/api/hosts", a.requireAPI(a.apiCreateHost))
 	mux.HandleFunc("PUT /admin/api/hosts/{id}", a.requireAPI(a.apiUpdateHost))
@@ -72,7 +78,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 }
 
 // adminSections are the admin UI's pages (see the routes in admin.html).
-var adminSections = map[string]bool{"repositories": true, "reviews": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
+var adminSections = map[string]bool{"repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.session(r)
@@ -386,18 +392,20 @@ func (a *Admin) apiGetSettings(w http.ResponseWriter, r *http.Request, s *store.
 
 // settingsReq is the full set of settings; every save writes all of them.
 type settingsReq struct {
-	Allowlist            bool             `json:"allowlist"`
-	RequireReviewer      bool             `json:"require_reviewer"`
-	ReviewDefaults       config.Overrides `json:"review_defaults"`
-	SkipBranchSync       bool             `json:"skip_branch_sync"`
-	SyncSourceBranches   []string         `json:"sync_source_branches"`
-	ScoreLabels          bool             `json:"score_labels"`
-	CommitStatus         bool             `json:"commit_status"`
-	ReviewRetentionDays  int              `json:"review_retention_days"`
-	WebhookRetentionDays int              `json:"webhook_retention_days"`
-	DashboardEnabled     bool             `json:"dashboard_enabled"`
-	HideRepos            bool             `json:"hide_repos"`
-	DashboardTitle       string           `json:"dashboard_title"`
+	Allowlist             bool             `json:"allowlist"`
+	RequireReviewer       bool             `json:"require_reviewer"`
+	ReviewDefaults        config.Overrides `json:"review_defaults"`
+	SkipBranchSync        bool             `json:"skip_branch_sync"`
+	SyncSourceBranches    []string         `json:"sync_source_branches"`
+	ScoreLabels           bool             `json:"score_labels"`
+	CommitStatus          bool             `json:"commit_status"`
+	ReviewRetentionDays   int              `json:"review_retention_days"`
+	LearningsEnabled      bool             `json:"learnings_enabled"`
+	LearningsAutoActivate bool             `json:"learnings_auto_activate"`
+	WebhookRetentionDays  int              `json:"webhook_retention_days"`
+	DashboardEnabled      bool             `json:"dashboard_enabled"`
+	HideRepos             bool             `json:"hide_repos"`
+	DashboardTitle        string           `json:"dashboard_title"`
 }
 
 func intOr(v, def int) *int {
@@ -426,6 +434,7 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		Allowlist: &req.Allowlist, RequireReviewer: &req.RequireReviewer, ReviewDefaults: req.ReviewDefaults,
 		SkipBranchSync: &req.SkipBranchSync, SyncSourceBranches: cleanList(req.SyncSourceBranches),
 		ScoreLabels: &req.ScoreLabels, CommitStatus: &req.CommitStatus,
+		LearningsEnabled: &req.LearningsEnabled, LearningsAutoActivate: &req.LearningsAutoActivate,
 		ReviewRetentionDays: intOr(req.ReviewRetentionDays, 180), WebhookRetentionDays: intOr(req.WebhookRetentionDays, 14),
 		DashboardEnabled: &req.DashboardEnabled, HideRepos: &req.HideRepos, DashboardTitle: strings.TrimSpace(req.DashboardTitle),
 	}
@@ -516,7 +525,7 @@ type hostView struct {
 }
 
 var hookEvents = map[string][]string{
-	hosts.GitHub:    {"Pull requests", "Issue comments"},
+	hosts.GitHub:    {"Pull requests", "Issue comments", "Pull request review comments"},
 	hosts.GitLab:    {"Merge request events", "Comments"},
 	hosts.Bitbucket: {"Pull request: Created", "Updated", "Merged", "Declined", "Comment created"},
 }
@@ -832,4 +841,118 @@ func (a *Admin) apiMetrics(w http.ResponseWriter, r *http.Request, s *store.Sess
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"granularity": g, "from": from, "to": to, "points": points})
+}
+
+// ---- learnings ----
+
+func (a *Admin) apiListLearnings(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	ls, err := a.store.ListLearnings(r.Context())
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"learnings": ls})
+}
+
+type learningReq struct {
+	Platform string `json:"platform"`
+	Host     string `json:"host"`
+	Scope    string `json:"scope"`
+	Text     string `json:"text"`
+	Path     string `json:"path"`
+	Status   string `json:"status"`
+}
+
+func (req *learningReq) check() error {
+	req.Text = strings.TrimSpace(req.Text)
+	if req.Text == "" || len(req.Text) > 600 {
+		return errors.New("a learning needs text of at most 600 characters")
+	}
+	scope, err := store.NormalizePattern(req.Scope)
+	if err != nil {
+		return err
+	}
+	req.Scope = scope
+	req.Path = strings.TrimSpace(req.Path)
+	if req.Path != "" {
+		if _, err := path.Match(req.Path, ""); err != nil {
+			return fmt.Errorf("path: %w", err)
+		}
+	}
+	switch req.Status {
+	case "":
+		req.Status = store.LearningActive
+	case store.LearningActive, store.LearningPending, store.LearningDisabled:
+	default:
+		return errors.New("status must be active, pending or disabled")
+	}
+	return nil
+}
+
+func (a *Admin) apiCreateLearning(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	var req learningReq
+	if !decode(w, r, &req) {
+		return
+	}
+	platform, host, ok := target(req.Platform, req.Host)
+	if !ok && req.Platform == "bitbucket" {
+		platform, host, ok = "bitbucket", firstNonEmpty(strings.ToLower(strings.TrimSpace(req.Host)), "bitbucket.org"), true
+	}
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "platform must be github, gitlab or bitbucket, with a valid host"})
+		return
+	}
+	if err := req.check(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	l, err := a.store.CreateLearning(r.Context(), store.Learning{Platform: platform, Host: host, Scope: req.Scope, Text: req.Text,
+		Path: req.Path, Status: req.Status, Source: "manual", SourceAuthor: s.Email}, s.Email)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, l)
+}
+
+func (a *Admin) apiUpdateLearning(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	var req learningReq
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := req.check(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	l, err := a.store.UpdateLearning(r.Context(), store.Learning{ID: id, Scope: req.Scope, Text: req.Text, Path: req.Path, Status: req.Status}, s.Email)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "learning not found"})
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, l)
+}
+
+func (a *Admin) apiDeleteLearning(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	if err := a.store.DeleteLearning(r.Context(), id, s.Email); errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "learning not found"})
+		return
+	} else if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

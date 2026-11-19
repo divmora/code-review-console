@@ -51,6 +51,8 @@ Changing this contract means changing the bot's CLI too; keep them in step.
 - **Admin auth**: verify ID-token signature, audience, nonce and allow rules; unverified emails
   never match email/domain rules.
 - Model profiles stored in the DB never contain API keys (only `api_key_env`).
+- Learnings are stored and scoped by the console; the CLI only uses them (CODEREVIEW_OVERRIDES)
+  and extracts them (`codereview learn`). The console never calls a model itself.
 - Host secrets are encrypted before the store sees them; APIs and audit entries expose only
   whether a secret is set. Webhooks are verified against the matched host's secrets only.
 

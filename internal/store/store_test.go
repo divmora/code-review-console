@@ -363,3 +363,36 @@ func TestJobMetricsAndPrune(t *testing.T) {
 		t.Errorf("hourly rollups older than the cut are pruned: %+v", hourly)
 	}
 }
+
+func TestLearnings(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	l, err := p.CreateLearning(ctx, Learning{Platform: "GitLab", Host: "GL.example.com", Scope: "acme/pay", Text: "Zeros are dropped on purpose.",
+		Status: LearningActive, Source: "reply", SourceRef: "gitlab|gl|note|1", SourceAuthor: "dev"}, "bot")
+	if err != nil || l.Platform != "gitlab" || l.Host != "gl.example.com" || l.ID == 0 {
+		t.Fatalf("create: %+v %v", l, err)
+	}
+	if _, err := p.CreateLearning(ctx, Learning{Platform: "gitlab", Host: "gl.example.com", Text: "again", Status: LearningActive, SourceRef: "gitlab|gl|note|1"}, "bot"); !errors.Is(err, ErrDuplicate) {
+		t.Errorf("same source comment twice: %v", err)
+	}
+	if _, err := p.CreateLearning(ctx, Learning{Platform: "gitlab", Host: "gl.example.com", Text: "manual one", Status: LearningActive}, "a@x"); err != nil {
+		t.Errorf("manual learnings have no source ref: %v", err)
+	}
+	up, err := p.UpdateLearning(ctx, Learning{ID: l.ID, Scope: "acme", Text: "Zeros are dropped on purpose everywhere.", Status: LearningDisabled}, "a@x")
+	if err != nil || up.Scope != "acme" || up.Status != LearningDisabled || up.Source != "reply" {
+		t.Fatalf("update: %+v %v", up, err)
+	}
+	if _, err := p.UpdateLearning(ctx, Learning{ID: l.ID, Status: "bogus", Text: "x"}, "a"); err == nil {
+		t.Error("invalid status must be rejected by the database")
+	}
+	list, _ := p.ListLearnings(ctx)
+	if len(list) != 2 {
+		t.Errorf("list = %d", len(list))
+	}
+	if err := p.DeleteLearning(ctx, l.ID, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteLearning(ctx, l.ID, "a@x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second delete: %v", err)
+	}
+}

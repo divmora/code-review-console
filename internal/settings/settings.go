@@ -44,8 +44,12 @@ type Stored struct {
 	ScoreLabels  *bool `json:"score_labels,omitempty"`
 	CommitStatus *bool `json:"commit_status,omitempty"`
 	// Retention in days for review history and webhook deliveries.
-	ReviewRetentionDays  *int `json:"review_retention_days,omitempty"`
-	WebhookRetentionDays *int `json:"webhook_retention_days,omitempty"`
+	ReviewRetentionDays *int `json:"review_retention_days,omitempty"`
+	// Learnings: capture team decisions from replies, and whether new ones
+	// apply at once (else they wait for an admin).
+	LearningsEnabled      *bool `json:"learnings_enabled,omitempty"`
+	LearningsAutoActivate *bool `json:"learnings_auto_activate,omitempty"`
+	WebhookRetentionDays  *int  `json:"webhook_retention_days,omitempty"`
 	// Dashboard: the status page at /dashboard.
 	DashboardEnabled *bool  `json:"dashboard_enabled,omitempty"`
 	HideRepos        *bool  `json:"hide_repos,omitempty"`
@@ -55,19 +59,21 @@ type Stored struct {
 // Effective is what the console uses now, with where each value came from
 // ("database", or "config" when it was never saved).
 type Effective struct {
-	Allowlist            bool              `json:"allowlist"`
-	RequireReviewer      bool              `json:"require_reviewer"`
-	ReviewDefaults       config.Overrides  `json:"review_defaults"`
-	SkipBranchSync       bool              `json:"skip_branch_sync"`
-	SyncSourceBranches   []string          `json:"sync_source_branches"`
-	ScoreLabels          bool              `json:"score_labels"`
-	CommitStatus         bool              `json:"commit_status"`
-	ReviewRetentionDays  int               `json:"review_retention_days"`
-	WebhookRetentionDays int               `json:"webhook_retention_days"`
-	DashboardEnabled     bool              `json:"dashboard_enabled"`
-	HideRepos            bool              `json:"hide_repos"`
-	DashboardTitle       string            `json:"dashboard_title"`
-	Source               map[string]string `json:"source"`
+	Allowlist             bool              `json:"allowlist"`
+	RequireReviewer       bool              `json:"require_reviewer"`
+	ReviewDefaults        config.Overrides  `json:"review_defaults"`
+	SkipBranchSync        bool              `json:"skip_branch_sync"`
+	SyncSourceBranches    []string          `json:"sync_source_branches"`
+	ScoreLabels           bool              `json:"score_labels"`
+	CommitStatus          bool              `json:"commit_status"`
+	ReviewRetentionDays   int               `json:"review_retention_days"`
+	LearningsEnabled      bool              `json:"learnings_enabled"`
+	LearningsAutoActivate bool              `json:"learnings_auto_activate"`
+	WebhookRetentionDays  int               `json:"webhook_retention_days"`
+	DashboardEnabled      bool              `json:"dashboard_enabled"`
+	HideRepos             bool              `json:"hide_repos"`
+	DashboardTitle        string            `json:"dashboard_title"`
+	Source                map[string]string `json:"source"`
 }
 
 // Service resolves settings. It is safe for concurrent use; a nil store
@@ -94,7 +100,8 @@ func (s *Service) Defaults() Effective {
 		Allowlist: s.cfg.Repos.Allowlist, RequireReviewer: s.cfg.Repos.RequireReviewer,
 		SkipBranchSync: skip, SyncSourceBranches: append([]string{}, s.cfg.Repos.SyncSourceBranches...),
 		ScoreLabels: s.cfg.Repos.ScoreLabels, CommitStatus: s.cfg.Repos.CommitStatus,
-		ReviewRetentionDays:  days(s.cfg.Server.ReviewRetention, 180),
+		ReviewRetentionDays: days(s.cfg.Server.ReviewRetention, 180),
+		LearningsEnabled:    true, LearningsAutoActivate: true,
 		WebhookRetentionDays: days(s.cfg.Server.WebhookRetention, 14),
 		DashboardEnabled:     d.Enabled, HideRepos: d.HideRepos, DashboardTitle: d.Title,
 		Source: map[string]string{},
@@ -154,6 +161,8 @@ func (s *Service) resolve(st Stored) Effective {
 	pick("skip_branch_sync", &e.SkipBranchSync, st.SkipBranchSync)
 	pick("score_labels", &e.ScoreLabels, st.ScoreLabels)
 	pick("commit_status", &e.CommitStatus, st.CommitStatus)
+	pick("learnings_enabled", &e.LearningsEnabled, st.LearningsEnabled)
+	pick("learnings_auto_activate", &e.LearningsAutoActivate, st.LearningsAutoActivate)
 	pickInt := func(name string, dst *int, v *int) {
 		e.Source[name] = "config"
 		if v != nil {

@@ -132,6 +132,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   <nav class="side" aria-label="Sections">
     <a href="/admin/repositories" data-tab="repos">Repositories</a>
     <a href="/admin/reviews" data-tab="reviews">Reviews</a>
+    <a href="/admin/learnings" data-tab="learnings">Learnings</a>
     <a href="/admin/hosts" data-tab="hosts">Code hosts</a>
     <a href="/admin/rules" data-tab="rules">Rules</a>
     <a href="/admin/webhooks" data-tab="hooks">Webhooks</a>
@@ -201,7 +202,29 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     </div>
     <div class="panel" id="rvList"><div class="empty">Loading…</div></div>
     <div class="bar mt"><button class="btn hidden" id="rvMore">Load older</button></div>
-    <p class="sub">Every finished review, answer and help job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; daily and monthly totals are kept for good.</p>
+    <p class="sub">Every finished review, answer and help job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; hourly detail for 3 days, daily and monthly totals for good.</p>
+  </section>
+
+  <section id="tab-learnings" class="hidden">
+    <div class="bar">
+      <input id="lnQ" type="search" placeholder="Search learnings" aria-label="Search learnings">
+      <select id="lnStatus" aria-label="Status"><option value="">Any status</option><option value="active">Active</option><option value="pending">Waiting for approval</option><option value="disabled">Disabled</option></select>
+      <span class="sub" id="lnCounts"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="lnAdd">Add learning</button>
+    </div>
+    <div class="panel hidden pad" id="lnForm">
+      <div class="grid">
+        <label class="f">Platform<select id="lnPlat"><option value="gitlab">GitLab</option><option value="github">GitHub</option><option value="bitbucket">Bitbucket</option></select></label>
+        <label class="f">Host<input id="lnHost" placeholder="gitlab.example.com"></label>
+        <label class="f">Applies to<input id="lnScope" placeholder="empty = whole host · group · group/repo · acme/svc-*"></label>
+        <label class="f">Only files matching<input id="lnPath" placeholder="optional glob, e.g. api/legacy/**"></label>
+      </div>
+      <label class="f">Learning<textarea id="lnText" maxlength="600" placeholder="A rule for future reviews, e.g. Account numbers are compared without leading zeros on purpose."></textarea></label>
+      <div class="bar mt"><button class="btn primary" id="lnSave">Add learning</button><button class="btn" id="lnCancel">Cancel</button></div>
+    </div>
+    <div class="panel" id="lnList"><div class="empty">Loading…</div></div>
+    <p class="sub">Learnings are team decisions from review discussions. When someone replies to one of the bot's comments, the bot reacts 👀, asks the model whether the reply states a rule for future reviews, and if so saves it here (✅ on GitLab, 🎉 on GitHub). <code>@bot remember &lt;rule&gt;</code> saves one directly. Each starts scoped to its repository; widen <b>Applies to</b> to a group or the whole host so one standard covers many repositories. Matching active learnings go with every review: the reviewer follows them and the verifier drops findings they rule out.</p>
   </section>
 
   <section id="tab-hosts" class="hidden">
@@ -276,6 +299,11 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
         <label class="f">Commit status on the reviewed commit
           <select id="sStatus"><option value="false">Off</option><option value="true">On</option></select>
         </label>
+      </div>
+      <h2 class="h2 mt">Learnings</h2>
+      <div class="grid">
+        <label class="f">Learn from replies to the bot<select id="sLearn"><option value="true">On</option><option value="false">Off</option></select></label>
+        <label class="f">New learnings<select id="sLearnAuto"><option value="true">Apply at once</option><option value="false">Wait for an admin's approval</option></select></label>
       </div>
       <h2 class="h2 mt">History</h2>
       <div class="grid">
@@ -610,6 +638,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   function settingsBody(defaults) {
     function v(id) { return document.getElementById(id).value; }
     return { allowlist: v("sAllow") === "true", require_reviewer: v("sReviewer") === "true",
+      learnings_enabled: v("sLearn") === "true", learnings_auto_activate: v("sLearnAuto") === "true",
       review_retention_days: parseInt(v("sRevDays") || "0", 10), webhook_retention_days: parseInt(v("sHookDays") || "0", 10),
       skip_branch_sync: v("sSync") === "true", score_labels: v("sLabels") === "true", commit_status: v("sStatus") === "true",
       sync_source_branches: v("sSyncBranches").split(",").map(function (x) { return x.trim(); }).filter(Boolean),
@@ -632,6 +661,8 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     document.getElementById("sSync").value = String(e.skip_branch_sync);
     document.getElementById("sLabels").value = String(e.score_labels);
     document.getElementById("sRevDays").value = e.review_retention_days;
+    document.getElementById("sLearn").value = String(e.learnings_enabled);
+    document.getElementById("sLearnAuto").value = String(e.learnings_auto_activate);
     document.getElementById("sHookDays").value = e.webhook_retention_days;
     document.getElementById("sStatus").value = String(e.commit_status);
     document.getElementById("sSyncBranches").value = (e.sync_source_branches || []).join(", ");
@@ -744,22 +775,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     var managed = hostData.mode === "database";
     document.getElementById("hostMode").textContent = managed ? "Managed here; stored encrypted in the database." :
       "Hosts come from the config file (read-only). Set " + (hostData.key_env || "CODEREVIEW_CONSOLE_SECRET_KEY") + " to manage them here.";
-    document.getElementById("mGran").addEventListener("change", loadMetrics);
-  var rvTimer;
-  ["rvHost", "rvState", "rvKind", "rvTrigger", "rvFrom", "rvTo"].forEach(function (id) {
-    document.getElementById(id).addEventListener("change", function () { if (id === "rvHost") loadMetrics(); loadReviews(); });
-  });
-  document.getElementById("rvRepo").addEventListener("input", function () { clearTimeout(rvTimer); rvTimer = setTimeout(function () { loadReviews(); }, 300); });
-  document.getElementById("rvMore").addEventListener("click", function () { loadReviews(true); });
-  document.getElementById("rnGo").addEventListener("click", function () {
-    var url = document.getElementById("rnURL").value.trim();
-    if (!url) { toast("Paste a pull request or merge request URL", true); return; }
-    api("POST", "/admin/api/reviews", { url: url, full: document.getElementById("rnFull").checked }).then(function (r) {
-      document.getElementById("rnURL").value = ""; toast("Queued " + r.pr + " — it appears here when it finishes");
-    }).catch(function (e) { toast(e.message, true); });
-  });
-  window.addEventListener("resize", function () { if (!document.getElementById("tab-reviews").classList.contains("hidden")) loadMetrics(); });
-  document.getElementById("hostAdd").classList.toggle("hidden", !managed);
+    document.getElementById("hostAdd").classList.toggle("hidden", !managed);
     renderHostForm();
     var box = document.getElementById("hostList");
     if (!hostData.hosts.length) { box.replaceChildren(el("div", { cls: "empty", text: "No code hosts yet. Add GitHub, GitLab or Bitbucket." })); return; }
@@ -979,6 +995,75 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     loadMetrics(); loadReviews();
   }
 
+  // ---- learnings ----
+  var learnings = [], editingLearning = null;
+  function loadLearnings() {
+    api("GET", "/admin/api/learnings").then(function (d) { learnings = d.learnings || []; renderLearnings(); }).catch(function (e) { toast(e.message, true); });
+  }
+  function learningScope(l) { return l.scope ? l.scope : "Whole host"; }
+  function saveLearning(l, body) {
+    return api("PUT", "/admin/api/learnings/" + l.id, body).then(function (x) {
+      learnings = learnings.map(function (y) { return y.id === x.id ? x : y; }); renderLearnings(); return x;
+    });
+  }
+  function learningBody(l) { return { scope: l.scope, text: l.text, path: l.path, status: l.status }; }
+  function renderLearnings() {
+    var q = document.getElementById("lnQ").value.trim().toLowerCase(), st = document.getElementById("lnStatus").value;
+    var counts = { active: 0, pending: 0, disabled: 0 };
+    learnings.forEach(function (l) { counts[l.status] = (counts[l.status] || 0) + 1; });
+    document.getElementById("lnCounts").textContent = counts.active + " active · " + counts.pending + " waiting · " + counts.disabled + " disabled";
+    var list = learnings.filter(function (l) {
+      return (!st || l.status === st) && (!q || (l.text + " " + l.scope + " " + l.host + " " + l.path).toLowerCase().indexOf(q) >= 0);
+    });
+    var box = document.getElementById("lnList");
+    if (!list.length) { box.replaceChildren(el("div", { cls: "empty", text: learnings.length ? "No learnings match." : "No learnings yet. Reply to one of the bot's comments with a team decision, or use @bot remember." })); return; }
+    var rows = [];
+    list.forEach(function (l) {
+      var status = el("select", { "aria-label": "Status", onchange: function (ev) {
+        var b = learningBody(l); b.status = ev.target.value;
+        saveLearning(l, b).then(function () { toast("Learning " + b.status); }).catch(function (e) { ev.target.value = l.status; toast(e.message, true); });
+      } }, [["active", "Active"], ["pending", "Waiting"], ["disabled", "Disabled"]].map(function (o) { return el("option", { value: o[0], selected: l.status === o[0] }, [o[1]]); }));
+      var src = { reply: "from a reply", command: "@bot remember", manual: "added here" }[l.source] || l.source;
+      rows.push(el("tr", null, [
+        el("td", null, [el("div", null, [l.scope ? el("code", { text: l.scope }) : el("b", { text: "Whole host" })]), el("div", { cls: "plat", text: l.platform + " · " + l.host })]),
+        el("td", null, [el("div", { text: l.text }), l.path ? el("div", { cls: "why" }, [el("span", { cls: "chip", text: "files: " + l.path })]) : null]),
+        el("td", null, [status]),
+        el("td", { cls: "muted" }, [el("div", { text: src + (l.source_author ? " · " + l.source_author : "") }),
+          l.source_url ? el("a", { href: l.source_url, target: "_blank", rel: "noopener noreferrer", cls: "why", text: "open PR" }) : null,
+          el("div", { cls: "why", text: ago(l.updated_at) })]),
+        el("td", { cls: "nowrap" }, [el("button", { cls: "btn", text: editingLearning === l.id ? "Close" : "Edit", onclick: function () {
+          editingLearning = editingLearning === l.id ? null : l.id; renderLearnings();
+        } })])
+      ]));
+      if (editingLearning === l.id) {
+        var form = el("div", null, [
+          el("div", { cls: "grid" }, [
+            el("label", { cls: "f" }, ["Applies to", el("input", { id: "leScope", value: l.scope, placeholder: "empty = whole host · group · group/repo" })]),
+            el("label", { cls: "f" }, ["Only files matching", el("input", { id: "lePath", value: l.path, placeholder: "optional glob" })])
+          ]),
+          el("label", { cls: "f" }, ["Learning", el("textarea", { id: "leText", maxlength: "600" }, [l.text])]),
+          el("div", { cls: "bar mt" }, [
+            el("button", { cls: "btn primary", text: "Save", onclick: function () {
+              var b = learningBody(l);
+              b.scope = document.getElementById("leScope").value.trim(); b.path = document.getElementById("lePath").value.trim(); b.text = document.getElementById("leText").value.trim();
+              saveLearning(l, b).then(function () { editingLearning = null; renderLearnings(); toast("Saved"); }).catch(function (e) { toast(e.message, true); });
+            } }),
+            el("button", { cls: "btn", text: "Cancel", onclick: function () { editingLearning = null; renderLearnings(); } }),
+            el("span", { cls: "spacer" }),
+            el("button", { cls: "btn danger", text: "Delete", onclick: function () {
+              if (!confirm("Delete this learning?")) return;
+              api("DELETE", "/admin/api/learnings/" + l.id).then(function () { learnings = learnings.filter(function (x) { return x.id !== l.id; }); editingLearning = null; renderLearnings(); toast("Deleted"); })
+                .catch(function (e) { toast(e.message, true); });
+            } })
+          ])
+        ]);
+        rows.push(el("tr", { cls: "editor" }, [el("td", { colspan: "5" }, [form])]));
+      }
+    });
+    var head = el("tr", null, ["Applies to", "Learning", "Status", "Source", ""].map(function (h) { return el("th", { text: h }); }));
+    box.replaceChildren(el("table", null, [el("thead", null, [head]), el("tbody", null, rows)]));
+  }
+
   function loadAudit() {
     api("GET", "/admin/api/audit").then(function (entries) {
       var box = document.getElementById("audit");
@@ -994,16 +1079,16 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     }).catch(function (e) { toast(e.message, true); });
   }
 
-  var routes = { repositories: "repos", reviews: "reviews", hosts: "hosts", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
-  var titles = { repos: "Repositories", reviews: "Reviews", hosts: "Code hosts", rules: "Rules", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
+  var routes = { repositories: "repos", reviews: "reviews", learnings: "learnings", hosts: "hosts", rules: "rules", webhooks: "hooks", settings: "settings", audit: "audit" };
+  var titles = { repos: "Repositories", reviews: "Reviews", learnings: "Learnings", hosts: "Code hosts", rules: "Rules", hooks: "Webhooks", settings: "Settings", audit: "Audit log" };
   function tabFromPath() {
     var seg = location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
     return routes[seg] || "repos";
   }
   function show(tab) {
-    editing = null; editingRule = null; editingHost = null;
+    editing = null; editingRule = null; editingHost = null; editingLearning = null;
     document.querySelectorAll(".side a").forEach(function (a) { a.classList.toggle("on", a.dataset.tab === tab); });
-    ["repos", "reviews", "hosts", "rules", "hooks", "settings", "audit"].forEach(function (t) {
+    ["repos", "reviews", "learnings", "hosts", "rules", "hooks", "settings", "audit"].forEach(function (t) {
       document.getElementById("tab-" + t).classList.toggle("hidden", tab !== t);
     });
     document.getElementById("pageTitle").textContent = titles[tab];
@@ -1011,6 +1096,7 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
     if (tab === "rules") renderRules();
     if (tab === "hosts") loadHosts();
     if (tab === "reviews") loadReviewsPage();
+    if (tab === "learnings") loadLearnings();
     if (tab === "hooks") loadHooks();
     if (tab === "settings") loadSettings();
     if (tab === "repos" && repos.length) reloadRepos();
@@ -1043,6 +1129,31 @@ code { font-size: 12px; background: var(--idle-bg); border-radius: 4px; padding:
   document.getElementById("hRefresh").addEventListener("click", function () { loadHooks(); });
   document.getElementById("hMore").addEventListener("click", function () { loadHooks(true); });
   document.getElementById("sSave").addEventListener("click", function () { saveSettings(current ? current.review_defaults : {}); });
+  document.getElementById("lnQ").addEventListener("input", renderLearnings);
+  document.getElementById("lnStatus").addEventListener("change", renderLearnings);
+  document.getElementById("lnAdd").addEventListener("click", function () { document.getElementById("lnForm").classList.toggle("hidden"); });
+  document.getElementById("lnCancel").addEventListener("click", function () { document.getElementById("lnForm").classList.add("hidden"); });
+  document.getElementById("lnSave").addEventListener("click", function () {
+    function v(id) { return document.getElementById(id).value.trim(); }
+    api("POST", "/admin/api/learnings", { platform: v("lnPlat"), host: v("lnHost"), scope: v("lnScope"), path: v("lnPath"), text: v("lnText") })
+      .then(function (l) { learnings.push(l); document.getElementById("lnText").value = ""; document.getElementById("lnForm").classList.add("hidden"); renderLearnings(); toast("Learning added"); })
+      .catch(function (e) { toast(e.message, true); });
+  });
+  document.getElementById("mGran").addEventListener("change", loadMetrics);
+  var rvTimer;
+  ["rvHost", "rvState", "rvKind", "rvTrigger", "rvFrom", "rvTo"].forEach(function (id) {
+    document.getElementById(id).addEventListener("change", function () { if (id === "rvHost") loadMetrics(); loadReviews(); });
+  });
+  document.getElementById("rvRepo").addEventListener("input", function () { clearTimeout(rvTimer); rvTimer = setTimeout(function () { loadReviews(); }, 300); });
+  document.getElementById("rvMore").addEventListener("click", function () { loadReviews(true); });
+  document.getElementById("rnGo").addEventListener("click", function () {
+    var url = document.getElementById("rnURL").value.trim();
+    if (!url) { toast("Paste a pull request or merge request URL", true); return; }
+    api("POST", "/admin/api/reviews", { url: url, full: document.getElementById("rnFull").checked }).then(function (r) {
+      document.getElementById("rnURL").value = ""; toast("Queued " + r.pr + " — it appears here when it finishes");
+    }).catch(function (e) { toast(e.message, true); });
+  });
+  window.addEventListener("resize", function () { if (!document.getElementById("tab-reviews").classList.contains("hidden")) loadMetrics(); });
   document.getElementById("hostAdd").addEventListener("click", function () { editingHost = 0; renderHostForm(); });
   document.getElementById("rAddToggle").addEventListener("click", function () { document.getElementById("rAddForm").classList.toggle("hidden"); });
   document.getElementById("rSave").addEventListener("click", function () {

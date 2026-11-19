@@ -14,11 +14,17 @@ The control plane for [code-review-bot](https://github.com/divmora/code-review-b
 - **Chat commands**: `@codereview review`, `full review`, `help`, or any question in a PR comment. The handle is configurable with `bot_name`.
 - **Admin** with OIDC single sign-on: a repository allowlist with group and pattern rules, review settings per group or repository, an audit log and persistent history in PostgreSQL.
 
+### Learnings (team memory)
+
+When someone replies to one of the bot's review comments, the console reacts 👀, runs `codereview learn` on the comment and the reply, and, when the reply states a rule for future reviews ("we compare account numbers without leading zeros on purpose"), stores it as a learning (✅ on GitLab, 🎉 on GitHub; Bitbucket has no reactions). `@bot remember <rule>` stores one directly and confirms in a comment. Learnings live in the console's database and are managed under **Learnings**: each starts scoped to its repository and can be widened to a group, a pattern or the whole host, so one standard covers every repository of a project; edit, disable or delete them there (all audited). Every review gets the active learnings that match its repository: the reviewer follows them and the verifier drops findings they rule out. **Settings** turn capture on or off and choose whether new learnings apply at once or wait for an admin.
+
+Replies arrive as comment events: on GitLab add a group or project webhook with **Comments** (system hooks do not send comments), on GitHub subscribe to **Pull request review comments**.
+
 ### Reviews, history and metrics
 
 The **Reviews** page lists every finished review, answer and help job from the database, with filters (host, repository, state, kind, trigger, dates). A review's details show its summary, scores, findings, what verification removed, and errors; **Re-run** reviews the same pull request again (new changes or full), and **Review now** reviews any PR/MR by URL on a configured host (allowlist, reviewer and branch-sync rules do not apply to these explicit requests).
 
-Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host and repository) that are updated as each job finishes, so they never scan the history. Review history is kept for 180 days by default and webhook deliveries for 14 (both in **Settings**); hourly rollups are kept 90 days, daily and monthly totals for good.
+Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host and repository) that are updated as each job finishes, so they never scan the history. Review history is kept for 180 days by default and webhook deliveries for 14 (both in **Settings**); hourly rollups only serve the last-48-hours chart and are kept 3 days; daily and monthly totals are kept for good.
 
 ### Code hosts (GitHub, GitLab, Bitbucket)
 

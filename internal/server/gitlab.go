@@ -70,6 +70,7 @@ type glPayload struct {
 		OldRev       string `json:"oldrev"`
 		Note         string `json:"note"`
 		NoteableType string `json:"noteable_type"`
+		DiscussionID string `json:"discussion_id"`
 		System       bool   `json:"system"`
 	} `json:"object_attributes"`
 	MergeRequest struct {
@@ -224,12 +225,24 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "not a user comment on a merge request")
 			return
 		}
+		ref := vcs.Ref{Platform: vcs.GitLab, Host: host, Repo: p.Project.PathWithNamespace, Number: p.MergeRequest.IID}
+		sourceRef := "gitlab|" + host + "|note|" + idString(a.ID)
 		cmd, ok := parseCommand(tgt.botName, a.Note)
 		if !ok {
+			if a.DiscussionID != "" {
+				// A reply in a thread: if the thread is the bot's comment,
+				// the reply may hold a team learning.
+				did := a.DiscussionID
+				s.replyToBot(tgt, ref, func(ctx context.Context) (parentComment, error) {
+					return s.gitlabDiscussionStart(ctx, tgt, ref, did)
+				}, s.gitlabReact(tgt, ref, a.ID), a.Note, p.User.Username, sourceRef)
+				ignored(w, "not a command (replies to the bot are checked for learnings)")
+				return
+			}
 			ignored(w, "bot not mentioned")
 			return
 		}
-		ref := vcs.Ref{Platform: vcs.GitLab, Host: host, Repo: p.Project.PathWithNamespace, Number: p.MergeRequest.IID}
+		cmd.author, cmd.sourceRef = p.User.Username, sourceRef
 		allowed, ov := s.gate(r.Context(), ref)
 		if !allowed {
 			ignored(w, "repository is not enabled in the admin panel")

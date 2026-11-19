@@ -379,6 +379,26 @@ func TestLoginAndManageRepos(t *testing.T) {
 		t.Errorf("metrics: %d %s", code, body)
 	}
 
+	// Learnings: add, widen the scope, disable, delete.
+	code, body = e.do(t, "POST", "/admin/api/learnings", csrf, map[string]any{"platform": "gitlab", "host": "gitlab.example.com", "scope": "Acme/Pay/", "text": "Zeros are dropped on purpose."})
+	if code != 201 || !bytes.Contains(body, []byte(`"scope":"acme/pay"`)) {
+		t.Fatalf("create learning: %d %s", code, body)
+	}
+	var lv struct{ ID int64 }
+	_ = json.Unmarshal(body, &lv)
+	if code, body := e.do(t, "PUT", fmt.Sprintf("/admin/api/learnings/%d", lv.ID), csrf, map[string]any{"scope": "acme", "text": "Zeros are dropped on purpose.", "status": "disabled"}); code != 200 || !bytes.Contains(body, []byte(`"status":"disabled"`)) {
+		t.Errorf("update learning: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "POST", "/admin/api/learnings", csrf, map[string]any{"platform": "gitlab", "host": "gitlab.example.com", "text": ""}); code != 400 {
+		t.Errorf("empty learning: %d", code)
+	}
+	if code, body := e.do(t, "GET", "/admin/api/learnings", "", nil); code != 200 || !bytes.Contains(body, []byte("Zeros are dropped")) {
+		t.Errorf("list learnings: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/admin/api/learnings/%d", lv.ID), csrf, nil); code != 200 {
+		t.Errorf("delete learning: %d", code)
+	}
+
 	r, _ := e.st.FindRepo(context.Background(), "github", "github.com", "org/api")
 	if r.Mode != store.ModeEnabled || *r.Settings.Model != "smart" || r.UpdatedBy != "Ana@Divmora.com" {
 		t.Errorf("stored repo = %+v", r)

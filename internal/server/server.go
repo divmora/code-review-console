@@ -54,9 +54,11 @@ type Server struct {
 	stopOnce  sync.Once
 }
 
-// hourlyMetricsKept is how long hourly rollups are kept; daily and monthly
-// rollups are kept forever (a few rows per repository per day).
-const hourlyMetricsKept = 90 * 24 * time.Hour
+// hourlyMetricsKept is how long hourly rollups are kept: only the "last 48
+// hours" chart reads them, and daily and monthly rollups are updated
+// directly by each job (not derived from hourly rows), so a finished day
+// needs no hourly detail. Daily and monthly rollups are kept for good.
+const hourlyMetricsKept = 3 * 24 * time.Hour
 
 // pruneLoop deletes review history older than the retention setting, once
 // at start and then hourly.
@@ -403,6 +405,8 @@ func webURL(ref vcs.Ref) string {
 type command struct {
 	kind     string // review, full, help, ask
 	question string
+	// author and sourceRef identify a "remember" command's comment.
+	author, sourceRef string
 }
 
 // parseCommand finds "@bot ..." in a comment. ok is false when the bot is
@@ -423,6 +427,11 @@ func parseCommand(bot, body string) (command, bool) {
 	case "help", "":
 		return command{kind: "help"}, true
 	}
+	for _, verb := range []string{"remember", "learn", "note"} {
+		if low := strings.ToLower(rest); low == verb || strings.HasPrefix(low, verb+" ") || strings.HasPrefix(low, verb+":") {
+			return command{kind: "remember", question: strings.TrimLeft(strings.TrimSpace(rest[len(verb):]), ": ")}, true
+		}
+	}
 	q := strings.TrimSpace(body[:loc[0]] + " " + rest)
 	return command{kind: "ask", question: q}, true
 }
@@ -440,6 +449,7 @@ func helpText(bot string) string {
 | `+"`@%[1]s review`"+` | Review commits pushed since the last review |
 | `+"`@%[1]s full review`"+` | Re-review every file from scratch |
 | `+"`@%[1]s help`"+` | Show this message |
+| `+"`@%[1]s remember <rule>`"+` | Save a team learning for future reviews of this repository |
 | `+"`@%[1]s <question>`"+` | Ask anything about this pull request |
 
 Configure reviews with a `+"`.codereview.yaml`"+` file on the default branch (profile, path filters, instructions, auto review).`, bot)

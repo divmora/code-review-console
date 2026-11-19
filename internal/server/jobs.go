@@ -240,6 +240,9 @@ func (s *Server) newTask(ctx context.Context, tgt target, ref vcs.Ref, kind stri
 		ConfigYAML: cfgYAML,
 		Env:        secrets,
 	}
+	if kind == "review" || kind == "ask" {
+		ov = s.withLearnings(ctx, ref, ov)
+	}
 	if ov != nil {
 		t.Overrides = ov
 	}
@@ -362,6 +365,8 @@ func (s *Server) dispatch(tgt target, ref vcs.Ref, cmd command, ov *config.Overr
 		return s.enqueueReview(tgt, ref, reviewOpts{Full: true, Overrides: ov}, false)
 	case "help":
 		return s.postHelp(tgt, ref)
+	case "remember":
+		return s.remember(tgt, ref, cmd.question, cmd.author, cmd.sourceRef)
 	default:
 		return s.enqueueAnswer(tgt, ref, cmd.question, ov)
 	}

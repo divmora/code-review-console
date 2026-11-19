@@ -22,6 +22,7 @@ type Memory struct {
 	rules    map[int64]*store.Rule
 	hooks    []store.WebhookEvent
 	hosts    map[int64]*store.HostRow
+	learns   []*store.Learning
 	jobs     []store.Job
 	sessions map[string]store.Session
 	audit    []store.AuditEntry
@@ -242,6 +243,63 @@ func (m *Memory) DeleteHost(_ context.Context, id int64, actor string) error {
 	delete(m.hosts, id)
 	m.addAudit(actor, "host.delete", h.Platform+":"+h.Host, map[string]any{})
 	return nil
+}
+
+func (m *Memory) ListLearnings(context.Context) ([]store.Learning, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.Learning{}
+	for _, l := range m.learns {
+		out = append(out, *l)
+	}
+	return out, nil
+}
+
+func (m *Memory) CreateLearning(_ context.Context, in store.Learning, actor string) (*store.Learning, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if in.SourceRef != "" {
+		for _, l := range m.learns {
+			if l.SourceRef == in.SourceRef {
+				return nil, store.ErrDuplicate
+			}
+		}
+	}
+	m.nextID++
+	in.ID, in.CreatedAt, in.UpdatedAt, in.UpdatedBy = m.nextID, time.Now(), time.Now(), actor
+	in.Platform, in.Host = strings.ToLower(in.Platform), strings.ToLower(in.Host)
+	c := in
+	m.learns = append(m.learns, &c)
+	m.addAudit(actor, "learning.create", in.Platform+":"+in.Host+"/"+in.Scope, map[string]any{"text": in.Text})
+	out := in
+	return &out, nil
+}
+
+func (m *Memory) UpdateLearning(_ context.Context, in store.Learning, actor string) (*store.Learning, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, l := range m.learns {
+		if l.ID == in.ID {
+			l.Scope, l.Text, l.Path, l.Status, l.UpdatedBy, l.UpdatedAt = in.Scope, in.Text, in.Path, in.Status, actor, time.Now()
+			m.addAudit(actor, "learning.update", l.Platform+":"+l.Host+"/"+l.Scope, map[string]any{"text": l.Text})
+			c := *l
+			return &c, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *Memory) DeleteLearning(_ context.Context, id int64, actor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, l := range m.learns {
+		if l.ID == id {
+			m.learns = append(m.learns[:i], m.learns[i+1:]...)
+			m.addAudit(actor, "learning.delete", l.Platform+":"+l.Host+"/"+l.Scope, map[string]any{})
+			return nil
+		}
+	}
+	return store.ErrNotFound
 }
 
 func (m *Memory) InsertWebhookEvents(_ context.Context, events []store.WebhookEvent) error {

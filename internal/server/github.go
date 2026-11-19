@@ -70,9 +70,10 @@ type ghPayload struct {
 		PullRequest *struct{} `json:"pull_request"`
 	} `json:"issue"`
 	Comment struct {
-		ID   int64  `json:"id"`
-		Body string `json:"body"`
-		User struct {
+		ID        int64  `json:"id"`
+		InReplyTo int64  `json:"in_reply_to_id"`
+		Body      string `json:"body"`
+		User      struct {
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"user"`
@@ -203,6 +204,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "bot not mentioned")
 			return
 		}
+		cmd.author, cmd.sourceRef = p.Comment.User.Login, "github|"+host+"|comment|"+idString(p.Comment.ID)
 		ref := vcs.Ref{Platform: vcs.GitHub, Host: host, Repo: p.Repository.FullName, Number: p.Issue.Number}
 		allowed, ov := s.gate(r.Context(), ref)
 		if !allowed {
@@ -220,6 +222,38 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Info("command queued", "pr", ref.String(), "command", cmd.kind)
 		accepted(w, cmd.kind)
+
+	case "pull_request_review_comment":
+		// Replies in a review thread: commands, or answers to the bot that
+		// may hold a team learning.
+		if p.Action != "created" || p.Comment.User.Type == "Bot" || isBotOutput(p.Comment.Body) || s.isSelf(h.Host, p.Comment.User.Login) {
+			ignored(w, "not a new review comment from a person")
+			return
+		}
+		ref := vcs.Ref{Platform: vcs.GitHub, Host: host, Repo: p.Repository.FullName, Number: p.PullRequest.Number}
+		sourceRef := "github|" + host + "|review_comment|" + idString(p.Comment.ID)
+		if cmd, ok := parseCommand(tgt.botName, p.Comment.Body); ok {
+			allowed, ov := s.gate(r.Context(), ref)
+			if !allowed {
+				ignored(w, "repository is not enabled in the admin panel")
+				return
+			}
+			cmd.author, cmd.sourceRef = p.Comment.User.Login, sourceRef
+			if err := s.dispatch(tgt, ref, cmd, ov); err != nil {
+				submitErr(w, err)
+				return
+			}
+			accepted(w, cmd.kind)
+			return
+		}
+		if p.Comment.InReplyTo == 0 {
+			ignored(w, "bot not mentioned")
+			return
+		}
+		parent := p.Comment.InReplyTo
+		s.replyToBot(tgt, ref, func(ctx context.Context) (parentComment, error) { return s.githubComment(ctx, tgt, ref, parent) },
+			s.githubReviewReact(tgt, ref, p.Comment.ID), p.Comment.Body, p.Comment.User.Login, sourceRef)
+		ignored(w, "not a command (replies to the bot are checked for learnings)")
 
 	default:
 		ignored(w, "event "+event)

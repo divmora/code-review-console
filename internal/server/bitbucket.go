@@ -62,7 +62,10 @@ type bbPayload struct {
 		Reviewers []bbUser `json:"reviewers"`
 	} `json:"pullrequest"`
 	Comment struct {
-		ID      int64 `json:"id"`
+		ID     int64 `json:"id"`
+		Parent *struct {
+			ID int64 `json:"id"`
+		} `json:"parent"`
 		Content struct {
 			Raw string `json:"raw"`
 		} `json:"content"`
@@ -196,11 +199,21 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "comment from the bot")
 			return
 		}
+		sourceRef := "bitbucket|" + h.Host + "|comment|" + idString(p.Comment.ID)
 		cmd, ok := parseCommand(tgt.botName, text)
 		if !ok {
+			if p.Comment.Parent != nil && p.Comment.Parent.ID != 0 {
+				parent := p.Comment.Parent.ID
+				// Bitbucket Cloud has no reactions API: nothing to react with.
+				s.replyToBot(tgt, ref, func(ctx context.Context) (parentComment, error) { return s.bitbucketComment(ctx, tgt, ref, parent) },
+					nil, text, firstNonEmpty(p.Actor.Nickname, p.Actor.DisplayName), sourceRef)
+				ignored(w, "not a command (replies to the bot are checked for learnings)")
+				return
+			}
 			ignored(w, "bot not mentioned")
 			return
 		}
+		cmd.author, cmd.sourceRef = firstNonEmpty(p.Actor.Nickname, p.Actor.DisplayName), sourceRef
 		allowed, ov := s.gate(r.Context(), ref)
 		if !allowed {
 			ignored(w, "repository is not enabled in the admin panel")

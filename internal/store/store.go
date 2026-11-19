@@ -19,6 +19,9 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrDuplicate is returned when a record already exists.
+var ErrDuplicate = errors.New("already exists")
+
 // Repo is one repository known to the server.
 type Repo struct {
 	ID       int64  `json:"id"`
@@ -76,6 +79,40 @@ type HostRow struct {
 	Secrets   string          `json:"-"`
 	UpdatedAt time.Time       `json:"updated_at"`
 	UpdatedBy string          `json:"updated_by"`
+}
+
+// Learning statuses.
+const (
+	LearningActive   = "active"
+	LearningPending  = "pending"
+	LearningDisabled = "disabled"
+)
+
+// Learning is a team decision captured from a review discussion (or added
+// by an admin). Scope is a rule pattern on the host: "" for the whole
+// host, a group or owner, a pattern with *, or a repository path.
+type Learning struct {
+	ID           int64  `json:"id"`
+	Platform     string `json:"platform"`
+	Host         string `json:"host"`
+	Scope        string `json:"scope"`
+	Text         string `json:"text"`
+	Path         string `json:"path"`
+	Status       string `json:"status"`
+	Source       string `json:"source"` // reply, command, manual
+	SourceURL    string `json:"source_url"`
+	SourceAuthor string `json:"source_author"`
+	// SourceRef identifies the comment it came from, so a redelivered
+	// webhook does not create it twice.
+	SourceRef string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy string    `json:"updated_by"`
+}
+
+// AsRule gives the learning's scope the rule matching semantics.
+func (l Learning) AsRule() Rule {
+	return Rule{Platform: l.Platform, Host: l.Host, Pattern: l.Scope}
 }
 
 // WebhookEvent is one webhook delivery and what the console did with it.
@@ -215,6 +252,13 @@ type Store interface {
 	ListHosts(ctx context.Context) ([]HostRow, error)
 	PutHost(ctx context.Context, h HostRow, actor string) (*HostRow, error)
 	DeleteHost(ctx context.Context, id int64, actor string) error
+
+	// Learnings. CreateLearning ignores a duplicate SourceRef (returns
+	// ErrDuplicate).
+	ListLearnings(ctx context.Context) ([]Learning, error)
+	CreateLearning(ctx context.Context, l Learning, actor string) (*Learning, error)
+	UpdateLearning(ctx context.Context, l Learning, actor string) (*Learning, error)
+	DeleteLearning(ctx context.Context, id int64, actor string) error
 
 	// Webhook history.
 	InsertWebhookEvents(ctx context.Context, events []WebhookEvent) error
@@ -442,6 +486,25 @@ var migrations = []string{
 	GROUP BY 1, 2, 3, 4, 5;
 	CREATE INDEX jobs_host_idx ON jobs (platform, host, id DESC);
 	CREATE INDEX jobs_state_idx ON jobs (state, id DESC);`,
+	// 8: team learnings
+	`CREATE TABLE learnings (
+		id             bigserial PRIMARY KEY,
+		platform       text NOT NULL,
+		host           text NOT NULL,
+		scope          text NOT NULL DEFAULT '',
+		text           text NOT NULL,
+		path           text NOT NULL DEFAULT '',
+		status         text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending', 'disabled')),
+		source         text NOT NULL DEFAULT 'manual',
+		source_url     text NOT NULL DEFAULT '',
+		source_author  text NOT NULL DEFAULT '',
+		source_ref     text NOT NULL DEFAULT '',
+		created_at     timestamptz NOT NULL DEFAULT now(),
+		updated_at     timestamptz NOT NULL DEFAULT now(),
+		updated_by     text NOT NULL DEFAULT ''
+	);
+	CREATE INDEX learnings_scope_idx ON learnings (platform, host, status);
+	CREATE UNIQUE INDEX learnings_source_ref_idx ON learnings (source_ref) WHERE source_ref <> '';`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -728,6 +791,102 @@ func (p *Postgres) DeleteRule(ctx context.Context, id int64, actor string) error
 		return err
 	}
 	if err := audit(ctx, tx, actor, "rule.delete", ruleTarget(r), map[string]any{"enabled": r.Enabled}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const learningCols = `id, platform, host, scope, text, path, status, source, source_url, source_author, source_ref, created_at, updated_at, updated_by`
+
+func scanLearning(row pgx.Row) (*Learning, error) {
+	var l Learning
+	err := row.Scan(&l.ID, &l.Platform, &l.Host, &l.Scope, &l.Text, &l.Path, &l.Status, &l.Source, &l.SourceURL, &l.SourceAuthor,
+		&l.SourceRef, &l.CreatedAt, &l.UpdatedAt, &l.UpdatedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &l, err
+}
+
+func learningAudit(l *Learning) map[string]any {
+	return map[string]any{"scope": l.Scope, "text": l.Text, "path": l.Path, "status": l.Status, "source": l.Source, "source_url": l.SourceURL}
+}
+
+func (p *Postgres) ListLearnings(ctx context.Context) ([]Learning, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+learningCols+` FROM learnings ORDER BY platform, host, scope, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Learning{}
+	for rows.Next() {
+		l, err := scanLearning(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) CreateLearning(ctx context.Context, in Learning, actor string) (*Learning, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	l, err := scanLearning(tx.QueryRow(ctx, `
+		INSERT INTO learnings (platform, host, scope, text, path, status, source, source_url, source_author, source_ref, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (source_ref) WHERE source_ref <> '' DO NOTHING
+		RETURNING `+learningCols, strings.ToLower(in.Platform), strings.ToLower(in.Host), in.Scope, in.Text, in.Path, in.Status,
+		in.Source, in.SourceURL, in.SourceAuthor, in.SourceRef, actor))
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrDuplicate
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := audit(ctx, tx, actor, "learning.create", l.Platform+":"+l.Host+"/"+l.Scope, learningAudit(l)); err != nil {
+		return nil, err
+	}
+	return l, tx.Commit(ctx)
+}
+
+func (p *Postgres) UpdateLearning(ctx context.Context, in Learning, actor string) (*Learning, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	before, err := scanLearning(tx.QueryRow(ctx, `SELECT `+learningCols+` FROM learnings WHERE id=$1 FOR UPDATE`, in.ID))
+	if err != nil {
+		return nil, err
+	}
+	after, err := scanLearning(tx.QueryRow(ctx, `
+		UPDATE learnings SET scope=$2, text=$3, path=$4, status=$5, updated_at=now(), updated_by=$6 WHERE id=$1
+		RETURNING `+learningCols, in.ID, in.Scope, in.Text, in.Path, in.Status, actor))
+	if err != nil {
+		return nil, err
+	}
+	detail := map[string]any{"before": learningAudit(before), "after": learningAudit(after)}
+	if err := audit(ctx, tx, actor, "learning.update", after.Platform+":"+after.Host+"/"+after.Scope, detail); err != nil {
+		return nil, err
+	}
+	return after, tx.Commit(ctx)
+}
+
+func (p *Postgres) DeleteLearning(ctx context.Context, id int64, actor string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	l, err := scanLearning(tx.QueryRow(ctx, `DELETE FROM learnings WHERE id=$1 RETURNING `+learningCols, id))
+	if err != nil {
+		return err
+	}
+	if err := audit(ctx, tx, actor, "learning.delete", l.Platform+":"+l.Host+"/"+l.Scope, learningAudit(l)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

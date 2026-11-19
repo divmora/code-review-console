@@ -90,6 +90,9 @@ func Args(t Task) ([]string, error) {
 	case "validate":
 		// Checks the job config and overrides with the binary that runs reviews.
 		return []string{"config", "validate", "--format", "json"}, nil
+	case "learn":
+		// Reads CODEREVIEW_LEARN_INPUT; prints whether it holds a learning.
+		return []string{"learn"}, nil
 	case "ask":
 		if strings.TrimSpace(t.Question) == "" {
 			return nil, errors.New("ask: empty question")
@@ -131,7 +134,7 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 	case "ask":
 		res.Answer = strings.TrimSpace(string(stdout))
 		return res, nil
-	case "validate":
+	case "validate", "learn":
 		out := bytes.TrimSpace(stdout)
 		if !json.Valid(out) {
 			return nil, errors.New("codereview config validate produced no JSON (is the CLI older than config validate?)")
