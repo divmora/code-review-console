@@ -94,7 +94,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
   <h2>Recent <span class="count" id="c-recent">0</span></h2>
   <div class="panel" id="recent"></div>
 
-  <footer>code-review-bot {{.Version}} · refreshes every 5 seconds · history is kept in memory and resets when the server restarts</footer>
+  <footer>code-review-console {{.Version}} · refreshes every 5 seconds · {{if .Persistent}}history is saved to the database and survives restarts{{else}}history is kept in memory and resets when the server restarts{{end}}</footer>
 </main>
 <script nonce="{{.Nonce}}">
 (function () {
@@ -201,7 +201,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
           note = el("span", { cls: "err", text: short, title: r.error });
         }
         return el("tr", null, [pr(r), el("td", { text: r.kind }), el("td", null, [badge(r.state)]),
-          el("td", { text: ago(r.finished, now) }), el("td", { cls: "num", text: dur(ms(r.finished) - ms(r.started)) }),
+          el("td", { text: ago(r.finished, now) }), el("td", { cls: "num", text: r.started ? dur(ms(r.finished) - ms(r.started)) : "–" }),
           el("td", { cls: "num", text: r.files || "–" }), el("td", { cls: "num", text: r.comments || "–" }),
           el("td", { cls: "num", text: r.tokens_in ? num(r.tokens_in) + " / " + num(r.tokens_out) : "–" }),
           el("td", { cls: "wrap" }, [note])]);
