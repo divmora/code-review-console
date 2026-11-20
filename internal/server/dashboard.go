@@ -60,9 +60,10 @@ func (s *Server) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
 	nonce := base64.RawStdEncoding.EncodeToString(b)
 	var buf bytes.Buffer
 	err := dashboardTmpl.Execute(&buf, map[string]any{
-		"Title":   eff.DashboardTitle,
-		"Version": version.Version,
-		"Nonce":   nonce,
+		"Title":      eff.DashboardTitle,
+		"Version":    version.Version,
+		"Nonce":      nonce,
+		"Persistent": s.store != nil,
 	})
 	if err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
