@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/divmora/code-review-console/compare/v0.3.1...v0.3.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **dashboard:** show "–" for unstarted jobs and correct the footer ([#12](https://github.com/divmora/code-review-console/issues/12)) ([0466ee1](https://github.com/divmora/code-review-console/commit/0466ee131186a652e17c2fcb9e6a623f55b9b05a))
+
 ## [0.3.1](https://github.com/divmora/code-review-console/compare/v0.3.0...v0.3.1) (2026-11-19)
 
 
