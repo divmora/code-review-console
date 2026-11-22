@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/divmora/code-review-console/compare/v0.5.0...v0.6.0) (2026-11-22)
+
+
+### Features
+
+* **admin:** manage executor settings in the console ([#38](https://github.com/divmora/code-review-console/issues/38)) ([d821bda](https://github.com/divmora/code-review-console/commit/d821bdaa00ceea06719f99b90335abea71fa09c4))
+* **admin:** manage model profiles and the default model in the console ([#37](https://github.com/divmora/code-review-console/issues/37)) ([60edf06](https://github.com/divmora/code-review-console/commit/60edf067f3406b054adacac23f2ea80a21755f66))
+* **license:** manage the license in the admin panel; start without one ([#31](https://github.com/divmora/code-review-console/issues/31)) ([029ff2e](https://github.com/divmora/code-review-console/commit/029ff2e391a2d63c12586851ed661c373fb777b0))
+
 ## [0.5.0](https://github.com/divmora/code-review-console/compare/v0.4.0...v0.5.0) (2026-11-22)
 
 
