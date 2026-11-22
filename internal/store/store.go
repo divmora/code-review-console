@@ -119,6 +119,9 @@ type Learning struct {
 	Source       string `json:"source"` // reply, command, manual
 	SourceURL    string `json:"source_url"`
 	SourceAuthor string `json:"source_author"`
+	// SourceRole is the author's access on the repository when the
+	// learning was captured ("developer", "write", "guest", "unknown"...).
+	SourceRole string `json:"source_role"`
 	// SourceRef identifies the comment it came from, so a redelivered
 	// webhook does not create it twice.
 	SourceRef string    `json:"-"`
@@ -600,6 +603,8 @@ var migrations = []string{
 	// an ID to list and revoke them. Sessions from before have groups NULL.
 	`ALTER TABLE sessions ADD COLUMN id bigserial, ADD COLUMN groups jsonb, ADD COLUMN verified boolean NOT NULL DEFAULT true;
 	CREATE UNIQUE INDEX sessions_id_idx ON sessions (id);`,
+	// 11: the role of a learning's author on the repository (issue #32).
+	`ALTER TABLE learnings ADD COLUMN source_role text NOT NULL DEFAULT '';`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -891,12 +896,12 @@ func (p *Postgres) DeleteRule(ctx context.Context, id int64, actor string) error
 	return tx.Commit(ctx)
 }
 
-const learningCols = `id, platform, host, scope, text, path, status, source, source_url, source_author, source_ref, created_at, updated_at, updated_by`
+const learningCols = `id, platform, host, scope, text, path, status, source, source_url, source_author, source_role, source_ref, created_at, updated_at, updated_by`
 
 func scanLearning(row pgx.Row) (*Learning, error) {
 	var l Learning
 	err := row.Scan(&l.ID, &l.Platform, &l.Host, &l.Scope, &l.Text, &l.Path, &l.Status, &l.Source, &l.SourceURL, &l.SourceAuthor,
-		&l.SourceRef, &l.CreatedAt, &l.UpdatedAt, &l.UpdatedBy)
+		&l.SourceRole, &l.SourceRef, &l.CreatedAt, &l.UpdatedAt, &l.UpdatedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -904,7 +909,8 @@ func scanLearning(row pgx.Row) (*Learning, error) {
 }
 
 func learningAudit(l *Learning) map[string]any {
-	return map[string]any{"scope": l.Scope, "text": l.Text, "path": l.Path, "status": l.Status, "source": l.Source, "source_url": l.SourceURL}
+	return map[string]any{"scope": l.Scope, "text": l.Text, "path": l.Path, "status": l.Status, "source": l.Source, "source_url": l.SourceURL,
+		"source_author": l.SourceAuthor, "source_role": l.SourceRole}
 }
 
 func (p *Postgres) ListLearnings(ctx context.Context) ([]Learning, error) {
@@ -931,11 +937,11 @@ func (p *Postgres) CreateLearning(ctx context.Context, in Learning, actor string
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	l, err := scanLearning(tx.QueryRow(ctx, `
-		INSERT INTO learnings (platform, host, scope, text, path, status, source, source_url, source_author, source_ref, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO learnings (platform, host, scope, text, path, status, source, source_url, source_author, source_ref, updated_by, source_role)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (source_ref) WHERE source_ref <> '' DO NOTHING
 		RETURNING `+learningCols, strings.ToLower(in.Platform), strings.ToLower(in.Host), in.Scope, in.Text, in.Path, in.Status,
-		in.Source, in.SourceURL, in.SourceAuthor, in.SourceRef, actor))
+		in.Source, in.SourceURL, in.SourceAuthor, in.SourceRef, actor, in.SourceRole))
 	if errors.Is(err, ErrNotFound) {
 		return nil, ErrDuplicate
 	}

@@ -110,7 +110,7 @@ func (s *Service) Defaults() Effective {
 		SkipBranchSync: skip, SyncSourceBranches: append([]string{}, s.cfg.Repos.SyncSourceBranches...),
 		ScoreLabels: s.cfg.Repos.ScoreLabels, CommitStatus: s.cfg.Repos.CommitStatus,
 		ReviewRetentionDays: days(s.cfg.Server.ReviewRetention, 180),
-		LearningsEnabled:    true, LearningsAutoActivate: true,
+		LearningsEnabled:    true, LearningsAutoActivate: false,
 		WebhookRetentionDays: days(s.cfg.Server.WebhookRetention, 14),
 		DashboardEnabled:     d.Enabled, HideRepos: d.HideRepos, DashboardTitle: d.Title,
 		Source: map[string]string{},
