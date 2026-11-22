@@ -29,6 +29,9 @@ The console runs the `codereview` CLI for every review, so the two must agree on
   older than the minimum is rejected when the config loads.
 - Always run `code-review-console check-config --config console.yaml` after an upgrade. It asks
   the CLI the executor actually runs to validate the config, and fails if that CLI is too old.
+  With `database.url` it uses what reviews use: the executor settings (version, resources,
+  scheduling) and model profiles saved in the admin panel. It only reads the database: no
+  migrations, nothing written.
 
 ## License
 
@@ -112,12 +115,17 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  - apiGroups: [""]               # optional, see below
+    resources: ["events"]
+    verbs: ["list"]
 ```
 
 Bind it to the console's service account with a RoleBinding. `patch` on secrets lets the console
 make each job's Secret owned by its Job, so Kubernetes deletes the Secret with the Job even if the
 console stops mid-review. Without it the console logs a warning and the Secret, which holds the job's
-tokens and provider keys, can be left behind.
+tokens and provider keys, can be left behind. `list` on events is optional: with it, a review pod that
+Kubernetes refuses to create (a ResourceQuota, a LimitRange, an admission webhook) fails the review
+at once with the reason; without it, the review waits for its deadline.
 
 Leave `executor.kubernetes.kubeconfig` empty to use the in-cluster config. Set
 `executor.kubernetes.service_account` only when review jobs need a cloud identity (for example IRSA,
@@ -230,7 +238,7 @@ written, and unknown fields are rejected. Imports are audited as `cli: hosts imp
 1. Read the release notes for a new minimum CLI version.
 2. Update the image or binary. For `docker` or `kubernetes` executors, change the CLI version on the
    **Executor** page (or the image tag in the config file when there is no database).
-3. Run `check-config` (it checks the config file's image, not a version set in the panel).
+3. Run `check-config`.
 4. Restart. Database migrations apply automatically. On SIGTERM the console stops taking work and
    gives running reviews up to 2 minutes to finish; give the container at least that long
    (Kubernetes `terminationGracePeriodSeconds: 150`). The queue is in memory: reviews still

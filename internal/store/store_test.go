@@ -517,3 +517,32 @@ func TestHookStats(t *testing.T) {
 	}
 	t.Errorf("host missing from %+v", list)
 }
+
+// TestConnectDoesNotMigrate: check-config connects without migrating, so a
+// newer binary never changes the schema under a serving console.
+func TestConnectDoesNotMigrate(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	var before int
+	_ = p.pool.QueryRow(ctx, `SELECT max(version) FROM codereview_schema`).Scan(&before)
+	if _, err := p.pool.Exec(ctx, `DELETE FROM codereview_schema WHERE version = $1`, before); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = p.pool.Exec(ctx, `INSERT INTO codereview_schema (version) VALUES ($1) ON CONFLICT DO NOTHING`, before) })
+	_ = p.PutSetting(ctx, "probe", map[string]int{"n": 1}, "a@x")
+
+	c, err := Connect(ctx, os.Getenv("CODEREVIEW_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var after int
+	_ = c.pool.QueryRow(ctx, `SELECT max(version) FROM codereview_schema`).Scan(&after)
+	if after != before-1 {
+		t.Errorf("Connect must not migrate: schema version %d, want %d", after, before-1)
+	}
+	var v map[string]int
+	if found, err := c.GetSetting(ctx, "probe", &v); !found || err != nil || v["n"] != 1 {
+		t.Errorf("Connect reads: %v %v %v", found, err, v)
+	}
+}

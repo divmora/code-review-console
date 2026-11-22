@@ -13,10 +13,12 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -40,6 +42,8 @@ type Kubernetes struct {
 	affinity    *corev1.Affinity
 	// poll is how often job status is checked.
 	poll time.Duration
+	// noEvents is set once listing events is forbidden.
+	noEvents *atomic.Bool
 }
 
 // NewKubernetes connects using the kubeconfig path, or in-cluster config.
@@ -134,7 +138,7 @@ func CheckKube(cfg config.KubeExecutor) error {
 }
 
 func newKubernetes(cfg config.KubeExecutor, pass []string, cs kubernetes.Interface, poll time.Duration) (*Kubernetes, error) {
-	k := &Kubernetes{cfg: cfg, pass: pass, cs: cs, poll: poll}
+	k := &Kubernetes{cfg: cfg, pass: pass, cs: cs, poll: poll, noEvents: &atomic.Bool{}}
 	if len(cfg.Tolerations) > 0 {
 		if err := strictJSON(cfg.Tolerations, &k.tolerations); err != nil {
 			return nil, fmt.Errorf("executor.kubernetes.tolerations: %w", err)
@@ -420,8 +424,11 @@ func (k *Kubernetes) wait(ctx context.Context, name string) (bool, error) {
 // for the deadline.
 func (k *Kubernetes) checkPodStuck(ctx context.Context, name string) error {
 	pods, err := k.cs.CoreV1().Pods(k.cfg.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "codereview/job=" + name})
-	if err != nil || len(pods.Items) == 0 {
+	if err != nil {
 		return nil
+	}
+	if len(pods.Items) == 0 {
+		return k.checkCreateFailed(ctx, name)
 	}
 	for _, cs := range pods.Items[0].Status.ContainerStatuses {
 		if w := cs.State.Waiting; w != nil {
@@ -429,6 +436,31 @@ func (k *Kubernetes) checkPodStuck(ctx context.Context, name string) error {
 			case "ErrImagePull", "ImagePullBackOff", "InvalidImageName", "CreateContainerConfigError":
 				return fmt.Errorf("review pod cannot start: %s: %s", w.Reason, w.Message)
 			}
+		}
+	}
+	return nil
+}
+
+// checkCreateFailed reports a Job whose pod Kubernetes refuses to create
+// (a ResourceQuota, a LimitRange, an admission webhook) instead of waiting
+// for the deadline. It reads the Job's FailedCreate events, which needs
+// "list" on events; without that permission it does nothing.
+func (k *Kubernetes) checkCreateFailed(ctx context.Context, name string) error {
+	if k.noEvents.Load() {
+		return nil
+	}
+	evs, err := k.cs.CoreV1().Events(k.cfg.Namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.kind=Job,involvedObject.name=" + name + ",reason=FailedCreate",
+	})
+	if err != nil {
+		if apierrors.IsForbidden(err) {
+			k.noEvents.Store(true) // not allowed: don't ask again
+		}
+		return nil
+	}
+	for _, e := range evs.Items {
+		if e.Reason == "FailedCreate" && e.InvolvedObject.Name == name {
+			return fmt.Errorf("review pod cannot be created: %s", e.Message)
 		}
 	}
 	return nil

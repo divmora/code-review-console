@@ -227,24 +227,58 @@ func checkConfig(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	exec, err := newExecutor(cfg)
+	// With a database, check what reviews will run: the executor settings,
+	// model profiles and license saved in the admin panel. The database is
+	// only read (no migrations, nothing written).
+	var st store.Store
+	if cfg.Database.URL != "" {
+		pg, err := store.Connect(ctx, cfg.Database.URL)
+		if err != nil {
+			fmt.Printf("note: %v\n      checking the config file alone: settings saved in the admin panel are not included\n", err)
+		} else {
+			defer pg.Close()
+			st = readOnlyStore{pg}
+		}
+	}
+	lic := loadLicense(ctx, cfg, st, slog.New(slog.DiscardHandler))
+	run, source, err := checkExecutorConfig(ctx, cfg, st)
 	if err != nil {
 		return err
 	}
-	if err := requireExecutor(cfg, loadLicense(ctx, cfg, nil, slog.New(slog.DiscardHandler))); err != nil {
+	exec, err := newExecutor(run)
+	if err != nil {
+		return err
+	}
+	if err := requireExecutor(cfg, lic); err != nil {
 		fmt.Printf("note: %v\n      (the console still starts; reviews wait until the license is added in the admin panel)\n", err)
 	}
 	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled, cfg.Repos.Allowlist, cfg.Database.URL != "")
+	if source != "" {
+		fmt.Printf("executor settings: %s\n", source)
+	}
 	if len(hosts.FromConfig(cfg)) > 0 {
 		fmt.Println("note: github:, gitlab: and bitbucket: in the config file are deprecated: manage hosts in the admin panel.\n      With database.url and " + secrets.EnvKey + " set, they are copied into the database on the next start.")
 	}
-	if len(cfg.Models) == 0 && cfg.Model == "" {
-		fmt.Println("models: none in the config file; manage them in the admin UI (skipping the CLI check)")
+	ms := models.New(cfg, st)
+	profiles, defModel, fallback, err := ms.Effective(ctx)
+	if err != nil {
+		fmt.Printf("note: model profiles in the database: %v (using the config file's)\n", err)
+		profiles, defModel, fallback = cfg.Models, cfg.Model, cfg.Fallback
+	}
+	if len(profiles) == 0 && defModel == "" {
+		fmt.Println("models: none yet; add one under Models in the admin panel (skipping the CLI check)")
 		return nil
 	}
-	yml, env, err := server.EngineConfig(cfg)
+	yml, env, err := server.EngineConfigWith(cfg, profiles, defModel, fallback)
 	if err != nil {
 		return err
+	}
+	if keys, err := ms.KeyEnvs(ctx); err == nil {
+		for k, v := range keys { // keys of profiles managed in the admin panel
+			if _, taken := env[k]; !taken {
+				env[k] = v
+			}
+		}
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -281,6 +315,37 @@ func checkConfig(ctx context.Context, args []string) error {
 		fmt.Println("verify model:", rep.Verify)
 	}
 	return nil
+}
+
+// checkExecutorConfig returns the config with the executor settings saved
+// in the admin panel applied, and a line saying where they come from.
+func checkExecutorConfig(ctx context.Context, cfg *config.Config, st store.Store) (*config.Config, string, error) {
+	es := execsettings.New(cfg.Executor, st)
+	if !es.Editable() {
+		return cfg, "", nil
+	}
+	saved, found, err := es.Get(ctx)
+	if err != nil {
+		fmt.Printf("note: executor settings in the database: %v (using the config file's)\n", err)
+		return cfg, "config file", nil
+	}
+	if !found {
+		return cfg, "config file (not saved in the admin panel yet; copied there on the next start)", nil
+	}
+	c := *cfg
+	c.Executor = execsettings.Apply(cfg.Executor, saved)
+	return &c, "admin panel (version " + saved.Version + ")", nil
+}
+
+// readOnlyStore lets check-config read the database without writing to it
+// (loadLicense would otherwise copy license.file into it).
+type readOnlyStore struct{ store.Store }
+
+var errReadOnly = errors.New("check-config does not write to the database")
+
+func (readOnlyStore) PutSetting(context.Context, string, any, string) error { return errReadOnly }
+func (readOnlyStore) PutSettingAudited(context.Context, string, any, any, string) error {
+	return errReadOnly
 }
 
 // loadLicense reads the license key: $CODEREVIEW_CONSOLE_LICENSE (an
