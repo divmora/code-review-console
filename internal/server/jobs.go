@@ -179,38 +179,10 @@ func buildEngineConfig(cfg *config.Config, models map[string]config.ModelProfile
 	return ec, env
 }
 
-// effectiveModels merges model profiles from the config file with those
-// managed in the admin UI (UI wins), plus the default and fallback models.
+// effectiveModels returns the model profiles, default and fallbacks
+// (see models.Service.Effective).
 func (s *Server) effectiveModels(ctx context.Context) (map[string]config.ModelProfile, string, []string, error) {
-	models := map[string]config.ModelProfile{}
-	for k, v := range s.cfg.Models {
-		models[k] = v
-	}
-	def, fb := s.cfg.Model, s.cfg.Fallback
-	if s.store != nil {
-		profiles, err := s.store.ListModelProfiles(ctx)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("load model profiles: %w", err)
-		}
-		for _, p := range profiles {
-			models[p.Name] = p.Config
-		}
-		var ms modelSettings
-		if found, err := s.store.GetSetting(ctx, settingModels, &ms); err != nil {
-			return nil, "", nil, err
-		} else if found && ms.Default != "" {
-			def, fb = ms.Default, ms.Fallback
-		}
-	}
-	return models, def, fb, nil
-}
-
-const settingModels = "models"
-
-// modelSettings is the UI-managed default and fallback model.
-type modelSettings struct {
-	Default  string   `json:"default"`
-	Fallback []string `json:"fallback"`
+	return s.models.Effective(ctx)
 }
 
 type reviewOpts struct {
@@ -231,6 +203,17 @@ func (s *Server) newTask(ctx context.Context, tgt target, ref vcs.Ref, kind stri
 	}
 	for k, v := range keyEnv {
 		secrets[k] = v
+	}
+	// Keys of profiles managed in the admin panel: the executor passes
+	// only the config file's api_key_env names through on its own.
+	extra, err := s.models.KeyEnvs(ctx)
+	if err != nil {
+		return executor.Task{}, err
+	}
+	for k, v := range extra {
+		if _, taken := secrets[k]; !taken {
+			secrets[k] = v
+		}
 	}
 	t := executor.Task{
 		ID:         fmt.Sprintf("%s-%d-%d", strings.ReplaceAll(ref.Repo, "/", "-"), ref.Number, time.Now().UnixNano()),

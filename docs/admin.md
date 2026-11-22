@@ -63,6 +63,7 @@ When you run several instances behind a load balancer, also set `admin.cookie_se
 1. Open `https://<base_url>/admin` and sign in. Until reviews can run, the console opens **Setup**: a checklist (license, code host, webhook, a verified delivery, model, an enabled repository, the first review) that is checked against what is configured right now, says what to do next, and shows why a step isn't done (for example the reason the last delivery was rejected).
 2. Repositories show up (disabled) when they send their first webhook, or click **Add repository**.
 3. Toggle **Enabled** to start reviewing. **Settings** sets the review profile, comment limit, minimum severity, model profile, auto review, drafts and extra instructions. These override the repository's `.codereview.yaml`.
-4. **Audit log** lists sign-ins, denied sign-ins and every change with before and after values.
+4. **Models** holds the model profiles: provider, model and the name of the console's environment variable that holds the API key. The console never stores keys; it reads the variable and hands the key to each review job, and the page shows whether the variable is set. Choose the **Default model** and the fallbacks tried in order when it fails. Profiles from the config file's `models:` are listed read-only (a console profile of the same name replaces one; **Copy to console** starts from it). A new environment variable needs a console restart before it is seen.
+5. **Audit log** lists sign-ins, denied sign-ins and every change with before and after values.
 
 With `repos.allowlist: true`, webhooks and `@codereview` commands from disabled repositories are ignored. If the database is unreachable, reviews are refused rather than run unchecked.

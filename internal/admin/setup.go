@@ -8,6 +8,7 @@ import (
 
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/store"
 )
 
@@ -141,14 +142,28 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 	}
 
 	// 5. A model.
-	model := setupStep{ID: "model", Title: "Set up a model",
-		Help: "Reviews need at least one model profile: add it under models: in the config file (provider, model and the env var holding the API key), set model: to it, and restart."}
-	profiles, err := a.store.ListModelProfiles(ctx)
+	model := setupStep{ID: "model", Title: "Set up a model", Link: "/models",
+		Help: "Reviews need a model: add a profile (provider, model and the env var of the console that holds its API key) and choose it as the default."}
+	mv, err := a.models().List(ctx)
 	if err != nil {
 		return setupStatus{}, err
 	}
-	if n := len(a.profiles) + len(profiles); n > 0 {
-		model.Done, model.Detail = true, plural(n, "model profile")
+	var def *models.Profile
+	for i, p := range mv.Profiles {
+		if p.Name == mv.Default {
+			def = &mv.Profiles[i]
+		}
+	}
+	switch {
+	case len(mv.Profiles) == 0:
+	case mv.Default == "":
+		model.Detail = plural(len(mv.Profiles), "model profile") + ", no default chosen"
+	case def == nil:
+		model.Done, model.Detail = true, "default "+mv.Default // a provider:model spec from the config file
+	case !def.KeySet:
+		model.Detail = "default " + def.Name + ": " + def.KeyEnv + " is not set in the console's environment, so reviews won't work"
+	default:
+		model.Done, model.Detail = true, "default "+def.Name+" ("+def.Config.Spec()+")"
 	}
 	steps = append(steps, model)
 

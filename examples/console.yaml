@@ -2,8 +2,9 @@
 # ${VAR} is replaced with the environment variable VAR when the file loads.
 
 # ---- Review engine (same keys as the codereview CLI config) ----
-# Model profiles here are defaults; admins can add more and change the
-# default model in the UI. Reference keys by env var name.
+# Model profiles can also be managed in the admin panel (Models), which
+# wins over these for the same name and can take over the default. Never
+# put keys here or in the panel: reference them by env var name.
 model: claude
 fallback: [backup]
 models:

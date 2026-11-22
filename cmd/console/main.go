@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +20,7 @@ import (
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/server"
 	"github.com/divmora/code-review-console/internal/settings"
@@ -171,9 +171,8 @@ func serve(ctx context.Context, args []string) error {
 		if deps.Store == nil {
 			return errors.New("admin.enabled needs database.url")
 		}
-		profiles := cfg.ProfileNames()
-		sort.Strings(profiles)
-		adm, err := admin.New(ctx, cfg.Admin, deps.Store, profiles, logger)
+		deps.Models = models.New(cfg, deps.Store)
+		adm, err := admin.New(ctx, cfg.Admin, deps.Store, logger)
 		if err != nil {
 			return err
 		}
@@ -181,6 +180,7 @@ func serve(ctx context.Context, args []string) error {
 		adm.Lic = lic
 		adm.Hosts = deps.Hosts
 		adm.ExecutorType = cfg.Executor.Type
+		adm.Models = deps.Models
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
 	}

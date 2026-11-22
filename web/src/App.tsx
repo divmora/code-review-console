@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   BookOpen,
+  Bot,
   ChartColumn,
   FolderGit2,
   KeyRound,
@@ -61,6 +62,7 @@ import Webhooks from "./pages/Webhooks";
 import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
 import License from "./pages/License";
+import Models from "./pages/Models";
 import Setup from "./pages/Setup";
 
 // Each section has its own URL under /admin, so a reload lands on it.
@@ -70,6 +72,7 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "reviews", title: "Reviews", icon: ChartColumn, el: <Reviews /> },
   { path: "learnings", title: "Learnings", icon: BookOpen, el: <Learnings />, paid: "learnings" },
   { path: "hosts", title: "Code hosts", icon: Server, el: <Hosts /> },
+  { path: "models", title: "Models", icon: Bot, el: <Models /> },
   { path: "rules", title: "Rules", icon: ListChecks, el: <Rules />, paid: "rules" },
   { path: "webhooks", title: "Webhooks", icon: Webhook, el: <Webhooks /> },
   { path: "settings", title: "Settings", icon: SlidersHorizontal, el: <Settings /> },

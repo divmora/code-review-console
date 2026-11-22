@@ -122,12 +122,16 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
 	mux.HandleFunc("GET /admin/api/setup", a.requireAPI(a.apiSetup))
+	mux.HandleFunc("GET /admin/api/models", a.requireAPI(a.apiListModels))
+	mux.HandleFunc("PUT /admin/api/models/{name}", a.requireAPI(a.apiPutModel))
+	mux.HandleFunc("DELETE /admin/api/models/{name}", a.requireAPI(a.apiDeleteModel))
+	mux.HandleFunc("PUT /admin/api/model-choice", a.requireAPI(a.apiPutModelChoice))
 	mux.HandleFunc("GET /admin/api/license", a.requireAPI(a.apiGetLicense))
 	mux.HandleFunc("PUT /admin/api/license", a.requireAPI(a.apiPutLicense))
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.session(r); !ok {
@@ -156,7 +160,7 @@ func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) 
 		a.logger.Warn("setup status unavailable", "error", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
+		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profileNames(r), "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
 		"setup": setup, "reviews_paused": a.reviewsPaused(),
 	})
 }
@@ -282,9 +286,13 @@ type updateReq struct {
 	Settings config.Overrides `json:"settings"`
 }
 
-func (a *Admin) knownProfiles() map[string]bool {
+func (a *Admin) knownProfiles(ctx context.Context) map[string]bool {
 	profiles := map[string]bool{}
-	for _, p := range a.profiles {
+	names, err := a.models().Names(ctx)
+	if err != nil {
+		a.logger.Warn("model profiles", "error", err)
+	}
+	for _, p := range names {
 		profiles[p] = true
 	}
 	return profiles
@@ -304,7 +312,7 @@ func (a *Admin) apiUpdateRepo(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode must be inherit, enabled or disabled"})
 		return
 	}
-	if err := req.Settings.Validate(a.knownProfiles()); err != nil {
+	if err := req.Settings.Validate(a.knownProfiles(r.Context())); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -376,7 +384,7 @@ func (a *Admin) apiCreateRule(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := req.Settings.Validate(a.knownProfiles()); err != nil {
+	if err := req.Settings.Validate(a.knownProfiles(r.Context())); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -413,7 +421,7 @@ func (a *Admin) apiUpdateRule(w http.ResponseWriter, r *http.Request, s *store.S
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := req.Settings.Validate(a.knownProfiles()); err != nil {
+	if err := req.Settings.Validate(a.knownProfiles(r.Context())); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -505,7 +513,7 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 	if st.DashboardTitle == "" {
 		st.DashboardTitle = "Code review"
 	}
-	if err := st.Validate(a.knownProfiles(), true); err != nil {
+	if err := st.Validate(a.knownProfiles(r.Context()), true); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
