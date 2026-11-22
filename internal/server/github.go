@@ -81,48 +81,71 @@ type ghPayload struct {
 }
 
 func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
+	// Nothing from the body is parsed or recorded before the signature
+	// verifies: rejected deliveries keep transport facts only.
+	hm := hookMetaOf(r.Context())
+	hm.Event, hm.Delivery = truncate(r.Header.Get("X-GitHub-Event"), 100), truncate(r.Header.Get("X-GitHub-Delivery"), 100)
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if sig == "" {
+		hm.Auth, hm.Reason = "failed", "no X-Hub-Signature-256 header (set a secret on the GitHub webhook)"
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.GitHub)
+	if !ok {
+		return
+	}
+	// The hosts the delivery may come from: the webhook URL's, the GitHub
+	// Enterprise server named in X-GitHub-Enterprise-Host, or every
+	// enabled GitHub host (the secret then picks one).
+	cands := []hosts.Host{h}
+	if !viaEndpoint {
+		cands = s.hosts.Enabled(hosts.GitHub)
+		if ghe := strings.ToLower(r.Header.Get("X-GitHub-Enterprise-Host")); ghe != "" {
+			cands = nil
+			if h, ok := s.hosts.Find(hosts.GitHub, ghe); ok {
+				cands = []hosts.Host{h}
+			}
+		}
+	}
+	if len(cands) == 0 {
+		hm.Auth, hm.Reason = "failed", "no GitHub host configured for "+firstNonEmpty(truncate(r.Header.Get("X-GitHub-Enterprise-Host"), 200), "this delivery")
+		http.Error(w, "unknown github host", http.StatusUnauthorized)
+		return
+	}
+	if len(cands) == 1 {
+		hm.Host = cands[0].Host
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBody))
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
-	hm := hookMetaOf(r.Context())
-	hm.Event, hm.Delivery = r.Header.Get("X-GitHub-Event"), r.Header.Get("X-GitHub-Delivery")
-	// The payload names the host (github.com or a GitHub Enterprise
-	// server); it is only trusted once that host's secret verifies it.
-	var p ghPayload
-	_ = json.Unmarshal(body, &p)
-	host := ""
-	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.GitHub)
-	if !ok {
-		return
-	}
-	if viaEndpoint {
-		host = h.Host // the URL names the host
-	} else {
-		if u, err := url.Parse(p.Repository.HTMLURL); err == nil && u.Host != "" {
-			host = strings.ToLower(u.Host)
-		}
-		h, ok = s.hosts.Find(hosts.GitHub, host)
-		if !ok {
-			h, ok = s.hosts.Find(hosts.GitHub, "")
-		}
-	}
-	hm.Host = firstNonEmpty(host, h.Host)
-	if !ok {
-		hm.Auth, hm.Reason = "failed", "no GitHub host configured for "+firstNonEmpty(host, "this delivery")
-		http.Error(w, "unknown github host", http.StatusUnauthorized)
-		return
-	}
 	verified := false
-	for _, secret := range h.WebhookSecrets {
-		verified = verified || verifyGitHub(secret, body, r.Header.Get("X-Hub-Signature-256"))
+	for _, c := range cands {
+		for _, secret := range c.WebhookSecrets {
+			if verifyGitHub(secret, body, sig) {
+				h, verified = c, true
+			}
+		}
+		if verified {
+			break
+		}
 	}
 	if !verified {
-		hm.Auth, hm.Reason = "failed", "X-Hub-Signature-256 does not match the webhook secret of "+h.Host
-		s.logger.Warn("github webhook signature mismatch", "host", h.Host, "delivery", r.Header.Get("X-GitHub-Delivery"))
+		hm.Auth, hm.Reason = "failed", "X-Hub-Signature-256 does not match the webhook secret of "+hostNames(cands)
+		s.logger.Warn("github webhook signature mismatch", "hosts", hostNames(cands), "delivery", hm.Delivery)
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
+	}
+	hm.Host = h.Host
+	var p ghPayload
+	_ = json.Unmarshal(body, &p)
+	// Verified: the payload's repository URL names the web host (it can
+	// differ from the API host, e.g. behind a proxy).
+	host := h.Host
+	if u, err := url.Parse(p.Repository.HTMLURL); err == nil && u.Host != "" {
+		host = strings.ToLower(u.Host)
 	}
 	hm.Auth = "signature"
 	event := r.Header.Get("X-GitHub-Event")
@@ -134,7 +157,6 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad payload", http.StatusBadRequest)
 		return
 	}
-	host = firstNonEmpty(host, h.Host)
 	hm.Host, hm.Project, hm.Action, hm.Sender = host, p.Repository.FullName, p.Action, p.Sender.Login
 	hm.Kind, hm.Number = event, firstNonZero(p.Number, p.PullRequest.Number, p.Issue.Number)
 	s.seen(r.Context(), vcs.GitHub, host, p.Repository.FullName)
