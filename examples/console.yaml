@@ -17,6 +17,10 @@ review:
 # Set it for a GitHub App (its slug), or per host under github:/gitlab:.
 # bot_name: codereview
 
+# ---- Code hosts (deprecated here) ----
+# Hosts are managed in the admin panel (Code hosts). These sections only seed the database on
+# first start and will be removed in a future release. To keep hosts in Git, use
+# `console hosts export` / `console hosts import` (see docs/deploy.md, "Moving code hosts").
 github:
   app_id: 123456
   private_key_file: /secrets/github-app.pem

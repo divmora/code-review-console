@@ -33,6 +33,7 @@ const usage = `console — Divmora Code Review Console
 Usage:
   console serve [--config console.yaml] [--addr :8080]   Run webhooks, queue, executors, API and UI
   console check-config [--config console.yaml]          Validate the config with the CLI the executor runs
+  console hosts export|import ...                       Move code hosts and webhooks as YAML (console hosts help)
   console version
 `
 
@@ -49,6 +50,8 @@ func main() {
 		err = serve(ctx, os.Args[2:])
 	case "check-config":
 		err = checkConfig(ctx, os.Args[2:])
+	case "hosts":
+		err = hostsCmd(ctx, os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version.Version)
 	case "help", "-h", "--help":
@@ -158,6 +161,7 @@ func serve(ctx context.Context, args []string) error {
 		logger.Info(n)
 	}
 	logger.Info("hosts loaded", "count", len(deps.Hosts.All()), "managed_in", deps.Hosts.Mode())
+	warnConfigHosts(cfg, deps.Hosts.Mode(), logger)
 	if cfg.Admin.Enabled {
 		if deps.Store == nil {
 			return errors.New("admin.enabled needs database.url")
@@ -201,6 +205,9 @@ func checkConfig(ctx context.Context, args []string) error {
 		fmt.Printf("note: %v\n      (a key pasted in the admin panel is read from the database when the console starts)\n", err)
 	}
 	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled, cfg.Repos.Allowlist, cfg.Database.URL != "")
+	if len(hosts.FromConfig(cfg)) > 0 {
+		fmt.Println("note: github:, gitlab: and bitbucket: in the config file are deprecated: manage hosts in the admin panel.\n      With database.url and " + secrets.EnvKey + " set, they are copied into the database on the next start.")
+	}
 	if len(cfg.Models) == 0 && cfg.Model == "" {
 		fmt.Println("models: none in the config file; manage them in the admin UI (skipping the CLI check)")
 		return nil

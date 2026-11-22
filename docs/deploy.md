@@ -176,6 +176,40 @@ only needs your own CAs. No extra RBAC is needed: the kubelet mounts the volume,
 
 Point the Deployment's liveness and readiness probes at `GET /healthz` on the server port.
 
+## Moving code hosts
+
+Code hosts and their webhooks are managed in the admin panel. The `github:`, `gitlab:` and
+`bitbucket:` sections of the config file are **deprecated**: they only seed the database on first
+start, and will be removed in a future release. The console logs a warning while they are present.
+
+To keep hosts in Git, move them to another install, or change them when nobody can sign in, use the
+`hosts` commands. They need `database.url` and `CODEREVIEW_CONSOLE_SECRET_KEY`, like `serve`:
+
+```bash
+console hosts export > hosts.yaml                  # secrets left out
+console hosts export --with-secrets -o hosts.yaml  # full copy, clear text: keep it out of Git
+console hosts import --dry-run -f hosts.yaml       # show what would change
+console hosts import -f hosts.yaml
+```
+
+```yaml
+hosts:
+  - platform: gitlab
+    base_url: https://gitlab.example.com
+    name: Our GitLab
+    token: ${GITLAB_TOKEN}            # ${VAR} is read from the environment
+    settings: { bot_name: codereview }
+    webhooks:
+      - id: 0b6c2f9e-5b1d-4c2a-9f0e-1d2c3b4a5f60   # keep the id to keep the URL
+        name: platform group
+        secret: ${GITLAB_HOOK_PLATFORM}
+      - name: web group                # no id or secret: both are generated, the secret printed once
+```
+
+Import creates or updates hosts (matched by platform and URL) and webhooks (matched by id), and
+never deletes. An absent secret keeps the stored value. The whole file is checked before anything is
+written, and unknown fields are rejected. Imports are audited as `cli: hosts import`.
+
 ## Upgrading
 
 1. Read the release notes for a new minimum CLI version.
