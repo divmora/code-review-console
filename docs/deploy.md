@@ -94,7 +94,7 @@ rules:
     verbs: ["create", "get", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "delete"]
+    verbs: ["create", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["list"]
@@ -103,10 +103,18 @@ rules:
     verbs: ["get"]
 ```
 
-Bind it to the console's service account with a RoleBinding. Leave `executor.kubernetes.kubeconfig`
-empty to use the in-cluster config. Set `executor.kubernetes.service_account` only when review jobs
-need a cloud identity (for example IRSA or workload identity for Bedrock). Without it, job pods get
-no service account token.
+Bind it to the console's service account with a RoleBinding. `patch` on secrets lets the console
+make each job's Secret owned by its Job, so Kubernetes deletes the Secret with the Job even if the
+console stops mid-review. Without it the console logs a warning and the Secret, which holds the job's
+tokens and provider keys, can be left behind.
+
+Leave `executor.kubernetes.kubeconfig` empty to use the in-cluster config. Set
+`executor.kubernetes.service_account` only when review jobs need a cloud identity (for example IRSA,
+EKS Pod Identity or GKE Workload Identity for Bedrock or Vertex). These don't need the Kubernetes API
+token, so review pods never get one by default, with or without a service account. Set
+`executor.kubernetes.automount_service_account_token: true` only if your setup really needs the API
+token in review pods. Review pods run untrusted PR content, so keep RBAC bound to that service account
+to a minimum.
 
 Point the Deployment's liveness and readiness probes at `GET /healthz` on the server port.
 

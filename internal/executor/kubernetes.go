@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -124,10 +127,11 @@ func (k *Kubernetes) Run(ctx context.Context, t Task) (*Result, error) {
 		return nil, fmt.Errorf("create job: %w", err)
 	}
 	// Garbage-collect the secret with the job if the console dies mid-run.
-	sec.OwnerReferences = []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: created.Name, UID: created.UID}}
-	if _, err := secrets.Update(ctx, sec, metav1.UpdateOptions{}); err != nil {
-		// Non-fatal: the deferred delete still removes it.
-		_ = err
+	if err := k.ownSecret(ctx, sec.Name, created); err != nil {
+		// Non-fatal: the deferred delete still removes it on the normal path.
+		slog.Warn("kubernetes executor: could not make the job secret owned by its job; "+
+			"it will be left behind if the console stops mid-review (does the Role allow patch on secrets?)",
+			"secret", sec.Name, "namespace", ns, "error", err)
 	}
 
 	succeeded, err := k.wait(ctx, name)
@@ -154,6 +158,19 @@ func (k *Kubernetes) Run(ctx context.Context, t Task) (*Result, error) {
 	return res, nil
 }
 
+// ownSecret adds an ownerReference from the job secret to its Job, so the
+// secret is garbage-collected with the Job. It needs "patch" on secrets.
+func (k *Kubernetes) ownSecret(ctx context.Context, secret string, job *batchv1.Job) error {
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"ownerReferences": []metav1.OwnerReference{{
+		APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID,
+	}}}})
+	if err != nil {
+		return err
+	}
+	_, err = k.cs.CoreV1().Secrets(job.Namespace).Patch(ctx, secret, types.MergePatchType, patch, metav1.PatchOptions{})
+	return err
+}
+
 func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []string, ctx context.Context) *batchv1.Job {
 	backoff := int32(0)
 	ttl := int32(k.cfg.TTL.Seconds())
@@ -167,7 +184,10 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 	}
 	yes, no := true, false
 	uid := int64(10001)
-	automount := k.cfg.ServiceAccount != ""
+	// Review pods run untrusted PR content, so they get no Kubernetes API
+	// token unless explicitly asked for. Cloud identities (IRSA, EKS Pod
+	// Identity, GKE Workload Identity) don't need it.
+	automount := k.cfg.AutomountServiceAccountToken
 	res := corev1.ResourceRequirements{Limits: corev1.ResourceList{}, Requests: corev1.ResourceList{}}
 	if k.cfg.CPU != "" {
 		if q, err := resource.ParseQuantity(k.cfg.CPU); err == nil {

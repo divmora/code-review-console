@@ -295,8 +295,12 @@ type KubeExecutor struct {
 	Image          string `yaml:"image"`
 	Namespace      string `yaml:"namespace"`
 	ServiceAccount string `yaml:"service_account"`
-	CPU            string `yaml:"cpu"`
-	Memory         string `yaml:"memory"`
+	// AutomountServiceAccountToken mounts the service account's Kubernetes
+	// API token into review pods. Default false; cloud identities such as
+	// IRSA, EKS Pod Identity and GKE Workload Identity work without it.
+	AutomountServiceAccountToken bool   `yaml:"automount_service_account_token"`
+	CPU                          string `yaml:"cpu"`
+	Memory                       string `yaml:"memory"`
 	// TTL keeps finished Jobs this long for debugging. Default 10m.
 	TTL time.Duration `yaml:"ttl"`
 	// Kubeconfig path; empty means in-cluster config.
