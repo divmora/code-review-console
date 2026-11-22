@@ -77,6 +77,26 @@ func (k *Kubernetes) With(cfg config.KubeExecutor) (*Kubernetes, error) {
 	return newKubernetes(cfg, k.pass, k.cs, k.poll)
 }
 
+// Storage defaults for review pods (issue #30): enough for a review, small
+// enough that a runaway one can't fill a node's disk.
+const (
+	DefaultEphemeralStorage = "2Gi"
+	DefaultTmpSizeLimit     = "1Gi"
+)
+
+// storageQuantity reads a storage setting: "" is the default, "none" no
+// limit.
+func storageQuantity(v, def string) (resource.Quantity, bool) {
+	switch strings.TrimSpace(v) {
+	case "none":
+		return resource.Quantity{}, false
+	case "":
+		v = def
+	}
+	q, err := resource.ParseQuantity(v)
+	return q, err == nil
+}
+
 // CheckKube checks the pod settings of cfg the way the executor reads them:
 // tolerations and affinity as Kubernetes types (unknown fields rejected),
 // label and annotation keys, label values, the priority class name and
@@ -84,6 +104,20 @@ func (k *Kubernetes) With(cfg config.KubeExecutor) (*Kubernetes, error) {
 func CheckKube(cfg config.KubeExecutor) error {
 	if _, err := newKubernetes(cfg, nil, nil, 0); err != nil {
 		return err
+	}
+	for _, q := range []struct{ name, v string }{{"ephemeral_storage", cfg.EphemeralStorage}, {"tmp_size_limit", cfg.TmpSizeLimit}} {
+		if q.v != "" && q.v != "none" {
+			if _, err := resource.ParseQuantity(q.v); err != nil {
+				return fmt.Errorf("%s %q: want a size such as 1Gi or 500Mi, or none", q.name, q.v)
+			}
+		}
+	}
+	if e, t := cfg.EphemeralStorage, cfg.TmpSizeLimit; e != "none" && t != "none" {
+		eq, _ := storageQuantity(e, DefaultEphemeralStorage)
+		tq, _ := storageQuantity(t, DefaultTmpSizeLimit)
+		if tq.Cmp(eq) > 0 {
+			return fmt.Errorf("tmp_size_limit (%s) can't be more than ephemeral_storage (%s): /tmp counts towards it", tq.String(), eq.String())
+		}
 	}
 	for _, q := range []struct{ name, v string }{{"cpu", cfg.CPU}, {"memory", cfg.Memory}} {
 		if q.v != "" {
@@ -301,6 +335,10 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 	// Identity, GKE Workload Identity) don't need it.
 	automount := k.cfg.AutomountServiceAccountToken
 	res := corev1.ResourceRequirements{Limits: corev1.ResourceList{}, Requests: corev1.ResourceList{}}
+	if q, ok := storageQuantity(k.cfg.EphemeralStorage, DefaultEphemeralStorage); ok {
+		res.Limits[corev1.ResourceEphemeralStorage] = q
+		res.Requests[corev1.ResourceEphemeralStorage] = q
+	}
 	if k.cfg.CPU != "" {
 		if q, err := resource.ParseQuantity(k.cfg.CPU); err == nil {
 			res.Limits[corev1.ResourceCPU] = q
@@ -328,7 +366,11 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 		}
 	}
 	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
-	volumes := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+	tmp := &corev1.EmptyDirVolumeSource{}
+	if q, ok := storageQuantity(k.cfg.TmpSizeLimit, DefaultTmpSizeLimit); ok {
+		tmp.SizeLimit = &q
+	}
+	volumes := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: tmp}}}
 	var env []corev1.EnvVar
 	if b := k.cfg.CABundle; b.Enabled() {
 		items := []corev1.KeyToPath{{Key: b.Key, Path: "ca.crt"}}

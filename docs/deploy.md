@@ -138,7 +138,7 @@ to a minimum.
 ### Settings in the admin panel
 
 With a database, the **Executor** page manages the image version (a tag, a digest, or both as
-`0.5.0@sha256:…`; the repository stays in the config file), CPU and memory, and for Kubernetes the job TTL, node selector, tolerations,
+`0.5.0@sha256:…`; the repository stays in the config file), CPU and memory, and for Kubernetes the disk (ephemeral storage, 2Gi by default) and /tmp size (1Gi by default), the job TTL, node selector, tolerations,
 affinity, priority class, pod labels and annotations, and the CA bundle below. On the first start
 they are copied from the config file; from then on the panel's values win. The version is picked
 from the release tags found in the image repository (your own registry or mirror works: the console

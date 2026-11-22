@@ -208,3 +208,48 @@ func TestCreateFailedWithoutEventsPermission(t *testing.T) {
 		t.Errorf("a forbidden events list is asked once, then skipped: %d calls", calls)
 	}
 }
+
+// TestJobSpecStorageLimits: review pods get an ephemeral-storage request
+// and limit and a /tmp size limit, by default (issue #30).
+func TestJobSpecStorageLimits(t *testing.T) {
+	spec := func(cfg config.KubeExecutor) corev1.PodSpec {
+		k, err := NewKubernetesWithClient(cfg, nil, fake.NewClientset())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k.jobSpec("crb-x", "ns", map[string]string{}, nil, context.Background()).Spec.Template.Spec
+	}
+	check := func(name string, p corev1.PodSpec, eph, tmp string) {
+		t.Helper()
+		res := p.Containers[0].Resources
+		gotEph, gotTmp := "", ""
+		if q, ok := res.Limits[corev1.ResourceEphemeralStorage]; ok {
+			gotEph = q.String()
+			if r := res.Requests[corev1.ResourceEphemeralStorage]; r.String() != gotEph {
+				t.Errorf("%s: request %s != limit %s", name, r.String(), gotEph)
+			}
+		}
+		if sl := p.Volumes[0].EmptyDir.SizeLimit; sl != nil {
+			gotTmp = sl.String()
+		}
+		if gotEph != eph || gotTmp != tmp {
+			t.Errorf("%s: ephemeral-storage %q, /tmp %q; want %q, %q", name, gotEph, gotTmp, eph, tmp)
+		}
+	}
+	check("defaults", spec(config.KubeExecutor{}), "2Gi", "1Gi")
+	check("custom", spec(config.KubeExecutor{EphemeralStorage: "4Gi", TmpSizeLimit: "3Gi"}), "4Gi", "3Gi")
+	check("none", spec(config.KubeExecutor{EphemeralStorage: "none", TmpSizeLimit: "none"}), "", "")
+
+	for name, c := range map[string]config.KubeExecutor{
+		"bad size":         {EphemeralStorage: "lots"},
+		"tmp over storage": {EphemeralStorage: "1Gi", TmpSizeLimit: "2Gi"},
+		"tmp over default": {TmpSizeLimit: "5Gi"},
+	} {
+		if err := CheckKube(c); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+	if err := CheckKube(config.KubeExecutor{EphemeralStorage: "none", TmpSizeLimit: "5Gi"}); err != nil {
+		t.Errorf("no storage limit allows any /tmp size: %v", err)
+	}
+}

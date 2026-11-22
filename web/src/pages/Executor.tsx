@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
 type Settings = {
-  type?: string; version: string; cpu: string; memory: string; ttl?: string;
+  type?: string; version: string; cpu: string; memory: string; ttl?: string; ephemeral_storage?: string; tmp_size_limit?: string;
   node_selector?: Record<string, string>; tolerations?: Record<string, unknown>[]; affinity?: Record<string, unknown>;
   priority_class_name?: string; pod_labels?: Record<string, string>; pod_annotations?: Record<string, string>;
   ca_bundle: { config_map?: string; secret?: string; key?: string };
@@ -52,7 +52,7 @@ const fixedLabels: Record<string, string> = {
 const names: Record<string, string> = { local: "Local", docker: "Docker", kubernetes: "Kubernetes" };
 
 type Form = {
-  version: string; cpu: string; memory: string; ttl: string; priority: string;
+  version: string; cpu: string; memory: string; ttl: string; priority: string; storage: string; tmp: string;
   nodeSelector: string; labels: string; annotations: string; tolerations: string; affinity: string;
   caKind: "" | "config_map" | "secret"; caName: string; caKey: string;
 };
@@ -61,6 +61,7 @@ function toForm(s: Settings): Form {
   const ca = s.ca_bundle ?? {};
   return {
     version: s.version ?? "", cpu: s.cpu ?? "", memory: s.memory ?? "", ttl: s.ttl ?? "", priority: s.priority_class_name ?? "",
+    storage: s.ephemeral_storage ?? "", tmp: s.tmp_size_limit ?? "",
     nodeSelector: toLines(s.node_selector), labels: toLines(s.pod_labels), annotations: toLines(s.pod_annotations),
     tolerations: toJSON(s.tolerations), affinity: toJSON(s.affinity),
     caKind: ca.config_map ? "config_map" : ca.secret ? "secret" : "", caName: ca.config_map || ca.secret || "", caKey: ca.key ?? "",
@@ -70,6 +71,7 @@ function toForm(s: Settings): Form {
 function toSettings(f: Form): Settings {
   return {
     version: f.version.trim(), cpu: f.cpu.trim(), memory: f.memory.trim(), ttl: f.ttl.trim(), priority_class_name: f.priority.trim(),
+    ephemeral_storage: f.storage.trim(), tmp_size_limit: f.tmp.trim(),
     node_selector: fromLines("Node selector", f.nodeSelector), pod_labels: fromLines("Pod labels", f.labels), pod_annotations: fromLines("Pod annotations", f.annotations),
     tolerations: fromJSON("Tolerations", f.tolerations, true) as Settings["tolerations"],
     affinity: fromJSON("Affinity", f.affinity, false) as Settings["affinity"],
@@ -221,6 +223,16 @@ export default function Executor() {
               <Field label="Memory" hint={<Sub>{kube ? "Request and limit, e.g. 1Gi." : "docker --memory, e.g. 2g."} Empty = no limit.</Sub>}>
                 <Input value={f.memory} onChange={set("memory")} placeholder={kube ? "1Gi" : "2g"} />
               </Field>
+              {kube && (
+                <Field label="Disk (ephemeral storage)" hint={<Sub>Request and limit for the pod's local disk, /tmp included. Empty = 2Gi; none = no limit.</Sub>}>
+                  <Input value={f.storage} onChange={set("storage")} placeholder="2Gi" />
+                </Field>
+              )}
+              {kube && (
+                <Field label="/tmp size" hint={<Sub>A review writing more is evicted instead of filling the node's disk. Empty = 1Gi; none = no limit.</Sub>}>
+                  <Input value={f.tmp} onChange={set("tmp")} placeholder="1Gi" />
+                </Field>
+              )}
               {kube && (
                 <Field label="Keep finished jobs for" hint={<Sub>For debugging with kubectl, e.g. 10m or 1h.</Sub>}>
                   <Input value={f.ttl} onChange={set("ttl")} placeholder="10m" />

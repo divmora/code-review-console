@@ -41,10 +41,13 @@ type Settings struct {
 	Type string `json:"type"`
 	// Version is the image tag (0.5.0), digest (sha256:...) or both
 	// (0.5.0@sha256:...).
-	Version           string            `json:"version"`
-	CPU               string            `json:"cpu"`
-	Memory            string            `json:"memory"`
-	TTL               string            `json:"ttl,omitempty"`
+	Version string `json:"version"`
+	CPU     string `json:"cpu"`
+	Memory  string `json:"memory"`
+	TTL     string `json:"ttl,omitempty"`
+	// EphemeralStorage and TmpSizeLimit: "" = default, "none" = no limit.
+	EphemeralStorage  string            `json:"ephemeral_storage,omitempty"`
+	TmpSizeLimit      string            `json:"tmp_size_limit,omitempty"`
 	NodeSelector      map[string]string `json:"node_selector,omitempty"`
 	Tolerations       []map[string]any  `json:"tolerations,omitempty"`
 	Affinity          map[string]any    `json:"affinity,omitempty"`
@@ -105,7 +108,7 @@ func FromConfig(e config.Executor) Settings {
 		return Settings{Type: e.Type, Version: v, CPU: e.Docker.CPUs, Memory: e.Docker.Memory}
 	case "kubernetes":
 		k := e.Kubernetes
-		s := Settings{Type: e.Type, Version: v, CPU: k.CPU, Memory: k.Memory, NodeSelector: k.NodeSelector, Tolerations: k.Tolerations,
+		s := Settings{Type: e.Type, Version: v, CPU: k.CPU, Memory: k.Memory, EphemeralStorage: k.EphemeralStorage, TmpSizeLimit: k.TmpSizeLimit, NodeSelector: k.NodeSelector, Tolerations: k.Tolerations,
 			Affinity: k.Affinity, PriorityClassName: k.PriorityClassName, PodLabels: k.PodLabels, PodAnnotations: k.PodAnnotations,
 			CABundle: CABundle{ConfigMap: k.CABundle.ConfigMap, Secret: k.CABundle.Secret, Key: k.CABundle.Key}}
 		if k.TTL > 0 {
@@ -126,6 +129,7 @@ func Apply(e config.Executor, s Settings) config.Executor {
 		k := &e.Kubernetes
 		repo, _ := SplitImage(k.Image)
 		k.Image, k.CPU, k.Memory = joinImage(repo, s.Version), s.CPU, s.Memory
+		k.EphemeralStorage, k.TmpSizeLimit = s.EphemeralStorage, s.TmpSizeLimit
 		if d, err := time.ParseDuration(s.TTL); err == nil && d > 0 {
 			k.TTL = d
 		}
@@ -248,6 +252,7 @@ func (s *Service) Put(ctx context.Context, st Settings, actor string) error {
 func clean(st Settings) Settings {
 	st.Version, st.CPU, st.Memory, st.TTL = strings.TrimSpace(st.Version), strings.TrimSpace(st.CPU), strings.TrimSpace(st.Memory), strings.TrimSpace(st.TTL)
 	st.PriorityClassName = strings.TrimSpace(st.PriorityClassName)
+	st.EphemeralStorage, st.TmpSizeLimit = strings.TrimSpace(st.EphemeralStorage), strings.TrimSpace(st.TmpSizeLimit)
 	st.CABundle = CABundle{ConfigMap: strings.TrimSpace(st.CABundle.ConfigMap), Secret: strings.TrimSpace(st.CABundle.Secret), Key: strings.TrimSpace(st.CABundle.Key)}
 	if len(st.NodeSelector) == 0 {
 		st.NodeSelector = nil
@@ -293,7 +298,7 @@ func (s *Service) Seed(ctx context.Context) (seeded bool, differs []string, err 
 		}
 	}
 	a, b := fields(file), fields(stored)
-	for _, k := range []string{"version", "cpu", "memory", "ttl", "node_selector", "tolerations", "affinity", "priority_class_name", "pod_labels", "pod_annotations", "ca_bundle"} {
+	for _, k := range []string{"version", "cpu", "memory", "ttl", "ephemeral_storage", "tmp_size_limit", "node_selector", "tolerations", "affinity", "priority_class_name", "pod_labels", "pod_annotations", "ca_bundle"} {
 		if _, set := a[k]; set && !reflect.DeepEqual(a[k], b[k]) {
 			differs = append(differs, k)
 		}

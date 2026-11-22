@@ -82,6 +82,8 @@ executor:
     automount_service_account_token: false  # true only if review pods need the Kubernetes API token
     cpu: "1"
     memory: 1Gi
+    ephemeral_storage: 2Gi             # local disk request and limit ("none" = no limit)
+    tmp_size_limit: 1Gi                # /tmp emptyDir size ("none" = no limit)
     ttl: 10m                           # keep finished Jobs for debugging
     # kubeconfig: /path/to/kubeconfig  # empty = in-cluster
     # Where review pods run (see docs/deploy.md). tolerations and affinity use Kubernetes field names.
