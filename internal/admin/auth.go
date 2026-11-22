@@ -61,6 +61,8 @@ type Admin struct {
 	Models *models.Service
 	// Executor holds the executor settings; nil hides them.
 	Executor *execsettings.Service
+	// Tags lists image versions for the Executor page (built on first use).
+	Tags *execsettings.Tags
 	// Lic is the installed license (nil = the free core). License keys
 	// pasted in the panel are stored under licenseKey.
 	Lic *license.Manager

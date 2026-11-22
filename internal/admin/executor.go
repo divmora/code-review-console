@@ -25,6 +25,11 @@ type executorView struct {
 	Fixed         map[string]string     `json:"fixed"`
 	MinCLIVersion string                `json:"min_cli_version"`
 	Licensed      bool                  `json:"licensed"`
+	// Tags are the versions found in the image repository, newest first;
+	// TagsError says why they couldn't be listed (the page then falls back
+	// to typing the version).
+	Tags      []string `json:"tags"`
+	TagsError string   `json:"tags_error,omitempty"`
 }
 
 func (a *Admin) executorView(r *http.Request) (executorView, error) {
@@ -59,6 +64,19 @@ func (a *Admin) executorView(r *http.Request) (executorView, error) {
 		v.Fixed["service_account"] = firstNonEmpty(k.ServiceAccount, "default")
 		v.Fixed["automount_service_account_token"] = map[bool]string{true: "yes", false: "no"}[k.AutomountServiceAccountToken]
 		v.Fixed["cluster"] = map[bool]string{true: "kubeconfig file", false: "in-cluster"}[k.Kubeconfig != ""]
+	}
+	if v.Editable && v.ImageRepo != "" {
+		if a.Tags == nil {
+			a.Tags = execsettings.NewTags()
+		}
+		tags, err := a.Tags.List(r.Context(), v.ImageRepo)
+		v.Tags = tags
+		if err != nil {
+			v.TagsError = err.Error()
+		}
+	}
+	if v.Tags == nil {
+		v.Tags = []string{}
 	}
 	if len(a.Executor.Config().Env) > 0 {
 		v.Fixed["env"] = strings.Join(a.Executor.Config().Env, ", ")

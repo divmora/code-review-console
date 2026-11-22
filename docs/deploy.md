@@ -69,6 +69,7 @@ license is renewed.
 | `CODEREVIEW_CONSOLE_SECRET_KEY` | Managing code hosts in the admin panel. 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. Without it, hosts come from the config file and are read-only. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Admin sign-in ([admin.md](admin.md)) |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, ... and webhook secrets | Code hosts from the config file (seeded into the database on first start when the secret key is set) |
+| `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
 | Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names with `executor.env` |
 
 `GET /healthz` returns `{"status":"ok","version":...,"pending":N,"running":N}` for probes.
@@ -131,8 +132,10 @@ to a minimum.
 With a database, the **Executor** page manages the image version (a tag, a digest, or both as
 `0.5.0@sha256:…`; the repository stays in the config file), CPU and memory, and for Kubernetes the job TTL, node selector, tolerations,
 affinity, priority class, pod labels and annotations, and the CA bundle below. On the first start
-they are copied from the config file; from then on the panel's values win, the log names any config
-file value that is ignored, and a change applies to the next review without a restart.
+they are copied from the config file; from then on the panel's values win. The version is picked
+from the release tags found in the image repository (your own registry or mirror works: the console
+lists its tags with the registry API), or typed. The log names any config file value that is
+ignored, and a change applies to the next review without a restart.
 
 The executor type, binaries, the Docker network, `kubeconfig`, `namespace`, `service_account`,
 `automount_service_account_token` and `env` stay in the config file only: they decide what review
