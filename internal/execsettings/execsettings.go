@@ -39,7 +39,8 @@ type Settings struct {
 	// Type is the executor the settings are for. When the config file
 	// switches executors, settings saved for the old one are not used.
 	Type string `json:"type"`
-	// Version is the image tag (0.5.0) or digest (sha256:...).
+	// Version is the image tag (0.5.0), digest (sha256:...) or both
+	// (0.5.0@sha256:...).
 	Version           string            `json:"version"`
 	CPU               string            `json:"cpu"`
 	Memory            string            `json:"memory"`
@@ -60,16 +61,22 @@ type CABundle struct {
 	Key       string `json:"key,omitempty"`
 }
 
-// SplitImage splits an image into its repository and version (a tag, a
-// "sha256:..." digest, or "" when it has neither).
+// SplitImage splits an image into its repository and version: the tag
+// (0.5.0), the digest (sha256:...), both (0.5.0@sha256:...), or "".
+// A registry port (host:5000/repo) is part of the repository.
 func SplitImage(image string) (repo, version string) {
-	if r, d, ok := strings.Cut(image, "@"); ok {
-		return r, d
+	ref, digest, _ := strings.Cut(image, "@")
+	repo, tag := ref, ""
+	if i := strings.LastIndex(ref, ":"); i >= 0 && !strings.Contains(ref[i:], "/") {
+		repo, tag = ref[:i], ref[i+1:]
 	}
-	if i := strings.LastIndex(image, ":"); i >= 0 && !strings.Contains(image[i:], "/") {
-		return image[:i], image[i+1:]
+	switch {
+	case tag != "" && digest != "":
+		return repo, tag + "@" + digest
+	case digest != "":
+		return repo, digest
 	}
-	return image, ""
+	return repo, tag
 }
 
 func joinImage(repo, version string) string {
@@ -79,7 +86,7 @@ func joinImage(repo, version string) string {
 	case strings.HasPrefix(version, "sha256:"):
 		return repo + "@" + version
 	}
-	return repo + ":" + version
+	return repo + ":" + version // a tag, or tag@digest
 }
 
 // image returns the configured image of the active executor.
@@ -135,6 +142,7 @@ func Apply(e config.Executor, s Settings) config.Executor {
 var (
 	tagRe        = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 	digestRe     = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	tagDigestRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[a-f0-9]{64}$`)
 	dockerMemRe  = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?[bkmgBKMG]?$`)
 	maxTTL       = 7 * 24 * time.Hour
 	errNoChanges = errors.New("the local executor has no settings in the admin panel; it runs the codereview binary on the console host")
@@ -146,10 +154,10 @@ func Validate(e config.Executor, s Settings) error {
 		return errNoChanges
 	}
 	if s.Version == "" {
-		return errors.New("version is required (an image tag such as 0.5.0, or a sha256: digest)")
+		return errors.New("version is required (an image tag such as 0.5.0, a sha256: digest, or both: 0.5.0@sha256:...)")
 	}
-	if !tagRe.MatchString(s.Version) && !digestRe.MatchString(s.Version) {
-		return fmt.Errorf("version %q: want an image tag such as 0.5.0, or sha256:<64 hex digits>", s.Version)
+	if !tagRe.MatchString(s.Version) && !digestRe.MatchString(s.Version) && !tagDigestRe.MatchString(s.Version) {
+		return fmt.Errorf("version %q: want an image tag such as 0.5.0, sha256:<64 hex digits>, or both (0.5.0@sha256:...)", s.Version)
 	}
 	ex := Apply(e, s)
 	if err := config.CheckImageTag("version", image(ex)); err != nil {
@@ -276,6 +284,14 @@ func (s *Service) Seed(ctx context.Context) (seeded bool, differs []string, err 
 		return true, nil, s.st.PutSetting(ctx, Key, file, SeedActor)
 	}
 	stored = clean(stored)
+	// 0.6.0 split repo:tag@digest at "@" only, so it stored the bare digest
+	// as the version (issue #41). Keep the readable tag with it.
+	if _, d, ok := strings.Cut(file.Version, "@"); ok && stored.Version == d {
+		stored.Version = file.Version
+		if err := s.st.PutSetting(ctx, Key, stored, SeedActor); err != nil {
+			return false, nil, err
+		}
+	}
 	a, b := fields(file), fields(stored)
 	for _, k := range []string{"version", "cpu", "memory", "ttl", "node_selector", "tolerations", "affinity", "priority_class_name", "pod_labels", "pod_annotations", "ca_bundle"} {
 		if _, set := a[k]; set && !reflect.DeepEqual(a[k], b[k]) {

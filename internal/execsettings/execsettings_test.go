@@ -21,18 +21,78 @@ func kube() config.Executor {
 }
 
 func TestSplitImage(t *testing.T) {
+	d := "sha256:" + strings.Repeat("a", 64)
 	for img, want := range map[string][2]string{
-		"ghcr.io/divmora/code-review-bot:0.5.0": {"ghcr.io/divmora/code-review-bot", "0.5.0"},
-		"registry.example.com:5000/crb":         {"registry.example.com:5000/crb", ""},
-		"registry.example.com:5000/crb:1.0":     {"registry.example.com:5000/crb", "1.0"},
-		"crb@sha256:" + strings.Repeat("a", 64): {"crb", "sha256:" + strings.Repeat("a", 64)},
+		"ghcr.io/divmora/code-review-bot:0.5.0":      {"ghcr.io/divmora/code-review-bot", "0.5.0"},
+		"ghcr.io/divmora/code-review-bot:0.4.0@" + d: {"ghcr.io/divmora/code-review-bot", "0.4.0@" + d},
+		"ghcr.io/divmora/code-review-bot@" + d:       {"ghcr.io/divmora/code-review-bot", d},
+		"registry.example.com:5000/crb":              {"registry.example.com:5000/crb", ""},
+		"registry.example.com:5000/crb:1.0":          {"registry.example.com:5000/crb", "1.0"},
+		"registry.example.com:5000/crb:1.0@" + d:     {"registry.example.com:5000/crb", "1.0@" + d},
 	} {
-		if r, v := SplitImage(img); r != want[0] || v != want[1] {
+		r, v := SplitImage(img)
+		if r != want[0] || v != want[1] {
 			t.Errorf("%s: %s %s", img, r, v)
+			continue
+		}
+		if back := joinImage(r, v); back != img {
+			t.Errorf("%s: joins back as %s", img, back)
 		}
 	}
-	if got := joinImage("crb", "sha256:"+strings.Repeat("a", 64)); got != "crb@sha256:"+strings.Repeat("a", 64) {
-		t.Errorf("digest join: %s", got)
+}
+
+// TestPanelVersionOnPinnedImages changes the version from the panel for
+// each way an image can be pinned in the config file (issue #41).
+func TestPanelVersionOnPinnedImages(t *testing.T) {
+	ctx := context.Background()
+	d := "sha256:" + strings.Repeat("a", 64)
+	d2 := "sha256:" + strings.Repeat("b", 64)
+	for _, img := range []string{
+		"ghcr.io/divmora/code-review-bot:0.4.0@" + d,
+		"ghcr.io/divmora/code-review-bot@" + d,
+		"registry.example.com:5000/crb:0.4.0",
+		"registry.example.com:5000/crb:0.4.0@" + d,
+	} {
+		e := config.Executor{Type: "kubernetes", Kubernetes: config.KubeExecutor{Image: img, Namespace: "ns", TTL: time.Minute}}
+		repo, _ := SplitImage(img)
+		for version, want := range map[string]string{
+			"0.5.0":       repo + ":0.5.0",
+			d2:            repo + "@" + d2,
+			"0.5.0@" + d2: repo + ":0.5.0@" + d2,
+		} {
+			s := New(e, storetest.New())
+			_, _, _ = s.Seed(ctx)
+			cur, _, _ := s.Get(ctx)
+			cur.Version = version
+			if err := s.Put(ctx, cur, "a@x"); err != nil {
+				t.Errorf("%s -> %s: %v", img, version, err)
+				continue
+			}
+			if eff, _ := s.Effective(ctx); eff.Kubernetes.Image != want {
+				t.Errorf("%s -> %s: image %s, want %s", img, version, eff.Kubernetes.Image, want)
+			}
+		}
+	}
+}
+
+// TestSeedFixesDigestOnlyVersion: 0.6.0 stored only the digest of a
+// repo:tag@digest image; the next start keeps the tag with it.
+func TestSeedFixesDigestOnlyVersion(t *testing.T) {
+	ctx := context.Background()
+	d := "sha256:" + strings.Repeat("a", 64)
+	st := storetest.New()
+	e := config.Executor{Type: "docker", Docker: config.DockerExecutor{Image: "ghcr.io/divmora/code-review-bot:0.4.0@" + d}}
+	_ = st.PutSetting(ctx, Key, Settings{Type: "docker", Version: d}, SeedActor)
+	s := New(e, st)
+	seeded, differs, err := s.Seed(ctx)
+	if err != nil || seeded || len(differs) != 0 {
+		t.Fatalf("%v %v %v", seeded, differs, err)
+	}
+	if got, _, _ := s.Get(ctx); got.Version != "0.4.0@"+d {
+		t.Errorf("version: %s", got.Version)
+	}
+	if eff, _ := s.Effective(ctx); eff.Docker.Image != e.Docker.Image {
+		t.Errorf("image: %s", eff.Docker.Image)
 	}
 }
 
