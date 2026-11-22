@@ -117,6 +117,15 @@ func (s *Server) endpointHost(w http.ResponseWriter, r *http.Request, platform s
 	return h, true, true
 }
 
+// hostNames lists hosts for a log line or a rejection reason.
+func hostNames(hs []hosts.Host) string {
+	names := make([]string, 0, len(hs))
+	for _, h := range hs {
+		names = append(names, h.Host)
+	}
+	return strings.Join(names, ", ")
+}
+
 func hostOf(r *hosts.Registry, id int64) string {
 	if h, ok := r.Get(id); ok {
 		return h.Host
@@ -140,6 +149,9 @@ func (s *Server) recordHooks(platform string, h http.HandlerFunc) http.HandlerFu
 		if m.Reason != "" {
 			reason = m.Reason
 		}
+		if m.Auth == "failed" && !s.hooks.rejected.allow(time.Now(), s.logger) {
+			return // a flood of rejected deliveries must not push real ones out
+		}
 		s.hooks.add(store.WebhookEvent{
 			ReceivedAt: start, Platform: m.Platform, Host: m.Host, Project: m.Project, Number: m.Number,
 			Event: m.Event, Kind: m.Kind, Action: m.Action, Sender: m.Sender, Delivery: m.Delivery, Endpoint: m.Endpoint, Auth: m.Auth,
@@ -160,6 +172,38 @@ type hookWriter struct {
 	stopOnce  sync.Once
 	mu        sync.Mutex
 	dropped   int
+	// rejected limits how many failed-authentication deliveries are saved.
+	rejected rejectLimiter
+}
+
+// maxRejectedPerMinute caps saved deliveries that failed authentication.
+// Real code hosts rarely fail; a burst beyond this is noise or an attack,
+// and is counted in the log instead.
+const maxRejectedPerMinute = 60
+
+type rejectLimiter struct {
+	mu         sync.Mutex
+	window     time.Time
+	n, skipped int
+}
+
+// allow reports whether a rejected delivery may be saved now. When a new
+// minute starts, the number skipped in the last one is logged.
+func (l *rejectLimiter) allow(now time.Time, logger *slog.Logger) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if w := now.Truncate(time.Minute); !w.Equal(l.window) {
+		if l.skipped > 0 && logger != nil {
+			logger.Warn("rejected webhook deliveries not saved in the history (over the limit)", "skipped", l.skipped, "limit_per_minute", maxRejectedPerMinute)
+		}
+		l.window, l.n, l.skipped = w, 0, 0
+	}
+	if l.n >= maxRejectedPerMinute {
+		l.skipped++
+		return false
+	}
+	l.n++
+	return true
 }
 
 func newHookWriter(st store.Store, retention func() time.Duration, logger *slog.Logger) *hookWriter {

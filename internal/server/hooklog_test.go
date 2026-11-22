@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,8 +85,12 @@ func TestWebhookHistoryAndRepoRecording(t *testing.T) {
 	if ign2.Outcome != store.HookIgnored || ign2.Reason != "repository is not enabled in the admin panel" {
 		t.Errorf("not enabled: %+v", ign2)
 	}
-	if rej.Outcome != store.HookRejected || rej.Auth != "failed" || rej.Reason != "unsigned webhook and no webhook_secret configured" {
+	if rej.Outcome != store.HookRejected || rej.Auth != "failed" || !strings.HasPrefix(rej.Reason, "no X-Gitlab-Token or Webhook-Signature header") {
 		t.Errorf("rejected delivery should keep the exact reason: %+v", rej)
+	}
+	// Nothing from an unverified body is recorded (issue #33).
+	if rej.Project != "" || rej.Number != 0 || rej.Kind != "" || rej.Action != "" || rej.Sender != "" {
+		t.Errorf("rejected delivery must not carry payload fields: %+v", rej)
 	}
 	counts, _ := st.CountWebhookEvents(context.Background(), time.Now().Add(-time.Hour))
 	if counts[store.HookIgnored] != 2 || counts[store.HookRejected] != 1 {

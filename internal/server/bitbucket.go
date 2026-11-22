@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -92,45 +91,54 @@ func verifyBitbucket(secrets []string, body []byte, header string) bool {
 }
 
 func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
+	// Nothing from the body is parsed or recorded before the signature
+	// verifies: rejected deliveries keep transport facts only.
+	event := r.Header.Get("X-Event-Key")
+	hm := hookMetaOf(r.Context())
+	hm.Event, hm.Delivery = truncate(event, 100), truncate(r.Header.Get("X-Request-UUID"), 100)
+	sig := firstNonEmpty(r.Header.Get("X-Hub-Signature"), r.Header.Get("X-Hub-Signature-256"))
+	if sig == "" {
+		hm.Auth, hm.Reason = "failed", "no X-Hub-Signature header (set a secret on the Bitbucket webhook)"
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.Bitbucket)
+	if !ok {
+		return
+	}
+	cands := []hosts.Host{h}
+	if !viaEndpoint {
+		cands = s.hosts.Enabled(hosts.Bitbucket) // the secret picks one
+	}
+	if len(cands) == 0 {
+		hm.Auth, hm.Reason = "failed", "no Bitbucket host configured"
+		http.Error(w, "unknown bitbucket host", http.StatusUnauthorized)
+		return
+	}
+	if len(cands) == 1 {
+		hm.Host = cands[0].Host
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBody))
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
-	event := r.Header.Get("X-Event-Key")
-	hm := hookMetaOf(r.Context())
-	hm.Event, hm.Delivery = event, r.Header.Get("X-Request-UUID")
-	var p bbPayload
-	_ = json.Unmarshal(body, &p)
-	webHost := ""
-	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.Bitbucket)
-	if !ok {
-		return
-	}
-	if viaEndpoint {
-		webHost = h.Host
-	} else {
-		if u, err := url.Parse(p.Repository.Links.HTML.Href); err == nil && u.Host != "" {
-			webHost = strings.ToLower(u.Host)
-		}
-		h, ok = s.hosts.Find(hosts.Bitbucket, webHost)
-		if !ok {
-			h, ok = s.hosts.Find(hosts.Bitbucket, "")
+	verified := false
+	for _, c := range cands {
+		if verifyBitbucket(c.WebhookSecrets, body, sig) {
+			h, verified = c, true
+			break
 		}
 	}
-	hm.Host = firstNonEmpty(webHost, h.Host)
-	if !ok {
-		hm.Auth, hm.Reason = "failed", "no Bitbucket host configured"
-		http.Error(w, "unknown bitbucket host", http.StatusUnauthorized)
-		return
-	}
-	sig := firstNonEmpty(r.Header.Get("X-Hub-Signature"), r.Header.Get("X-Hub-Signature-256"))
-	if !verifyBitbucket(h.WebhookSecrets, body, sig) {
-		hm.Auth, hm.Reason = "failed", "X-Hub-Signature does not match the webhook secret of "+h.Host
-		s.logger.Warn("bitbucket webhook signature mismatch", "host", h.Host)
+	if !verified {
+		hm.Auth, hm.Reason = "failed", "X-Hub-Signature does not match the webhook secret of "+hostNames(cands)
+		s.logger.Warn("bitbucket webhook signature mismatch", "hosts", hostNames(cands))
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
+	hm.Host = h.Host
+	var p bbPayload
+	_ = json.Unmarshal(body, &p)
 	hm.Auth = "signature"
 	if event == "diagnostics:ping" {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pong"})
