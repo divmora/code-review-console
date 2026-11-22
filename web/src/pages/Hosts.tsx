@@ -13,7 +13,7 @@ type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
   secrets: { token: boolean; app_private_key: boolean; api_token: boolean; webhook_secrets: number; signing_tokens: number };
-  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean;
+  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string;
 };
 
 type Hook = {
@@ -148,6 +148,14 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
   );
 }
 
+function CommentWarning({ text }: { text: string }) {
+  return (
+    <div role="status" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm text-warning">
+      {text}
+    </div>
+  );
+}
+
 function HostWebhooks({ host, managed, onChanged }: { host: Host; managed: boolean; onChanged: () => void }) {
   const toast = useToast();
   const [name, setName] = useState("");
@@ -164,6 +172,7 @@ function HostWebhooks({ host, managed, onChanged }: { host: Host; managed: boole
   const shared = host.secrets.webhook_secrets > 0 || host.secrets.signing_tokens > 0;
   return (
     <div className="grid gap-6">
+      {host.comment_warning && <CommentWarning text={host.comment_warning} />}
       {managed && (
         <Section title="Add a webhook">
           <div className="flex flex-wrap gap-2">
@@ -172,7 +181,10 @@ function HostWebhooks({ host, managed, onChanged }: { host: Host; managed: boole
               <Plus /> Add webhook
             </Button>
           </div>
-          <Sub>The console generates a URL and a secret. Set the code host's webhook to them, with these events: {host.events.join(", ")}.</Sub>
+          <Sub>
+            The console generates a URL and a secret. Set the code host's webhook to them, with these events: {host.events.join(", ")}.
+            {host.platform === "gitlab" && " A system hook alone isn't enough: it doesn't send comments, so @bot commands need a group or project webhook with Comments."}
+          </Sub>
         </Section>
       )}
       <Section title={`Webhooks (${host.webhooks.length})`}>
@@ -446,6 +458,11 @@ export default function Hosts() {
                         </div>
                       ) : (
                         <Sub>{h.secrets.webhook_secrets || h.secrets.signing_tokens ? "Shared URL only" : "None yet"}</Sub>
+                      )}
+                      {h.comment_warning && (
+                        <div className="mt-1.5">
+                          <StateBadge kind="warn">No comment events</StateBadge>
+                        </div>
                       )}
                       <Button variant="link" size="sm" className="h-auto px-0" onClick={() => setHooks(h.id)}>
                         <Webhook /> {managed ? "Manage webhooks" : "Show URLs"}

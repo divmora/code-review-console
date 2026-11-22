@@ -86,7 +86,7 @@ export default function Setup() {
                       {isNext && <Badge>next</Badge>}
                       <span className="sr-only">{s.done ? "done" : "not done"}</span>
                     </div>
-                    {s.detail && <div className={cn("text-sm", s.done ? "text-success" : /rejected|failed|expired|not valid/.test(s.detail) ? "text-destructive" : "text-muted-foreground")}>{s.detail}</div>}
+                    {s.detail && <div className={cn("text-sm", s.done ? "text-success" : /rejected|failed|expired|not valid|won't work/.test(s.detail) ? "text-destructive" : "text-muted-foreground")}>{s.detail}</div>}
                     {(!s.done || isNext) && <p className="text-sm leading-relaxed text-muted-foreground">{s.help}</p>}
                     {s.link && !s.done && (
                       <div>

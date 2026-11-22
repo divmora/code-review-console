@@ -491,3 +491,29 @@ func TestWebhookEndpointsStore(t *testing.T) {
 		t.Errorf("a malformed ID is just not found: %v", err)
 	}
 }
+
+func TestHookStats(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	host := fmt.Sprintf("stats-%d.example.com", time.Now().UnixNano())
+	if err := p.InsertWebhookEvents(ctx, []WebhookEvent{
+		{Platform: "gitlab", Host: host, Event: "System Hook", Kind: "merge_request", Auth: "signature"},
+		{Platform: "gitlab", Host: host, Event: "Note Hook", Kind: "note", Auth: "token"},
+		{Platform: "gitlab", Host: host, Event: "Note Hook", Kind: "note", Auth: "failed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := p.HookStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.Host == host {
+			if s.Verified != 2 || s.Comments != 1 || s.SystemHook != 1 {
+				t.Errorf("stats = %+v", s)
+			}
+			return
+		}
+	}
+	t.Errorf("host missing from %+v", list)
+}

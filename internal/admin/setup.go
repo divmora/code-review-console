@@ -117,6 +117,25 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 	}
 	steps = append(steps, delivery)
 
+	// 4b. Comments (optional: reviews work without them, @bot commands and
+	// learnings don't). Shown once deliveries arrive, so it can say why.
+	if delivery.Done {
+		comments := setupStep{ID: "comments", Title: "Receive comments", Optional: true, Link: "/hosts",
+			Help: "@bot commands and learnings from replies need comment events. A GitLab system hook doesn't send them: add a group or project webhook with Comments."}
+		stats := a.hookStats(ctx)
+		total := 0
+		for _, h := range active {
+			total += stats[h.Platform+":"+h.Host].Comments
+			if w := commentWarning(h, stats[h.Platform+":"+h.Host]); w != "" && comments.Detail == "" {
+				comments.Detail = h.Name + ": " + w
+			}
+		}
+		if total > 0 && comments.Detail == "" {
+			comments.Done, comments.Detail = true, plural(total, "comment event")+" received"
+		}
+		steps = append(steps, comments)
+	}
+
 	// 5. A model.
 	model := setupStep{ID: "model", Title: "Set up a model",
 		Help: "Reviews need at least one model profile: add it under models: in the config file (provider, model and the env var holding the API key), set model: to it, and restart."}
