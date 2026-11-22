@@ -274,6 +274,9 @@ func (w *hookWriter) prune() {
 	} else if n > 0 {
 		w.logger.Info("pruned webhook history", "deleted", n)
 	}
+	if _, err := w.st.PruneSeen(ctx, time.Now().Add(-replayTTL)); err != nil {
+		w.logger.Warn("could not prune webhook replay keys", "error", err)
+	}
 }
 
 // close flushes pending events and stops the writer.

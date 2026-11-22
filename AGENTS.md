@@ -70,6 +70,10 @@ Changing this contract means changing the bot's CLI too; keep them in step.
 - Webhooks authenticate before parsing: a delivery without an auth header is rejected before its body
   is read (a GitLab token is checked before reading at all), and a rejected delivery's history record
   holds transport facts only (no project, sender or number). Saved rejections are capped per minute.
+- Webhook replay protection is shared and durable (store.MarkSeen, table webhook_seen): a signed
+  GitLab webhook-id for the signature window, and a hash of every verified body for 7 days (GitHub
+  and Bitbucket signatures have no timestamp and their delivery IDs aren't signed). Never dedupe on
+  an unsigned header alone. Without a database it falls back to memory.
   A generated endpoint secret is returned once (create or regenerate) and never again.
 
 ## Licensing (free core + license keys)

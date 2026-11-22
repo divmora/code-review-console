@@ -364,7 +364,12 @@ func TestAllowlist(t *testing.T) {
 
 	prof := config.Chill
 	_, _ = st.UpdateRepo(context.Background(), repo.ID, store.ModeEnabled, config.Overrides{Profile: &prof}, "admin@x")
-	if w := post(t, h, "pull_request", body, sign("s3cret", body)); w.Code != http.StatusAccepted {
+	// The same delivery again is a replay; a new push is a new event.
+	if w := post(t, h, "pull_request", body, sign("s3cret", body)); !bytes.Contains(w.Body.Bytes(), []byte("duplicate delivery")) {
+		t.Errorf("a redelivered body is a duplicate: %d %s", w.Code, w.Body)
+	}
+	push := bytes.Replace(body, []byte(`"opened"`), []byte(`"synchronize"`), 1)
+	if w := post(t, h, "pull_request", push, sign("s3cret", push)); w.Code != http.StatusAccepted {
 		t.Fatalf("enabled repo should queue: %d %s", w.Code, w.Body)
 	}
 	allowed, ov := s.gate(context.Background(), vcs.Ref{Platform: vcs.GitHub, Host: "github.com", Repo: "org/api"})

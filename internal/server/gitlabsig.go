@@ -89,29 +89,28 @@ func verifyGitLab(h http.Header, body []byte, inst config.GitLab, now time.Time)
 	return "", "", errors.New("X-Gitlab-Token does not match any webhook secret")
 }
 
-// deliveries remembers signed delivery IDs for the signature window, so a
-// replayed request (or a GitLab retry of one already accepted) is not
-// processed twice.
+// deliveries is the in-memory record of replay keys, used without a
+// database or while it can't be reached (see Server.firstDelivery).
 type deliveries struct {
 	mu   sync.Mutex
-	seen map[string]time.Time
+	seen map[string]time.Time // key -> expiry
 }
 
-// first reports whether id is new, and records it.
-func (d *deliveries) first(id string, now time.Time) bool {
+// first reports whether key is new (or expired), and records it for ttl.
+func (d *deliveries) first(key string, ttl time.Duration, now time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.seen == nil {
 		d.seen = map[string]time.Time{}
 	}
-	for k, t := range d.seen {
-		if now.Sub(t) > 2*gitlabSignatureTolerance {
+	for k, exp := range d.seen {
+		if now.After(exp) {
 			delete(d.seen, k)
 		}
 	}
-	if _, dup := d.seen[id]; dup {
+	if _, dup := d.seen[key]; dup {
 		return false
 	}
-	d.seen[id] = now
+	d.seen[key] = now.Add(ttl)
 	return true
 }

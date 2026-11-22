@@ -326,6 +326,13 @@ type Store interface {
 	// PruneWebhookEvents deletes events older than before and keeps at most
 	// keep rows.
 	PruneWebhookEvents(ctx context.Context, before time.Time, keep int) (int64, error)
+	// MarkSeen records a webhook replay key (a signed delivery ID or a hash
+	// of a verified body). first is false when the key was recorded within
+	// ttl, so the delivery was already processed by this or another
+	// console. Shared by all replicas and kept across restarts.
+	MarkSeen(ctx context.Context, key string, ttl time.Duration) (first bool, err error)
+	// PruneSeen deletes replay keys recorded before before.
+	PruneSeen(ctx context.Context, before time.Time) (int64, error)
 
 	// InsertJob saves a finished job and adds it to the metric rollups.
 	InsertJob(ctx context.Context, j Job) (int64, error)
@@ -605,6 +612,12 @@ var migrations = []string{
 	CREATE UNIQUE INDEX sessions_id_idx ON sessions (id);`,
 	// 11: the role of a learning's author on the repository (issue #32).
 	`ALTER TABLE learnings ADD COLUMN source_role text NOT NULL DEFAULT '';`,
+	// 12: webhook replay keys shared by every replica (issue #34).
+	`CREATE TABLE webhook_seen (
+		key     text PRIMARY KEY,
+		seen_at timestamptz NOT NULL DEFAULT now()
+	);
+	CREATE INDEX webhook_seen_at_idx ON webhook_seen (seen_at);`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -1549,6 +1562,29 @@ func (p *Postgres) DeleteModelProfile(ctx context.Context, name string, actor st
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (p *Postgres) MarkSeen(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	// New, or recorded longer ago than ttl: claim it (atomically, so two
+	// replicas receiving the same delivery agree on one first).
+	var k string
+	err := p.pool.QueryRow(ctx, `
+		INSERT INTO webhook_seen (key) VALUES ($1)
+		ON CONFLICT (key) DO UPDATE SET seen_at = now()
+		WHERE webhook_seen.seen_at < now() - make_interval(secs => $2)
+		RETURNING key`, key, ttl.Seconds()).Scan(&k)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (p *Postgres) PruneSeen(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM webhook_seen WHERE seen_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (p *Postgres) GetSetting(ctx context.Context, key string, out any) (bool, error) {

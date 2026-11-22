@@ -42,13 +42,11 @@ type Server struct {
 	selfLogins map[string]string
 	store      store.Store  // optional: allowlist, overrides, history
 	admin      *admin.Admin // optional: admin panel
-	// glDeliveries dedupes signed GitLab webhooks by webhook-id;
-	// glEvents dedupes the same event arriving through several hooks
-	// (system, group and project hooks on one instance).
-	glDeliveries deliveries
+	// replays is the in-memory fallback for webhook replay keys
+	// (see firstDelivery).
+	replays deliveries
 	// cmdGate limits who runs chat commands and how often.
-	cmdGate  commandGate
-	glEvents deliveries
+	cmdGate commandGate
 	// hooks saves webhook delivery history (nil without a store).
 	hooks *hookWriter
 	// settings are the runtime settings (config defaults + admin changes).
