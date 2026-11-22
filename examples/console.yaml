@@ -60,6 +60,10 @@ gitlab:
 # start and managed under "Code hosts" in the admin panel from then on.
 
 # ---- Where reviews run ----
+# With a database, the image tag, resources and (Kubernetes) scheduling,
+# pod metadata, TTL and ca_bundle below are copied into the admin panel on
+# the first start and managed under "Executor" from then on. The type,
+# image repository, namespace, service account and kubeconfig stay here.
 # Each review runs the codereview CLI once. Credentials are minted per job
 # (GitHub App installation tokens) and passed as environment variables.
 executor:

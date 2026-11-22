@@ -19,6 +19,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/execsettings"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -134,6 +135,28 @@ func serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	execSvc := execsettings.New(cfg.Executor, deps.Store)
+	if execSvc.Editable() {
+		seeded, differs, err := execSvc.Seed(ctx)
+		if err != nil {
+			return fmt.Errorf("executor settings: %w", err)
+		}
+		if seeded {
+			logger.Info("executor settings copied from the config file into the database; change them in the admin panel (Executor) from now on")
+		}
+		for _, d := range differs {
+			logger.Warn("config file value ignored: the executor setting saved in the admin panel wins", "setting", "executor."+cfg.Executor.Type+"."+d)
+		}
+		base := exec
+		exec = execsettings.NewExecutor(execSvc, base, func(e config.Executor) (executor.Executor, error) {
+			if k, ok := base.(*executor.Kubernetes); ok {
+				return k.With(e.Kubernetes) // same client and namespace
+			}
+			c := *cfg
+			c.Executor = e
+			return newExecutor(&c)
+		}, logger)
+	}
 	if cfg.Executor.Type != "local" {
 		exec = &licensedExecutor{Executor: exec, lic: lic}
 	}
@@ -181,6 +204,7 @@ func serve(ctx context.Context, args []string) error {
 		adm.Hosts = deps.Hosts
 		adm.ExecutorType = cfg.Executor.Type
 		adm.Models = deps.Models
+		adm.Executor = execSvc
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
 	}

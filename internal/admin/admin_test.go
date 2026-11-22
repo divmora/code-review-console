@@ -30,6 +30,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
+	"github.com/divmora/code-review-console/internal/execsettings"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -822,5 +823,29 @@ func TestModelsAPI(t *testing.T) {
 	repo, _ := e.st.CreateRepo(context.Background(), "gitlab", "g.example", "team/app", "enabled", "a@x")
 	if code, body := e.do(t, "PUT", "/admin/api/repos/"+strconv.FormatInt(repo.ID, 10), csrf, map[string]any{"mode": "enabled", "settings": map[string]any{"model": "claude"}}); code != 200 {
 		t.Errorf("a repository can use a console profile: %d %s", code, body)
+	}
+}
+
+func TestExecutorAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	e.adm.Executor = execsettings.New(config.Executor{Type: "kubernetes", Kubernetes: config.KubeExecutor{
+		Image: "ghcr.io/divmora/code-review-bot:0.5.0", Namespace: "reviews", ServiceAccount: "crb", TTL: 10 * time.Minute}}, e.st)
+
+	code, body := e.do(t, "GET", "/admin/api/executor", "", nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"source":"config"`)) || !bytes.Contains(body, []byte(`"image_repo":"ghcr.io/divmora/code-review-bot"`)) || !bytes.Contains(body, []byte(`"namespace":"reviews"`)) {
+		t.Fatalf("get: %d %s", code, body)
+	}
+	if code, body := e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"version": "evil.example.com/x:1"}); code != 400 {
+		t.Errorf("the panel picks a tag, not an image: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"service_account": "cluster-admin", "version": "0.6.0"}); code != 400 {
+		t.Errorf("connection settings aren't part of the panel's settings: %d", code)
+	}
+	code, body = e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"version": "0.6.0", "cpu": "1", "node_selector": map[string]string{"pool": "batch"}})
+	if code != 200 || !bytes.Contains(body, []byte(`"image":"ghcr.io/divmora/code-review-bot:0.6.0"`)) || !bytes.Contains(body, []byte(`"source":"console"`)) {
+		t.Fatalf("put: %d %s", code, body)
 	}
 }
