@@ -10,6 +10,7 @@ with blue (`#60A5FA`) and white.
 | `logo-512.png` | Avatar for the bot account on GitHub, GitLab and Bitbucket. |
 | `logo-180.png` | Apple touch icon and other places that need a PNG. |
 | `logo-32.png` | Small PNG for places that don't take SVG. |
+| `social-preview.png` | 1280×640 image for the GitHub repository's social preview (Settings → General → Social preview; GitHub has no API for it). |
 
 The admin panel draws the same mark in `web/src/components/Logo.tsx` and serves
 `web/public/assets/favicon.svg`. Change all of them together.
