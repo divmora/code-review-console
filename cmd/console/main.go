@@ -252,7 +252,9 @@ func checkConfig(ctx context.Context, args []string) error {
 	if err := requireExecutor(cfg, lic); err != nil {
 		fmt.Printf("note: %v\n      (the console still starts; reviews wait until the license is added in the admin panel)\n", err)
 	}
-	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled, cfg.Repos.Allowlist, cfg.Database.URL != "")
+	rt, rtSource := checkRuntimeSettings(ctx, cfg, st)
+	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v%s\nrequire reviewer: %v%s\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled,
+		rt.Allowlist, rtSource, rt.RequireReviewer, rtSource, cfg.Database.URL != "")
 	if source != "" {
 		fmt.Printf("executor settings: %s\n", source)
 	}
@@ -315,6 +317,26 @@ func checkConfig(ctx context.Context, args []string) error {
 		fmt.Println("verify model:", rep.Verify)
 	}
 	return nil
+}
+
+// checkRuntimeSettings returns the settings reviews use now (the admin
+// panel's when saved, else the config file's) and a note saying where they
+// come from.
+func checkRuntimeSettings(ctx context.Context, cfg *config.Config, st store.Store) (settings.Effective, string) {
+	svc := settings.New(cfg, nil)
+	if st == nil {
+		return svc.Get(ctx), ""
+	}
+	var stored settings.Stored
+	found, err := st.GetSetting(ctx, settings.Key, &stored)
+	switch {
+	case err != nil:
+		fmt.Printf("note: settings in the database: %v (showing the config file's)\n", err)
+		return svc.Get(ctx), " (config file)"
+	case !found:
+		return svc.Get(ctx), " (config file; copied into the admin panel on the next start)"
+	}
+	return settings.New(cfg, st).Get(ctx), " (admin panel)"
 }
 
 // checkExecutorConfig returns the config with the executor settings saved
