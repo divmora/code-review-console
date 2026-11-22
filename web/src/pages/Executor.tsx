@@ -16,6 +16,7 @@ type Settings = {
 type View = {
   type: string; editable: boolean; source: "console" | "config"; image_repo?: string; image?: string;
   settings: Settings; fixed: Record<string, string>; min_cli_version: string; licensed: boolean;
+  tags: string[]; tags_error?: string;
 };
 
 // key=value lines <-> a map.
@@ -76,14 +77,45 @@ function toSettings(f: Form): Settings {
   };
 }
 
+const OTHER = "__other__";
+
+// VersionHint explains the version field: where the list comes from, or
+// why it couldn't be loaded, and what runs now.
+function VersionHint({ v, version, custom }: { v: View; version: string; custom: boolean }) {
+  const release = /^v?\d+\.\d+\.\d+$/.test(version) ? version.replace(/^v/, "") : "";
+  return (
+    <Sub>
+      {v.tags.length > 0
+        ? custom
+          ? "A tag, a sha256: digest, or both to pin it (0.5.0@sha256:…). "
+          : "Versions found in the image repository. "
+        : v.tags_error
+          ? "Couldn't list the versions in the image repository (" + v.tags_error + "), so type one: a tag, a sha256: digest, or both (0.5.0@sha256:…). "
+          : "A tag, a sha256: digest, or both to pin it (0.5.0@sha256:…). "}
+      The console needs code-review-bot {v.min_cli_version} or later. Now running <code className="break-all">{v.image}</code>.
+      {release && (
+        <>
+          {" "}
+          <a className="underline underline-offset-2" href={"https://github.com/divmora/code-review-bot/releases/tag/v" + release} target="_blank" rel="noreferrer">
+            Release notes for {release}
+          </a>
+        </>
+      )}
+    </Sub>
+  );
+}
+
 export default function Executor() {
   const toast = useToast();
   const [v, setV] = useState<View | null>(null);
   const [f, setF] = useState<Form | null>(null);
   const [busy, setBusy] = useState(false);
+  // custom: the version is typed (a digest, a tag the registry list lacks).
+  const [custom, setCustom] = useState(false);
   const show = (nv: View) => {
     setV(nv);
     setF(toForm(nv.settings));
+    setCustom(!nv.tags.includes(nv.settings.version));
   };
   useEffect(() => {
     get<View>("/admin/api/executor").then(show).catch((e) => toast(errMsg(e), true));
@@ -156,10 +188,31 @@ export default function Executor() {
           </CardHeader>
           <CardContent className="grid gap-5">
             <FormGrid>
-              <Field label="Version" className="lg:col-span-3" hint={<Sub>The image tag, a sha256: digest, or both to pin it (0.5.0@sha256:…). The console needs code-review-bot {v.min_cli_version} or later. Now running <code className="break-all">{v.image}</code>.</Sub>}>
-                <div className="flex min-w-0 items-center gap-1.5">
+              <Field label="Version" className="lg:col-span-3" hint={<VersionHint v={v} version={f.version} custom={custom} />}>
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <code className="hidden shrink truncate text-xs text-muted-foreground sm:block">{v.image_repo}{f.version.startsWith("sha256:") ? "@" : ":"}</code>
-                  <Input value={f.version} onChange={set("version")} placeholder="0.5.0" spellCheck={false} className="sm:max-w-48" />
+                  {v.tags.length > 0 && (
+                    <NativeSelect
+                      aria-label="Version"
+                      className="w-auto min-w-36"
+                      value={custom ? OTHER : f.version}
+                      onChange={(e) => {
+                        if (e.target.value === OTHER) setCustom(true);
+                        else {
+                          setCustom(false);
+                          setF({ ...f, version: e.target.value });
+                        }
+                      }}
+                    >
+                      {v.tags.map((t, i) => (
+                        <option key={t} value={t}>{t}{i === 0 ? " (newest)" : ""}{t === v.settings.version ? " (current)" : ""}</option>
+                      ))}
+                      <option value={OTHER}>Other: tag or digest…</option>
+                    </NativeSelect>
+                  )}
+                  {(custom || v.tags.length === 0) && (
+                    <Input value={f.version} onChange={set("version")} placeholder="0.5.0" spellCheck={false} aria-label={v.tags.length ? "Other version" : "Version"} className="sm:max-w-64" />
+                  )}
                 </div>
               </Field>
               <Field label="CPU" hint={<Sub>{kube ? "Request and limit, e.g. 500m or 1." : "docker --cpus, e.g. 1.5."} Empty = no limit.</Sub>}>
@@ -220,7 +273,7 @@ export default function Executor() {
             )}
             <div className="flex gap-2">
               <Button onClick={save} disabled={busy || (!dirty && v.source === "console")}>Save settings</Button>
-              {dirty && <Button variant="outline" onClick={() => setF(toForm(v.settings))}>Discard changes</Button>}
+              {dirty && <Button variant="outline" onClick={() => show(v)}>Discard changes</Button>}
             </div>
           </CardContent>
         </Card>

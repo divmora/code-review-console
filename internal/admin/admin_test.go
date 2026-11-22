@@ -833,9 +833,14 @@ func TestExecutorAPI(t *testing.T) {
 	csrf := e.csrf(t)
 	e.adm.Executor = execsettings.New(config.Executor{Type: "kubernetes", Kubernetes: config.KubeExecutor{
 		Image: "ghcr.io/divmora/code-review-bot:0.5.0", Namespace: "reviews", ServiceAccount: "crb", TTL: 10 * time.Minute}}, e.st)
+	// No network in tests: the registry can't be reached, so the page falls
+	// back to typing the version.
+	e.adm.Tags = execsettings.NewTags()
+	e.adm.Tags.Client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })}
 
 	code, body := e.do(t, "GET", "/admin/api/executor", "", nil)
-	if code != 200 || !bytes.Contains(body, []byte(`"source":"config"`)) || !bytes.Contains(body, []byte(`"image_repo":"ghcr.io/divmora/code-review-bot"`)) || !bytes.Contains(body, []byte(`"namespace":"reviews"`)) {
+	if code != 200 || !bytes.Contains(body, []byte(`"source":"config"`)) || !bytes.Contains(body, []byte(`"image_repo":"ghcr.io/divmora/code-review-bot"`)) || !bytes.Contains(body, []byte(`"namespace":"reviews"`)) ||
+		!bytes.Contains(body, []byte(`"tags":[]`)) || !bytes.Contains(body, []byte(`"tags_error":"registry: `)) {
 		t.Fatalf("get: %d %s", code, body)
 	}
 	if code, body := e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"version": "evil.example.com/x:1"}); code != 400 {
@@ -849,3 +854,7 @@ func TestExecutorAPI(t *testing.T) {
 		t.Fatalf("put: %d %s", code, body)
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
