@@ -53,6 +53,9 @@ type Result struct {
 	Partial   bool // some batches failed
 	TooLarge  bool
 	Answer    string // for ask
+	// Unreadable is set when the CLI succeeded but its result couldn't be
+	// read in full (see parseMerged); the counts are a best effort.
+	Unreadable string
 	// Logs is the tail of stderr.
 	Logs string
 }

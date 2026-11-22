@@ -14,6 +14,7 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
+	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/settings"
@@ -434,5 +435,40 @@ func TestConsoleModelKeyReachesJob(t *testing.T) {
 	}
 	if task.Env["TEAM_CLAUDE_KEY"] != "sk-ant-test" || !bytes.Contains(task.ConfigYAML, []byte("model: claude")) || bytes.Contains(task.ConfigYAML, []byte("sk-ant-test")) {
 		t.Errorf("env %v\n%s", task.Env, task.ConfigYAML)
+	}
+}
+
+// TestUnreadableResultIsDone: a review whose result couldn't be read in
+// full (issue #39) ran and posted, so it is recorded as done with a note
+// and the counts that were found, not as failed.
+func TestUnreadableResultIsDone(t *testing.T) {
+	t.Setenv("CODEREVIEW_CONFIG", "")
+	cfg, _ := config.Load("")
+	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
+	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
+	cfg.Model = "m"
+	cfg.Server.Debounce = 0
+	exec := &fakeExec{res: &executor.Result{Posted: 4, TokensIn: 38000, TokensOut: 2100, Model: "m", Unreadable: "the review ran, but its result could not be read"}}
+	s, err := New(cfg, exec, quiet, Deps{License: licensetest.Full(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.queue.Shutdown(context.Background())
+	if err := s.ReviewNow(context.Background(), vcs.Ref{Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/p", Number: 7}, false, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if snap := s.queue.Snapshot(); len(snap.Recent) == 1 {
+			rec := snap.Recent[0]
+			if rec.State != Done || rec.Comments != 4 || rec.TokensIn != 38000 || !strings.Contains(rec.Note, "could not be read") {
+				t.Fatalf("record: %+v", rec)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("review did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

@@ -255,7 +255,10 @@ func (k *Kubernetes) Run(ctx context.Context, t Task) (*Result, error) {
 	if !succeeded {
 		return nil, &RunError{ExitCode: exitCode, Message: lastErrorLine(stderr), Logs: tail(stderr, 16<<10)}
 	}
-	res, err := ParseOutput(t.Kind, []byte(stdout))
+	res, removed, err := parseMerged(t.Kind, stdout)
+	if len(removed) > 0 { // log lines that were spliced into the result
+		stderr = strings.TrimRight(stderr, "\n") + "\n" + strings.Join(removed, "\n") + "\n"
+	}
 	if err != nil {
 		return nil, &RunError{Message: err.Error(), Logs: tail(stderr, 16<<10)}
 	}
