@@ -75,6 +75,16 @@ executor:
     memory: 1Gi
     ttl: 10m                           # keep finished Jobs for debugging
     # kubeconfig: /path/to/kubeconfig  # empty = in-cluster
+    # Where review pods run (see docs/deploy.md). tolerations and affinity use Kubernetes field names.
+    # node_selector: { workload: batch }
+    # tolerations:
+    #   - { key: dedicated, operator: Equal, value: batch, effect: NoSchedule }
+    # affinity: {}                     # a corev1 Affinity, e.g. nodeAffinity: {...}
+    # priority_class_name: ""
+    # pod_labels: {}                   # merged with the built-in labels
+    # pod_annotations: { karpenter.sh/do-not-disrupt: "true" }
+    # Extra CA certificates (PEM) to trust, e.g. a private GitLab or a TLS-inspecting proxy.
+    # ca_bundle: { config_map: corporate-ca, key: ca.crt }   # or secret: <name>
   # Extra env var names to forward to every review (provider keys are forwarded by default).
   env: []
 

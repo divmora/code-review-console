@@ -126,6 +126,54 @@ token, so review pods never get one by default, with or without a service accoun
 token in review pods. Review pods run untrusted PR content, so keep RBAC bound to that service account
 to a minimum.
 
+### Where review pods run
+
+Optional fields under `executor.kubernetes` are copied into each review Job's pod template:
+
+```yaml
+executor:
+  kubernetes:
+    node_selector: { workload: batch }
+    tolerations:
+      - { key: dedicated, operator: Equal, value: batch, effect: NoSchedule }
+    affinity:                          # a Kubernetes Affinity, same field names as in a pod spec
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions: [{ key: kubernetes.io/arch, operator: In, values: [amd64] }]
+    priority_class_name: batch-low     # the PriorityClass must exist
+    pod_labels: { team: platform }
+    pod_annotations: { karpenter.sh/do-not-disrupt: "true" }
+```
+
+`tolerations` and `affinity` use the Kubernetes field names (`tolerationSeconds`, `nodeAffinity`,
+...). An unknown field stops startup with an error, so a typo doesn't silently drop a rule.
+`pod_labels` are merged with the console's own labels, which win on conflict because the console
+finds review pods by them. With Karpenter, `karpenter.sh/do-not-disrupt: "true"` keeps
+consolidation from evicting a review mid-run.
+
+### Private CA certificates
+
+When a self-managed GitLab or GitHub Enterprise, an LLM gateway or a TLS-inspecting proxy uses a
+certificate from a private CA, put the CA certificates (PEM) in a ConfigMap or Secret in the jobs'
+namespace and point `ca_bundle` at it:
+
+```bash
+kubectl -n code-review create configmap corporate-ca --from-file=ca.crt=corporate-ca.pem
+```
+
+```yaml
+executor:
+  kubernetes:
+    ca_bundle:
+      config_map: corporate-ca         # or secret: corporate-ca
+      key: ca.crt                      # default ca.crt
+```
+
+The key is mounted read-only at `/etc/codereview/ca/ca.crt`, and `SSL_CERT_DIR` points at that
+directory. These certificates are trusted **in addition to** the image's public CAs, so the bundle
+only needs your own CAs. No extra RBAC is needed: the kubelet mounts the volume, not the console.
+
 Point the Deployment's liveness and readiness probes at `GET /healthz` on the server port.
 
 ## Upgrading

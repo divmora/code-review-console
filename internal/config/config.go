@@ -305,7 +305,32 @@ type KubeExecutor struct {
 	TTL time.Duration `yaml:"ttl"`
 	// Kubeconfig path; empty means in-cluster config.
 	Kubeconfig string `yaml:"kubeconfig"`
+
+	// Scheduling and metadata for review pods. Tolerations and Affinity use
+	// the Kubernetes field names (corev1.Toleration, corev1.Affinity).
+	NodeSelector      map[string]string `yaml:"node_selector"`
+	Tolerations       []map[string]any  `yaml:"tolerations"`
+	Affinity          map[string]any    `yaml:"affinity"`
+	PriorityClassName string            `yaml:"priority_class_name"`
+	// PodLabels are merged with the built-in labels, which win on conflict.
+	PodLabels      map[string]string `yaml:"pod_labels"`
+	PodAnnotations map[string]string `yaml:"pod_annotations"`
+
+	// CABundle mounts extra trusted CA certificates into review pods.
+	CABundle KubeCABundle `yaml:"ca_bundle"`
 }
+
+// KubeCABundle names a ConfigMap or Secret key holding PEM CA certificates.
+// They are trusted in addition to the image's system CAs.
+type KubeCABundle struct {
+	ConfigMap string `yaml:"config_map"`
+	Secret    string `yaml:"secret"`
+	// Key in the ConfigMap or Secret. Default "ca.crt".
+	Key string `yaml:"key"`
+}
+
+// Enabled reports whether a CA bundle is configured.
+func (b KubeCABundle) Enabled() bool { return b.ConfigMap != "" || b.Secret != "" }
 
 // Load reads the console config. An empty path uses CODEREVIEW_CONSOLE_CONFIG
 // or ./console.yaml.
@@ -431,6 +456,9 @@ func (c *Config) applyDefaults() {
 	if e.Kubernetes.TTL <= 0 {
 		e.Kubernetes.TTL = 10 * time.Minute
 	}
+	if e.Kubernetes.CABundle.Enabled() && e.Kubernetes.CABundle.Key == "" {
+		e.Kubernetes.CABundle.Key = "ca.crt"
+	}
 }
 
 func (c *Config) validate() error {
@@ -449,6 +477,9 @@ func (c *Config) validate() error {
 		}
 		if err := checkImageTag("executor.kubernetes.image", c.Executor.Kubernetes.Image); err != nil {
 			return err
+		}
+		if b := c.Executor.Kubernetes.CABundle; b.ConfigMap != "" && b.Secret != "" {
+			return errors.New("executor.kubernetes.ca_bundle: set config_map or secret, not both")
 		}
 	default:
 		return fmt.Errorf("executor.type %q: want local, docker or kubernetes", c.Executor.Type)
