@@ -50,12 +50,12 @@ type Host struct {
 
 // Settings are a host's non-secret settings.
 type Settings struct {
-	AppID            int64  `json:"app_id,omitempty"`            // GitHub App
-	Email            string `json:"email,omitempty"`             // Bitbucket, with APIToken
-	RequireSignature bool   `json:"require_signature,omitempty"` // GitLab
-	SkipTLSVerify    bool   `json:"skip_tls_verify,omitempty"`   // GitLab
-	BotName          string `json:"bot_name,omitempty"`
-	Reviewer         string `json:"reviewer,omitempty"`
+	AppID            int64  `json:"app_id,omitempty" yaml:"app_id,omitempty"`                       // GitHub App
+	Email            string `json:"email,omitempty" yaml:"email,omitempty"`                         // Bitbucket, with APIToken
+	RequireSignature bool   `json:"require_signature,omitempty" yaml:"require_signature,omitempty"` // GitLab
+	SkipTLSVerify    bool   `json:"skip_tls_verify,omitempty" yaml:"skip_tls_verify,omitempty"`     // GitLab
+	BotName          string `json:"bot_name,omitempty" yaml:"bot_name,omitempty"`
+	Reviewer         string `json:"reviewer,omitempty" yaml:"reviewer,omitempty"`
 }
 
 // Secrets are a host's secret values; they are stored encrypted.
