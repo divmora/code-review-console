@@ -22,6 +22,9 @@ The console runs the `codereview` CLI for every review, so the two must agree on
 | 0.2.0 and later | v0.4.0 or later |
 
 - The container image already contains a supported CLI.
+- With the `kubernetes` executor, use v0.4.1 or later: from then on the CLI writes its logs to the
+  same stream as the result, so they can't end up inside it (the console also repairs results
+  from older CLIs).
 - With the `docker` or `kubernetes` executor, `executor.*.image` is the CLI image. A release tag
   older than the minimum is rejected when the config loads.
 - Always run `code-review-console check-config --config console.yaml` after an upgrade. It asks
