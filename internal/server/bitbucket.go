@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/hosts"
@@ -152,7 +151,8 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 	hm.Project, hm.Number, hm.Kind, hm.Sender = repo, p.PullRequest.ID, event, firstNonEmpty(p.Actor.Nickname, p.Actor.DisplayName)
 	hm.Action = strings.TrimPrefix(event, "pullrequest:")
 	s.seen(r.Context(), vcs.Bitbucket, h.Host, repo)
-	if hm.Delivery != "" && !s.glDeliveries.first("bb|"+hm.Delivery, time.Now()) {
+	// X-Request-UUID isn't signed: dedupe on the verified body.
+	if !s.firstDelivery(r.Context(), bodyKey("bitbucket", h.Host, body), replayTTL) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate delivery"})
 		return
 	}

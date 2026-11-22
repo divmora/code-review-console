@@ -28,6 +28,7 @@ type Memory struct {
 	jobs      []store.Job
 	sessions  map[string]store.Session
 	sessionID int64
+	seenKeys  map[string]time.Time
 	audit     []store.AuditEntry
 	models    map[string]store.ModelProfile
 	settings  map[string][]byte
@@ -434,6 +435,32 @@ func (m *Memory) CountWebhookEvents(_ context.Context, since time.Time) (map[str
 		}
 	}
 	return out, nil
+}
+
+func (m *Memory) MarkSeen(_ context.Context, key string, ttl time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.seenKeys == nil {
+		m.seenKeys = map[string]time.Time{}
+	}
+	if t, ok := m.seenKeys[key]; ok && time.Since(t) < ttl {
+		return false, nil
+	}
+	m.seenKeys[key] = time.Now()
+	return true, nil
+}
+
+func (m *Memory) PruneSeen(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for k, t := range m.seenKeys {
+		if t.Before(before) {
+			delete(m.seenKeys, k)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (m *Memory) PruneWebhookEvents(_ context.Context, before time.Time, keep int) (int64, error) {

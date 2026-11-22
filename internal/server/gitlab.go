@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -77,16 +75,6 @@ type glPayload struct {
 	MergeRequest struct {
 		IID int `json:"iid"`
 	} `json:"merge_request"`
-}
-
-// glEventKey identifies an event independently of the hook that delivered
-// it. Each hook's delivery has its own webhook-id, but the same event has
-// the same payload in every hook, so the payload itself is the key.
-// (Field-based keys were too coarse: GitLab's update times have one-second
-// resolution, so distinct quick changes collided.)
-func glEventKey(host string, body []byte) string {
-	sum := sha256.Sum256(body)
-	return host + "|" + hex.EncodeToString(sum[:])
 }
 
 // gitlabCandidates are the GitLab hosts a delivery may come from, decided
@@ -189,7 +177,7 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 		hm.Number = p.MergeRequest.IID
 	}
 	hm.Auth = method
-	if delivery != "" && !s.glDeliveries.first(delivery, time.Now()) {
+	if delivery != "" && !s.firstDelivery(r.Context(), "gitlab|"+inst.Host+"|delivery|"+delivery, 2*gitlabSignatureTolerance) {
 		s.logger.Info("gitlab webhook already processed", "delivery", delivery)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate delivery"})
 		return
@@ -202,10 +190,11 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 		"new_commits", p.ObjectAttributes.OldRev != "", "auth", method, "reviewers", usernames(p.Reviewers))
 	s.seen(r.Context(), vcs.GitLab, host, p.Project.PathWithNamespace)
 	// One event can arrive through a system hook and a group or project
-	// hook; each delivery has its own webhook-id, so dedupe on the event.
-	if fp := glEventKey(host, body); !s.glEvents.first(fp, time.Now()) {
-		log.Info("same event already received through another hook")
-		hm.Reason = "same event already received through another hook"
+	// hook (each delivery has its own webhook-id), and a captured delivery
+	// can be replayed: both have a body already received.
+	if !s.firstDelivery(r.Context(), bodyKey("gitlab", host, body), replayTTL) {
+		log.Info("event already received (through another hook, a retry or a replay)")
+		hm.Reason = "event already received (through another hook, a retry or a replay)"
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate delivery"})
 		return
 	}

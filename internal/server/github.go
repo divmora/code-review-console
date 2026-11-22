@@ -153,6 +153,12 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pong"})
 		return
 	}
+	// The signature has no timestamp and X-GitHub-Delivery isn't signed:
+	// dedupe on the verified body, so a captured delivery can't be replayed.
+	if !s.firstDelivery(r.Context(), bodyKey("github", h.Host, body), replayTTL) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate delivery"})
+		return
+	}
 	if p.Repository.FullName == "" {
 		http.Error(w, "bad payload", http.StatusBadRequest)
 		return

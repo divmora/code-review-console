@@ -67,7 +67,7 @@ license is renewed.
 
 | Variable | Needed for |
 |---|---|
-| `DATABASE_URL` | PostgreSQL 13+ (`database.url: ${DATABASE_URL}`). Required for the admin panel, the allowlist, learnings and history. Migrations run at startup under an advisory lock, so several replicas can start together. |
+| `DATABASE_URL` | PostgreSQL 13+ (`database.url: ${DATABASE_URL}`). Required for the admin panel, the allowlist, learnings and history. Migrations run at startup under an advisory lock, so several replicas can start together. Replicas share webhook replay protection through it: a delivery is processed once, whichever replica receives it. |
 | `CODEREVIEW_CONSOLE_LICENSE` | The Divmora license key (see [License](#license)) |
 | `CODEREVIEW_CONSOLE_SECRET_KEY` | Managing code hosts in the admin panel. 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. Without it, hosts come from the config file and are read-only. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Admin sign-in ([admin.md](admin.md)) |

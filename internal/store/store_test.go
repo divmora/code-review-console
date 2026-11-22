@@ -595,3 +595,46 @@ func TestSessionClaimsListAndRevoke(t *testing.T) {
 		t.Errorf("legacy session: %+v %v", a, err)
 	}
 }
+
+func TestMarkSeen(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	_, _ = p.pool.Exec(ctx, `TRUNCATE webhook_seen`)
+	if first, err := p.MarkSeen(ctx, "k1", time.Hour); err != nil || !first {
+		t.Fatalf("new key: %v %v", first, err)
+	}
+	if first, _ := p.MarkSeen(ctx, "k1", time.Hour); first {
+		t.Error("a key seen within ttl is not first")
+	}
+	// Recorded longer ago than ttl: first again.
+	_, _ = p.pool.Exec(ctx, `UPDATE webhook_seen SET seen_at = now() - interval '2 hours' WHERE key = 'k1'`)
+	if first, _ := p.MarkSeen(ctx, "k1", time.Hour); !first {
+		t.Error("an expired key is first again")
+	}
+	// Two consoles racing for one key: exactly one wins.
+	var wg sync.WaitGroup
+	wins := make(chan bool, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			first, err := p.MarkSeen(ctx, "race", time.Hour)
+			wins <- err == nil && first
+		}()
+	}
+	wg.Wait()
+	close(wins)
+	n := 0
+	for w := range wins {
+		if w {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("one winner, got %d", n)
+	}
+	_, _ = p.pool.Exec(ctx, `UPDATE webhook_seen SET seen_at = now() - interval '8 days' WHERE key = 'race'`)
+	if n, err := p.PruneSeen(ctx, time.Now().Add(-7*24*time.Hour)); err != nil || n != 1 {
+		t.Errorf("prune: %d %v", n, err)
+	}
+}
