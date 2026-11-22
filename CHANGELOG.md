@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/divmora/code-review-console/compare/v0.6.0...v0.7.0) (2026-11-22)
+
+
+### Features
+
+* **admin:** pick the bot version from the image repository's tags ([#44](https://github.com/divmora/code-review-console/issues/44)) ([3ea94b7](https://github.com/divmora/code-review-console/commit/3ea94b76034a3f0e9df1fecd79115b9c21f930d5))
+
+
+### Bug Fixes
+
+* **check-config:** run with the settings saved in the admin panel ([#47](https://github.com/divmora/code-review-console/issues/47)) ([1b75e79](https://github.com/divmora/code-review-console/commit/1b75e79edbf845123f6f2b9217197d756eaf9db1)), closes [#45](https://github.com/divmora/code-review-console/issues/45)
+* **executor:** split repo:tag@digest images into repository and version ([#43](https://github.com/divmora/code-review-console/issues/43)) ([feb85d3](https://github.com/divmora/code-review-console/commit/feb85d308b4eb53c80b40afd96184b13902a1472)), closes [#41](https://github.com/divmora/code-review-console/issues/41)
+* **kubernetes:** read review results with log lines spliced into them ([#40](https://github.com/divmora/code-review-console/issues/40)) ([7d1320e](https://github.com/divmora/code-review-console/commit/7d1320e3f6865023cf4467a346f304eeac496709))
+* **webhooks:** authenticate before reading or recording the payload ([#46](https://github.com/divmora/code-review-console/issues/46)) ([edf7ea3](https://github.com/divmora/code-review-console/commit/edf7ea3196869124a16dff392ae244d92cc5d392)), closes [#33](https://github.com/divmora/code-review-console/issues/33)
+
 ## [0.6.0](https://github.com/divmora/code-review-console/compare/v0.5.0...v0.6.0) (2026-11-22)
 
 
