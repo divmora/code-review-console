@@ -121,12 +121,13 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/settings", a.requireAPI(a.apiGetSettings))
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
+	mux.HandleFunc("GET /admin/api/setup", a.requireAPI(a.apiSetup))
 	mux.HandleFunc("GET /admin/api/license", a.requireAPI(a.apiGetLicense))
 	mux.HandleFunc("PUT /admin/api/license", a.requireAPI(a.apiPutLicense))
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.session(r); !ok {
@@ -147,8 +148,16 @@ func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 
 func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	eff := a.settings().Get(r.Context())
+	// Setup progress drives the sidebar badge and the first-run redirect.
+	setup := map[string]any{"complete": true}
+	if st, err := a.setup(r.Context()); err == nil {
+		setup = map[string]any{"complete": st.Complete, "done": st.Done, "total": st.Total}
+	} else {
+		a.logger.Warn("setup status unavailable", "error", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
+		"setup": setup,
 	})
 }
 

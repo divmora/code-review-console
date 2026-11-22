@@ -6,6 +6,7 @@ import {
   FolderGit2,
   KeyRound,
   ListChecks,
+  Rocket,
   LogOut,
   Monitor,
   Moon,
@@ -60,9 +61,11 @@ import Webhooks from "./pages/Webhooks";
 import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
 import License from "./pages/License";
+import Setup from "./pages/Setup";
 
 // Each section has its own URL under /admin, so a reload lands on it.
 const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element; paid?: Feature }[] = [
+  { path: "setup", title: "Setup", icon: Rocket, el: <Setup /> },
   { path: "repositories", title: "Repositories", icon: FolderGit2, el: <Repositories /> },
   { path: "reviews", title: "Reviews", icon: ChartColumn, el: <Reviews /> },
   { path: "learnings", title: "Learnings", icon: BookOpen, el: <Learnings />, paid: "learnings" },
@@ -183,6 +186,11 @@ function AppSidebar({ me }: { me: Me }) {
                         <span>{s.title}</span>
                       </NavLink>
                     </SidebarMenuButton>
+                    {s.path === "setup" && me.setup && !me.setup.complete && (
+                      <SidebarMenuBadge className="text-[10px] font-normal text-muted-foreground" title="Setup steps done">
+                        {me.setup.done}/{me.setup.total}
+                      </SidebarMenuBadge>
+                    )}
                     {locked && (
                       <SidebarMenuBadge className="paid text-[10px] font-normal text-muted-foreground" title="Needs a license">
                         licensed
@@ -265,7 +273,7 @@ export default function App() {
                   <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 md:p-6">
                     <LicenseBanner me={me} />
                     <Routes>
-                      <Route path="/" element={<Navigate to="/repositories" replace />} />
+                      <Route path="/" element={<Navigate to={me.setup && !me.setup.complete ? "/setup" : "/repositories"} replace />} />
                       {sections.map((s) => (
                         <Route key={s.path} path={"/" + s.path} element={s.el} />
                       ))}
