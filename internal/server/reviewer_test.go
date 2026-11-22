@@ -261,6 +261,7 @@ func TestBranchSyncSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trustAuthors(s)
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.1:1"] = "gitlab-bot"
 	send := func(body string) (int, string) {
@@ -299,6 +300,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trustAuthors(s)
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.1:1"] = "gitlab-bot"
 	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"))

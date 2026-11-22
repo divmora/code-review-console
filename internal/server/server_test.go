@@ -21,6 +21,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/store/storetest"
@@ -462,4 +463,18 @@ func TestRuntimeSettingsWithoutRestart(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("dashboard switched on from the admin panel: %d", rec.Code)
 	}
+}
+
+// trustAuthors makes every comment author count as able to push, for tests
+// whose fake code hosts don't serve the role lookup.
+func trustAuthors(s *Server) {
+	s.cmdGate.lookup = func(string) (string, bool) { return "developer", true }
+}
+
+func hostsHost(platform, baseURL string) hosts.Host {
+	return hosts.Host{Platform: platform, BaseURL: baseURL, Token: "t"}
+}
+
+func vcsRef(platform, repo string) vcs.Ref {
+	return vcs.Ref{Platform: platform, Host: "example.com", Repo: repo, Number: 1}
 }

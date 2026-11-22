@@ -100,9 +100,9 @@ var gitlabLevels = map[int]string{10: "guest", 15: "planner", 20: "reporter", 30
 
 // authorRole asks the code host what access a comment author has on the
 // repository. trusted is true for those who can push: GitLab Developer or
-// higher, GitHub write, maintain or admin. Bitbucket offers no lookup a
-// bot token may use, so its authors are never trusted; nor is anyone when
-// the lookup fails.
+// higher, GitHub write, maintain or admin, Bitbucket write or admin (by
+// account ID, with a token that has admin on the repository). Nobody is
+// trusted when the lookup fails.
 func (s *Server) authorRole(ctx context.Context, tgt target, ref vcs.Ref, author string) (role string, trusted bool) {
 	if author == "" {
 		return "unknown", false
@@ -143,6 +143,21 @@ func (s *Server) authorRole(ctx context.Context, tgt target, ref vcs.Ref, author
 			return firstNonEmpty(p.RoleName, p.Permission), true
 		}
 		return firstNonEmpty(p.RoleName, p.Permission, "none"), false
+	case hosts.Bitbucket:
+		// Needs the author's account ID ("557058:...") and a token with
+		// admin on the repository; otherwise the author isn't trusted.
+		if !strings.Contains(author, ":") && !strings.HasPrefix(author, "{") {
+			return "unknown", false
+		}
+		var p struct {
+			Permission string `json:"permission"`
+		}
+		u := fmt.Sprintf("%s/repositories/%s/permissions-config/users/%s", tgt.host.BaseURL, ref.Repo, url.PathEscape(author))
+		if err := s.hostGET(ctx, tgt.host, tgt, u, &p); err != nil {
+			s.logger.Warn("could not look up a Bitbucket user's access (the token needs admin on the repository)", "pr", ref.String(), "error", err)
+			return "unknown", false
+		}
+		return firstNonEmpty(p.Permission, "none"), p.Permission == "write" || p.Permission == "admin"
 	}
 	return "unknown", false
 }

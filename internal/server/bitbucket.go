@@ -229,10 +229,14 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "bot not mentioned")
 			return
 		}
-		cmd.author, cmd.sourceRef = firstNonEmpty(p.Actor.Nickname, p.Actor.DisplayName), sourceRef
+		cmd.author, cmd.sourceRef, cmd.authorID = firstNonEmpty(p.Actor.Nickname, p.Actor.DisplayName), sourceRef, p.Actor.AccountID
 		allowed, ov := s.gate(r.Context(), ref)
 		if !allowed {
 			ignored(w, "repository is not enabled in the admin panel")
+			return
+		}
+		if why := s.gateCommand(r.Context(), tgt, ref, cmd); why != "" {
+			ignored(w, why)
 			return
 		}
 		go func() {

@@ -46,7 +46,9 @@ type Server struct {
 	// glEvents dedupes the same event arriving through several hooks
 	// (system, group and project hooks on one instance).
 	glDeliveries deliveries
-	glEvents     deliveries
+	// cmdGate limits who runs chat commands and how often.
+	cmdGate  commandGate
+	glEvents deliveries
 	// hooks saves webhook delivery history (nil without a store).
 	hooks *hookWriter
 	// settings are the runtime settings (config defaults + admin changes).
@@ -435,6 +437,9 @@ type command struct {
 	question string
 	// author and sourceRef identify a "remember" command's comment.
 	author, sourceRef string
+	// authorID is the author's account ID where the host needs it to look
+	// up their access (Bitbucket); "" elsewhere.
+	authorID string
 }
 
 // parseCommand finds "@bot ..." in a comment. ok is false when the bot is

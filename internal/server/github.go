@@ -241,6 +241,10 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "repository is not enabled in the admin panel")
 			return
 		}
+		if why := s.gateCommand(r.Context(), tgt, ref, cmd); why != "" {
+			ignored(w, why)
+			return
+		}
 		go func() {
 			if err := tgt.client.React(context.Background(), &vcs.PR{Ref: ref}, itoa(p.Comment.ID), "eyes"); err != nil {
 				log.Debug("reaction failed", "error", err)
@@ -269,6 +273,10 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			cmd.author, cmd.sourceRef = p.Comment.User.Login, sourceRef
+			if why := s.gateCommand(r.Context(), tgt, ref, cmd); why != "" {
+				ignored(w, why)
+				return
+			}
 			if err := s.dispatch(tgt, ref, cmd, ov); err != nil {
 				submitErr(w, err)
 				return
