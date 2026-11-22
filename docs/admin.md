@@ -60,7 +60,7 @@ When you run several instances behind a load balancer, also set `admin.cookie_se
 
 ## 3. Use it
 
-1. Open `https://<base_url>/admin` and sign in.
+1. Open `https://<base_url>/admin` and sign in. Until reviews can run, the console opens **Setup**: a checklist (license, code host, webhook, a verified delivery, model, an enabled repository, the first review) that is checked against what is configured right now, says what to do next, and shows why a step isn't done (for example the reason the last delivery was rejected).
 2. Repositories show up (disabled) when they send their first webhook, or click **Add repository**.
 3. Toggle **Enabled** to start reviewing. **Settings** sets the review profile, comment limit, minimum severity, model profile, auto review, drafts and extra instructions. These override the repository's `.codereview.yaml`.
 4. **Audit log** lists sign-ins, denied sign-ins and every change with before and after values.

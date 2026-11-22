@@ -35,6 +35,8 @@ export type Me = {
   require_reviewer: boolean;
   license: LicenseStatus;
   free_retention_days: number;
+  // Guided setup progress (required steps).
+  setup?: { complete: boolean; done?: number; total?: number };
 };
 
 export type Access = {

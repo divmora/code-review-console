@@ -608,3 +608,77 @@ func TestPageNonce(t *testing.T) {
 		seen[nonce] = true
 	}
 }
+
+func TestSetupChecklist(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	ctx := context.Background()
+	type status struct {
+		Steps []struct {
+			ID     string
+			Done   bool
+			Detail string
+		}
+		Done, Total int
+		Complete    bool
+	}
+	check := func() (status, map[string]bool) {
+		t.Helper()
+		code, body := e.do(t, "GET", "/admin/api/setup", "", nil)
+		var st status
+		if code != 200 || json.Unmarshal(body, &st) != nil {
+			t.Fatalf("setup: %d %s", code, body)
+		}
+		done := map[string]bool{}
+		for _, s := range st.Steps {
+			done[s.ID] = s.Done
+		}
+		return st, done
+	}
+	// The test admin has two config profiles ("fast", "smart") and a license.
+	st, done := check()
+	if st.Complete || done["host"] || done["webhook"] || done["delivery"] || done["review"] || !done["model"] || !done["license"] || st.Total != 6 {
+		t.Fatalf("fresh install: %+v", st)
+	}
+	if code, body := e.do(t, "GET", "/admin/api/me", "", nil); code != 200 || !bytes.Contains(body, []byte(`"setup":{"complete":false`)) {
+		t.Errorf("/me carries setup progress: %s", body)
+	}
+
+	h, err := e.adm.Hosts.Save(ctx, hosts.Host{Platform: hosts.GitLab, BaseURL: "https://gitlab.example.com", Enabled: true, Secrets: hosts.Secrets{Token: "t"}}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, done = check(); !done["host"] || done["webhook"] {
+		t.Errorf("a host without webhooks: %v", done)
+	}
+	if _, _, err := e.adm.Hosts.AddEndpoint(ctx, h.ID, "group", "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	// A rejected delivery explains itself; a verified one completes the step.
+	_ = e.st.InsertWebhookEvents(ctx, []store.WebhookEvent{{Platform: "gitlab", Auth: "failed", Reason: "invalid token", Outcome: store.HookRejected}})
+	st, done = check()
+	if !done["webhook"] || done["delivery"] || !strings.Contains(fmt.Sprint(st.Steps), "invalid token") {
+		t.Errorf("rejected delivery: %+v", st)
+	}
+	_ = e.st.InsertWebhookEvents(ctx, []store.WebhookEvent{{Platform: "gitlab", Project: "g/app", Auth: "token", Outcome: store.HookIgnored}})
+	if _, done = check(); !done["delivery"] || !done["repo"] {
+		t.Errorf("verified delivery; with the allowlist off every repository counts: %v", done)
+	}
+	if code, body := e.do(t, "PUT", "/admin/api/settings", e.csrf(t), map[string]any{"allowlist": true}); code != 200 {
+		t.Fatalf("allowlist on: %d %s", code, body)
+	}
+	if _, done = check(); done["repo"] {
+		t.Errorf("allowlist on and no repository enabled: %v", done)
+	}
+	if _, err := e.st.CreateRepo(ctx, "gitlab", "gitlab.example.com", "g/app", store.ModeEnabled, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.st.InsertJob(ctx, store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.example.com", Repo: "g/app", Number: 1, State: "done", Finished: time.Now()})
+	if st, done = check(); !st.Complete || st.Done != 6 || !done["repo"] || !done["review"] {
+		t.Errorf("complete: %+v", st)
+	}
+	if code, _ := e.do(t, "GET", "/admin/setup", "", nil); code != 200 {
+		t.Errorf("reloading /admin/setup must serve the app: %d", code)
+	}
+}
