@@ -24,6 +24,7 @@ import type { Feature, Me } from "./types";
 import { ConfirmProvider, MeCtx, RefreshMeCtx, ToastProvider } from "./ui";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -242,10 +243,51 @@ function AppSidebar({ me }: { me: Me }) {
   );
 }
 
+// NotFoundPage is shown for an unknown /admin/<section> (the server answers
+// 404 with the panel, so the sidebar stays).
+function NotFoundPage() {
+  const loc = useLocation();
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="h2">Page not found</CardTitle>
+        <CardDescription>
+          There is no <code>/admin{loc.pathname}</code> page. Pick a section in the sidebar, or go to the start.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button asChild>
+          <Link to="/">Go to the start</Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+// SignOutPage answers a typed or bookmarked /admin/logout: signing out is
+// a POST (CSRF), so it asks with a button.
+function SignOutPage() {
+  const signOut = () => post("/admin/logout").finally(() => (location.href = "/admin/login"));
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="h2">Sign out?</CardTitle>
+        <CardDescription>You'll need to sign in again to use the admin panel.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex gap-2">
+        <Button onClick={signOut}>Sign out</Button>
+        <Button asChild variant="outline">
+          <Link to="/">Stay signed in</Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Header({ me }: { me: Me }) {
   const loc = useLocation();
   const s = current(loc.pathname);
-  const title = s?.title ?? "Repositories";
+  const title = s?.title ?? (loc.pathname === "/logout" ? "Sign out" : "Page not found");
   useEffect(() => {
     document.title = title + " · Code review admin";
   }, [title]);
@@ -294,7 +336,8 @@ export default function App() {
                       {sections.map((s) => (
                         <Route key={s.path} path={"/" + s.path} element={s.el} />
                       ))}
-                      <Route path="*" element={<Navigate to="/repositories" replace />} />
+                      <Route path="/logout" element={<SignOutPage />} />
+                      <Route path="*" element={<NotFoundPage />} />
                     </Routes>
                   </div>
                 </SidebarInset>

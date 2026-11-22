@@ -69,15 +69,25 @@ var nonceMarker = []byte("__CSP_NONCE__")
 // Register mounts the admin routes.
 func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin", a.handlePage)
+	// /admin/ and /admin/<section>/ (bookmarks, proxies and SSO return URLs
+	// add the slash) go to the URL without it.
+	mux.HandleFunc("GET /admin/{$}", a.dropSlash)
+	for sec := range adminSections {
+		mux.HandleFunc("GET /admin/"+sec+"/{$}", a.dropSlash)
+	}
 	// Each section has its own URL, so a reload stays on it. The page
-	// itself picks the section from the path.
+	// itself picks the section from the path; for an unknown one it shows
+	// "page not found" with the sidebar (status 404).
 	mux.HandleFunc("GET /admin/{section}", func(w http.ResponseWriter, r *http.Request) {
 		if !adminSections[r.PathValue("section")] {
-			http.NotFound(w, r)
+			a.handlePageStatus(w, r, http.StatusNotFound)
 			return
 		}
 		a.handlePage(w, r)
 	})
+	// Sign-out is POST only (CSRF); a typed or bookmarked GET /admin/logout
+	// shows a page with a Sign out button.
+	mux.HandleFunc("GET /admin/logout", a.handlePage)
 	mux.HandleFunc("GET /admin/assets/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", uiCSP)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -138,7 +148,22 @@ func (a *Admin) Register(mux *http.ServeMux) {
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
 var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true}
 
+// dropSlash redirects to the same URL without the trailing slash, keeping
+// the query string.
+func (a *Admin) dropSlash(w http.ResponseWriter, r *http.Request) {
+	u := *r.URL
+	u.Path = strings.TrimRight(u.Path, "/")
+	if u.Path == "" {
+		u.Path = "/admin"
+	}
+	http.Redirect(w, r, u.RequestURI(), http.StatusPermanentRedirect)
+}
+
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
+	a.handlePageStatus(w, r, http.StatusOK)
+}
+
+func (a *Admin) handlePageStatus(w http.ResponseWriter, r *http.Request, status int) {
 	if _, ok := a.session(r); !ok {
 		http.Redirect(w, r, "/admin/login?next="+url.QueryEscape(r.URL.Path), http.StatusFound)
 		return
@@ -152,6 +177,7 @@ func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	w.Header().Set("Content-Security-Policy", pageCSP(nonce))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	_, _ = w.Write(bytes.Replace(uiIndex, nonceMarker, []byte(nonce), 1))
 }
 
