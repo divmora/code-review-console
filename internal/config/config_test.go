@@ -38,6 +38,7 @@ func TestValidation(t *testing.T) {
 		"executor:\n  type: ssh\n":        "want local, docker or kubernetes",
 		"admin:\n  enabled: true\n":       "admin.enabled needs database.url",
 		"repos:\n  allowlist: true\n":     "repos.allowlist needs database.url",
+		"executor:\n  type: kubernetes\n  kubernetes:\n    image: x:1.0.0\n    ca_bundle: {config_map: a, secret: b}\n": "set config_map or secret, not both",
 	}
 	for body, want := range cases {
 		if _, err := Load(write(body)); err == nil || !strings.Contains(err.Error(), want) {

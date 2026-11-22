@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -33,6 +34,9 @@ type Kubernetes struct {
 	cfg  config.KubeExecutor
 	pass []string
 	cs   kubernetes.Interface
+	// tolerations and affinity are parsed from cfg once, at construction.
+	tolerations []corev1.Toleration
+	affinity    *corev1.Affinity
 	// poll is how often job status is checked.
 	poll time.Duration
 }
@@ -53,13 +57,46 @@ func NewKubernetes(cfg config.KubeExecutor, pass []string) (*Kubernetes, error) 
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes executor: %w", err)
 	}
-	return &Kubernetes{cfg: cfg, pass: pass, cs: cs, poll: 2 * time.Second}, nil
+	return newKubernetes(cfg, pass, cs, 2*time.Second)
 }
 
 // NewKubernetesWithClient is for tests.
-func NewKubernetesWithClient(cfg config.KubeExecutor, pass []string, cs kubernetes.Interface) *Kubernetes {
-	return &Kubernetes{cfg: cfg, pass: pass, cs: cs, poll: 50 * time.Millisecond}
+func NewKubernetesWithClient(cfg config.KubeExecutor, pass []string, cs kubernetes.Interface) (*Kubernetes, error) {
+	return newKubernetes(cfg, pass, cs, 50*time.Millisecond)
 }
+
+func newKubernetes(cfg config.KubeExecutor, pass []string, cs kubernetes.Interface, poll time.Duration) (*Kubernetes, error) {
+	k := &Kubernetes{cfg: cfg, pass: pass, cs: cs, poll: poll}
+	if len(cfg.Tolerations) > 0 {
+		if err := strictJSON(cfg.Tolerations, &k.tolerations); err != nil {
+			return nil, fmt.Errorf("executor.kubernetes.tolerations: %w", err)
+		}
+	}
+	if len(cfg.Affinity) > 0 {
+		k.affinity = &corev1.Affinity{}
+		if err := strictJSON(cfg.Affinity, k.affinity); err != nil {
+			return nil, fmt.Errorf("executor.kubernetes.affinity: %w", err)
+		}
+	}
+	return k, nil
+}
+
+// strictJSON converts a YAML-decoded value into a Kubernetes API type,
+// rejecting unknown fields so a typo fails at startup, not silently.
+func strictJSON(in, out any) error {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	return dec.Decode(out)
+}
+
+// caDir is where the CA bundle is mounted in review pods. SSL_CERT_DIR
+// points at it: Go then still loads the image's system bundle file and adds
+// the certificates in this directory.
+const caDir = "/etc/codereview/ca"
 
 func (k *Kubernetes) Name() string { return "kubernetes" }
 
@@ -201,6 +238,35 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 			res.Requests[corev1.ResourceMemory] = q
 		}
 	}
+	podLabels := map[string]string{}
+	for key, v := range k.cfg.PodLabels {
+		podLabels[key] = v
+	}
+	for key, v := range labels { // built-in labels win: pods are found by codereview/job
+		podLabels[key] = v
+	}
+	var annotations map[string]string
+	if len(k.cfg.PodAnnotations) > 0 {
+		annotations = map[string]string{}
+		for key, v := range k.cfg.PodAnnotations {
+			annotations[key] = v
+		}
+	}
+	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
+	volumes := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+	var env []corev1.EnvVar
+	if b := k.cfg.CABundle; b.Enabled() {
+		items := []corev1.KeyToPath{{Key: b.Key, Path: "ca.crt"}}
+		src := corev1.VolumeSource{}
+		if b.ConfigMap != "" {
+			src.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: b.ConfigMap}, Items: items}
+		} else {
+			src.Secret = &corev1.SecretVolumeSource{SecretName: b.Secret, Items: items}
+		}
+		volumes = append(volumes, corev1.Volume{Name: "ca-bundle", VolumeSource: src})
+		mounts = append(mounts, corev1.VolumeMount{Name: "ca-bundle", MountPath: caDir, ReadOnly: true})
+		env = append(env, corev1.EnvVar{Name: "SSL_CERT_DIR", Value: caDir})
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
 		Spec: batchv1.JobSpec{
@@ -208,9 +274,13 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 			ActiveDeadlineSeconds:   deadline,
 			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
+					NodeSelector:                 k.cfg.NodeSelector,
+					Tolerations:                  k.tolerations,
+					Affinity:                     k.affinity,
+					PriorityClassName:            k.cfg.PriorityClassName,
 					ServiceAccountName:           k.cfg.ServiceAccount,
 					AutomountServiceAccountToken: &automount,
 					SecurityContext: &corev1.PodSecurityContext{
@@ -223,6 +293,7 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 						Image:           k.cfg.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Args:            args,
+						Env:             env,
 						EnvFrom:         []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}},
 						Resources:       res,
 						SecurityContext: &corev1.SecurityContext{
@@ -230,9 +301,9 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 							AllowPrivilegeEscalation: &no,
 							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 						},
-						VolumeMounts: []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}},
+						VolumeMounts: mounts,
 					}},
-					Volumes: []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+					Volumes: volumes,
 				},
 			},
 		},
