@@ -16,6 +16,7 @@ import (
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/execsettings"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
 
@@ -142,5 +143,26 @@ func TestCheckConfigUsesSavedSettings(t *testing.T) {
 	var stored admin.StoredLicense
 	if found, _ := st.GetSetting(ctx, admin.LicenseSetting, &stored); found {
 		t.Error("check-config must not write the license into the database")
+	}
+}
+
+// TestCheckConfigShowsSavedSettings: check-config prints the allowlist and
+// require-reviewer values reviews use, the admin panel's once saved
+// (issue #50).
+func TestCheckConfigShowsSavedSettings(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{} // repos: removed from the config file
+	if rt, src := checkRuntimeSettings(ctx, cfg, nil); rt.Allowlist || src != "" {
+		t.Errorf("no database: config file values, no note: %v %q", rt.Allowlist, src)
+	}
+	st := storetest.New()
+	if _, src := checkRuntimeSettings(ctx, cfg, readOnlyStore{st}); !strings.Contains(src, "config file") {
+		t.Errorf("nothing saved yet: %q", src)
+	}
+	yes := true
+	_ = st.PutSetting(ctx, settings.Key, settings.Stored{Allowlist: &yes, RequireReviewer: &yes}, "a@x")
+	rt, src := checkRuntimeSettings(ctx, cfg, readOnlyStore{st})
+	if !rt.Allowlist || !rt.RequireReviewer || src != " (admin panel)" {
+		t.Errorf("saved values must be shown: %+v %q", rt, src)
 	}
 }
