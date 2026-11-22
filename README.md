@@ -131,6 +131,6 @@ You may use, run, modify and distribute the console, including in production, fr
 | What | Reviews for one GitHub, GitLab and Bitbucket host each; local executor; repository on/off; `@bot` commands; review history for 30 days; status dashboard; admin sign-in by email | More hosts per platform and per-host bot identities; host, group and pattern rules; team learnings; Docker and Kubernetes executors; token budgets; metrics and long history; audit log viewer; branch-sync skip; SSO domain and group rules |
 | Cost | Free in every environment, production included | A license key from Divmora, in every environment (development, CI, staging and production) |
 
-Install a key under **License** in the admin panel, or with `CODEREVIEW_CONSOLE_LICENSE` or `license.file` ([docs/deploy.md](docs/deploy.md#license)). Keys are verified offline. Licenses and trials: licensing@divmora.com.
+Install, replace or remove the key under **License** in the admin panel; it applies at once ([docs/deploy.md](docs/deploy.md#license)). Keys are verified offline. Licenses and trials: licensing@divmora.com.
 
 The review engine, [code-review-bot](https://github.com/divmora/code-review-bot), is Apache 2.0 and free in any environment.

@@ -37,6 +37,8 @@ export type Me = {
   free_retention_days: number;
   // Guided setup progress (required steps).
   setup?: { complete: boolean; done?: number; total?: number };
+  // Why reviews can't run with the current license ("" = they can).
+  reviews_paused?: string;
 };
 
 export type Access = {

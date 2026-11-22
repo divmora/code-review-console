@@ -27,6 +27,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -746,5 +747,37 @@ func TestCommentWarningText(t *testing.T) {
 	}
 	if w := commentWarning(hosts.Host{Platform: hosts.GitLab}, store.HostHookStats{Verified: 2, SystemHook: 1}); !strings.Contains(w, "Turn on Comments") {
 		t.Errorf("gitlab with a group hook but no comments: %q", w)
+	}
+}
+
+func TestReviewsPausedWithoutExecutorLicense(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	e.adm.ExecutorType = "kubernetes"
+	e.adm.Lic = licensetest.Manager(t, license.Hosts) // no executors feature
+	if _, body := e.do(t, "GET", "/admin/api/me", "", nil); !bytes.Contains(body, []byte(`"reviews_paused":"reviews are paused: the kubernetes executor needs a license`)) {
+		t.Errorf("/me must say reviews are paused: %s", body)
+	}
+	_, body := e.do(t, "GET", "/admin/api/setup", "", nil)
+	var st struct {
+		Steps []struct {
+			ID       string
+			Done     bool
+			Optional bool
+		}
+		Total int
+	}
+	_ = json.Unmarshal(body, &st)
+	if st.Steps[0].ID != "license" || st.Steps[0].Done || st.Steps[0].Optional || st.Total != 7 {
+		t.Errorf("the license step is required while reviews are paused: %s", body)
+	}
+	e.adm.Lic = licensetest.Full(t)
+	if _, body := e.do(t, "GET", "/admin/api/me", "", nil); !bytes.Contains(body, []byte(`"reviews_paused":""`)) {
+		t.Errorf("licensed: %s", body)
+	}
+	e.adm.ExecutorType, e.adm.Lic = "local", nil
+	if _, body := e.do(t, "GET", "/admin/api/me", "", nil); !bytes.Contains(body, []byte(`"reviews_paused":""`)) {
+		t.Errorf("the local executor never needs a license: %s", body)
 	}
 }

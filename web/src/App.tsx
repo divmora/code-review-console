@@ -81,6 +81,19 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
 // not valid (a missing license is the normal free core: no banner).
 function LicenseBanner({ me }: { me: Me }) {
   const l = me.license;
+  if (me.reviews_paused)
+    return (
+      <Alert role="status" variant="destructive" className="banner bad">
+        <AlertDescription>
+          <p>
+            {me.reviews_paused[0].toUpperCase() + me.reviews_paused.slice(1)}.{" "}
+            <Link className="font-semibold underline underline-offset-2" to="/license">
+              Add a license
+            </Link>
+          </p>
+        </AlertDescription>
+      </Alert>
+    );
   if (l.state === "grace")
     return (
       <Alert role="status" className="banner border-warning/40 bg-warning-soft text-warning">

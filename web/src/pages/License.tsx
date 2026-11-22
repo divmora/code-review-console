@@ -96,7 +96,15 @@ export default function License() {
         <CardContent className="grid gap-4">
           {lic.managed ? (
             <p className="text-sm text-muted-foreground">
-              This license comes from {lic.source === "env" ? <code>CODEREVIEW_CONSOLE_LICENSE</code> : <code>license.file</code>}; change it there and restart the console.
+              {lic.source === "env" ? (
+                <>
+                  This license comes from <code>CODEREVIEW_CONSOLE_LICENSE</code>, which overrides the one managed here. Remove the variable and restart to manage the license here.
+                </>
+              ) : (
+                <>
+                  This license comes from <code>license.file</code> because the console has no database. With <code>database.url</code> set, the key is copied into the database and managed here.
+                </>
+              )}
             </p>
           ) : (
             <>
