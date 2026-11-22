@@ -12,7 +12,7 @@ type Eff = {
   allowlist: boolean; require_reviewer: boolean; skip_branch_sync: boolean; sync_source_branches: string[];
   score_labels: boolean; commit_status: boolean; review_retention_days: number; webhook_retention_days: number;
   learnings_enabled: boolean; learnings_auto_activate: boolean; daily_token_budget: number; repo_daily_token_budget: number;
-  dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; review_defaults: Overrides; source?: Record<string, string>;
+  dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; command_access: "write" | "anyone"; review_defaults: Overrides; source?: Record<string, string>;
 };
 
 type SessionRow = { id: number; email: string; name: string; created: string; expires: string; current: boolean };
@@ -180,6 +180,12 @@ export default function Settings() {
           </Field>
           <Bool label="Score labels on MRs/PRs" value={v.score_labels} onChange={set("score_labels")} yes="On" no="Off" />
           <Bool label="Commit status on the reviewed commit" value={v.commit_status} onChange={set("commit_status")} yes="On" no="Off" />
+          <Field label="Who can run review and question commands" hint={<Note className="text-xs">Commands that run the model spend tokens. Write access means GitLab Developer or higher, GitHub write or above, Bitbucket write or admin (the Bitbucket token needs admin on the repository to check). @bot help works for everyone, and each person is limited to a few commands an hour.</Note>}>
+            <NativeSelect value={v.command_access || "write"} onChange={(e) => set("command_access")(e.target.value as Eff["command_access"])}>
+              <option value="write">People who can push to the repository</option>
+              <option value="anyone">Anyone who can comment</option>
+            </NativeSelect>
+          </Field>
         </FormGrid>
       </Group>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -195,6 +201,9 @@ export default function Settings() {
             <Num label="Daily tokens, all repositories" min={0} step={10000} placeholder="0 = no limit" value={v.daily_token_budget} onChange={set("daily_token_budget")} disabled={!has.budgets} note={<LockNote feature="budgets" />} />
             <Num label="Daily tokens per repository" min={0} step={10000} placeholder="0 = no limit" value={v.repo_daily_token_budget} onChange={set("repo_daily_token_budget")} disabled={!has.budgets} />
           </FormGrid>
+          {has.budgets && !v.daily_token_budget && !v.repo_daily_token_budget && (
+            <Note className="text-warning">No daily limit is set: reviews and commands spend tokens without a cap. Set a budget to bound what a busy day, or misuse, can cost.</Note>
+          )}
         </Group>
         <Group title="History">
           <FormGrid className="lg:grid-cols-2">

@@ -58,7 +58,17 @@ type Stored struct {
 	DashboardEnabled *bool  `json:"dashboard_enabled,omitempty"`
 	HideRepos        *bool  `json:"hide_repos,omitempty"`
 	DashboardTitle   string `json:"dashboard_title,omitempty"`
+	// CommandAccess says who may run chat commands that spend tokens
+	// (review, full review, questions): "write" (authors who can push,
+	// the default) or "anyone" who can comment.
+	CommandAccess string `json:"command_access,omitempty"`
 }
+
+// Command access values.
+const (
+	CommandAccessWrite  = "write"
+	CommandAccessAnyone = "anyone"
+)
 
 // Effective is what the console uses now, with where each value came from
 // ("database", or "config" when it was never saved).
@@ -79,6 +89,7 @@ type Effective struct {
 	DashboardEnabled      bool              `json:"dashboard_enabled"`
 	HideRepos             bool              `json:"hide_repos"`
 	DashboardTitle        string            `json:"dashboard_title"`
+	CommandAccess         string            `json:"command_access"`
 	Source                map[string]string `json:"source"`
 }
 
@@ -113,7 +124,8 @@ func (s *Service) Defaults() Effective {
 		LearningsEnabled:    true, LearningsAutoActivate: false,
 		WebhookRetentionDays: days(s.cfg.Server.WebhookRetention, 14),
 		DashboardEnabled:     d.Enabled, HideRepos: d.HideRepos, DashboardTitle: d.Title,
-		Source: map[string]string{},
+		CommandAccess: CommandAccessWrite,
+		Source:        map[string]string{},
 	}
 }
 
@@ -195,6 +207,10 @@ func (s *Service) resolve(st Stored) Effective {
 		e.SyncSourceBranches, e.Source["sync_source_branches"] = st.SyncSourceBranches, "database"
 	}
 	pick("hide_repos", &e.HideRepos, st.HideRepos)
+	e.Source["command_access"] = "config"
+	if st.CommandAccess != "" {
+		e.CommandAccess, e.Source["command_access"] = st.CommandAccess, "database"
+	}
 	e.Source["dashboard_title"] = "config"
 	if st.DashboardTitle != "" {
 		e.DashboardTitle, e.Source["dashboard_title"] = st.DashboardTitle, "database"
@@ -295,6 +311,11 @@ func (s *Service) Seed(ctx context.Context) (seeded bool, differs []string, err 
 func (st Stored) Validate(profiles map[string]bool, haveStore bool) error {
 	if st.Allowlist != nil && *st.Allowlist && !haveStore {
 		return errors.New("the allowlist needs a database")
+	}
+	switch st.CommandAccess {
+	case "", CommandAccessWrite, CommandAccessAnyone:
+	default:
+		return fmt.Errorf("command_access %q: want write or anyone", st.CommandAccess)
 	}
 	if len(st.DashboardTitle) > 120 {
 		return errors.New("dashboard title is limited to 120 characters")

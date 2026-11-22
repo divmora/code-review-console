@@ -482,6 +482,7 @@ type settingsReq struct {
 	DashboardEnabled      bool             `json:"dashboard_enabled"`
 	HideRepos             bool             `json:"hide_repos"`
 	DashboardTitle        string           `json:"dashboard_title"`
+	CommandAccess         string           `json:"command_access"`
 }
 
 func intOr(v, def int) *int {
@@ -514,6 +515,7 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		DailyTokenBudget: &req.DailyTokenBudget, RepoDailyTokenBudget: &req.RepoDailyTokenBudget,
 		ReviewRetentionDays: intOr(req.ReviewRetentionDays, 180), WebhookRetentionDays: intOr(req.WebhookRetentionDays, 14),
 		DashboardEnabled: &req.DashboardEnabled, HideRepos: &req.HideRepos, DashboardTitle: strings.TrimSpace(req.DashboardTitle),
+		CommandAccess: req.CommandAccess,
 	}
 	if st.DashboardTitle == "" {
 		st.DashboardTitle = "Code review"

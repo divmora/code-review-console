@@ -181,6 +181,7 @@ func TestSeveralHooksOneInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trustAuthors(s)
 	defer s.queue.Shutdown(context.Background())
 	note := []byte(`{"object_kind":"note","user":{"username":"dev"},"project":{"path_with_namespace":"g/p"},"merge_request":{"iid":3},` +
 		`"object_attributes":{"id":99,"note":"@codereview review","noteable_type":"MergeRequest","updated_at":"2026-11-19 10:00:00 UTC"}}`)

@@ -297,6 +297,10 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 			ignored(w, "repository is not enabled in the admin panel")
 			return
 		}
+		if why := s.gateCommand(r.Context(), tgt, ref, cmd); why != "" {
+			ignored(w, why)
+			return
+		}
 		go func() {
 			if err := tgt.client.React(context.Background(), &vcs.PR{Ref: ref}, strconv.FormatInt(a.ID, 10), "eyes"); err != nil {
 				log.Debug("reaction failed", "error", err)
