@@ -1,13 +1,17 @@
-<img src="docs/brand/logo.svg" alt="" width="64" height="64">
+<p align="center">
+  <img src="docs/brand/logo.svg" alt="" width="88" height="88">
+</p>
 
-# Divmora Code Review Console
+<h1 align="center">Divmora Code Review Console</h1>
 
-[![Latest Release](https://img.shields.io/github/v/release/divmora/code-review-console?logo=github)](https://github.com/divmora/code-review-console/releases)
-[![License: ELv2](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](LICENSE)
-[![CI/CD](https://github.com/divmora/code-review-console/actions/workflows/ci.yml/badge.svg)](https://github.com/divmora/code-review-console/actions)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/divmora/code-review-console)](go.mod)
-[![Website](https://img.shields.io/badge/website-GitHub%20Pages-blue.svg)](https://divmora.github.io/code-review-console/)
-[![Security Policy](https://img.shields.io/badge/Security-Policy-green.svg)](SECURITY.md)
+<p align="center">
+  <a href="https://github.com/divmora/code-review-console/releases"><img src="https://img.shields.io/github/v/release/divmora/code-review-console?logo=github" alt="Latest Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Elastic_2.0-blue.svg" alt="License: ELv2"></a>
+  <a href="https://github.com/divmora/code-review-console/actions"><img src="https://github.com/divmora/code-review-console/actions/workflows/ci.yml/badge.svg" alt="CI/CD"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/divmora/code-review-console" alt="Go Version"></a>
+  <a href="https://divmora.github.io/code-review-console/"><img src="https://img.shields.io/badge/website-GitHub%20Pages-blue.svg" alt="Website"></a>
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/Security-Policy-green.svg" alt="Security Policy"></a>
+</p>
 
 The control plane for [code-review-bot](https://github.com/divmora/code-review-bot). It turns the open-source, one-PR-per-run CLI into an organisation-wide review service:
 
