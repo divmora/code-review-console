@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 type Learning = {
   id: number; platform: string; host: string; scope: string; text: string; path: string;
-  status: "active" | "pending" | "disabled"; source: string; source_url: string; source_author: string; updated_at: string;
+  status: "active" | "pending" | "disabled"; source: string; source_url: string; source_author: string; source_role?: string; updated_at: string;
 };
 
 const sourceLabel: Record<string, string> = { reply: "from a reply", command: "@bot remember", manual: "added here" };
@@ -163,7 +163,7 @@ export default function Learnings() {
                     </NativeSelect>
                   </TableCell>
                   <TableCell className="align-top text-muted-foreground">
-                    <div>{(sourceLabel[l.source] || l.source) + (l.source_author ? " · " + l.source_author : "")}</div>
+                    <div>{(sourceLabel[l.source] || l.source) + (l.source_author ? " · " + l.source_author : "") + (l.source_role ? " (" + l.source_role + ")" : "")}</div>
                     {l.source_url && (
                       <a className="inline-flex items-center gap-1 text-xs hover:text-foreground hover:underline" href={l.source_url} target="_blank" rel="noopener noreferrer">
                         open PR <ExternalLink className="size-3" />

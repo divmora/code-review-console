@@ -186,7 +186,8 @@ export default function Settings() {
         <Group title="Learnings">
           <FormGrid className="lg:grid-cols-2">
             <Bool label="Learn from replies to the bot" value={v.learnings_enabled} onChange={set("learnings_enabled")} yes="On" no="Off" disabled={!has.learnings} note={<LockNote feature="learnings" />} />
-            <Bool label="New learnings" value={v.learnings_auto_activate} onChange={set("learnings_auto_activate")} yes="Apply at once" no="Wait for an admin's approval" disabled={!has.learnings} />
+            <Bool label="New learnings" value={v.learnings_auto_activate} onChange={set("learnings_auto_activate")} yes="Apply at once" no="Wait for an admin's approval" disabled={!has.learnings}
+              note={<Note className="text-xs">Even when set to apply at once, a learning only applies right away if its author can push to the repository (GitLab Developer or higher, GitHub write or above). Anyone else's waits for approval, and so does every learning from Bitbucket.</Note>} />
           </FormGrid>
         </Group>
         <Group title="Budgets" description={'Input plus output tokens of finished jobs in the current UTC day. When a budget is used up, automatic reviews and chat commands wait until the next day; "Review now" and re-runs from this panel still run.'}>

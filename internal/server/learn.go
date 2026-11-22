@@ -74,22 +74,77 @@ func (s *Server) withLearnings(ctx context.Context, ref vcs.Ref, ov *config.Over
 	return &c
 }
 
-// saveLearning stores a learning scoped to the repository. It returns
-// whether it applies at once.
-func (s *Server) saveLearning(ctx context.Context, ref vcs.Ref, text, path, source, url, author, sourceRef string) (*store.Learning, error) {
+// saveLearning stores a learning scoped to the repository. It applies at
+// once only when learnings auto-activate and the author can push to the
+// repository; otherwise it waits for an admin (issue #32: anyone who can
+// comment must not be able to switch findings off).
+func (s *Server) saveLearning(ctx context.Context, tgt target, ref vcs.Ref, text, path, source, url, author, sourceRef string) (*store.Learning, error) {
 	if s.store == nil {
 		return nil, errors.New("learnings need a database")
 	}
-	status := store.LearningActive
-	if !s.settings.Runtime(ctx).LearningsAutoActivate {
-		status = store.LearningPending
+	role, trusted := s.authorRole(ctx, tgt, ref, author)
+	status := store.LearningPending
+	if trusted && s.settings.Runtime(ctx).LearningsAutoActivate {
+		status = store.LearningActive
 	}
 	text = strings.TrimSpace(text)
 	if len(text) > 600 {
 		text = text[:600]
 	}
 	return s.store.CreateLearning(ctx, store.Learning{Platform: ref.Platform, Host: ref.Host, Scope: strings.ToLower(ref.Repo),
-		Text: text, Path: path, Status: status, Source: source, SourceURL: url, SourceAuthor: author, SourceRef: sourceRef}, "bot")
+		Text: text, Path: path, Status: status, Source: source, SourceURL: url, SourceAuthor: author, SourceRole: role, SourceRef: sourceRef}, "bot")
+}
+
+// GitLab access levels (Developer and up can push).
+var gitlabLevels = map[int]string{10: "guest", 15: "planner", 20: "reporter", 30: "developer", 40: "maintainer", 50: "owner"}
+
+// authorRole asks the code host what access a comment author has on the
+// repository. trusted is true for those who can push: GitLab Developer or
+// higher, GitHub write, maintain or admin. Bitbucket offers no lookup a
+// bot token may use, so its authors are never trusted; nor is anyone when
+// the lookup fails.
+func (s *Server) authorRole(ctx context.Context, tgt target, ref vcs.Ref, author string) (role string, trusted bool) {
+	if author == "" {
+		return "unknown", false
+	}
+	switch tgt.host.Platform {
+	case hosts.GitLab:
+		var members []struct {
+			Username    string `json:"username"`
+			AccessLevel int    `json:"access_level"`
+		}
+		u := fmt.Sprintf("%s/api/v4/projects/%s/members/all?per_page=100&query=%s", tgt.host.BaseURL, url.PathEscape(ref.Repo), url.QueryEscape(author))
+		if err := s.hostGET(ctx, tgt.host, tgt, u, &members); err != nil {
+			s.logger.Warn("could not look up a comment author's role; their learning waits for an admin", "pr", ref.String(), "author", author, "error", err)
+			return "unknown", false
+		}
+		for _, m := range members {
+			if strings.EqualFold(m.Username, author) {
+				name := gitlabLevels[m.AccessLevel]
+				if name == "" {
+					name = "level " + strconv.Itoa(m.AccessLevel)
+				}
+				return name, m.AccessLevel >= 30
+			}
+		}
+		return "not a member", false
+	case hosts.GitHub:
+		var p struct {
+			Permission string `json:"permission"`
+			RoleName   string `json:"role_name"`
+		}
+		u := fmt.Sprintf("%s/repos/%s/collaborators/%s/permission", tgt.host.BaseURL, ref.Repo, url.PathEscape(author))
+		if err := s.hostGET(ctx, tgt.host, tgt, u, &p); err != nil {
+			s.logger.Warn("could not look up a comment author's role; their learning waits for an admin", "pr", ref.String(), "author", author, "error", err)
+			return "unknown", false
+		}
+		switch p.Permission {
+		case "admin", "maintain", "write":
+			return firstNonEmpty(p.RoleName, p.Permission), true
+		}
+		return firstNonEmpty(p.RoleName, p.Permission, "none"), false
+	}
+	return "unknown", false
 }
 
 // remember handles "@bot remember <text>": the author states the rule.
@@ -103,7 +158,7 @@ func (s *Server) remember(tgt target, ref vcs.Ref, text, author, sourceRef strin
 			if strings.TrimSpace(text) == "" {
 				return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, "Tell me what to remember: `@"+tgt.botName+" remember <a rule for future reviews>`.")
 			}
-			l, err := s.saveLearning(ctx, ref, text, "", "command", webURL(ref), author, sourceRef)
+			l, err := s.saveLearning(ctx, tgt, ref, text, "", "command", webURL(ref), author, sourceRef)
 			if errors.Is(err, store.ErrDuplicate) {
 				return nil
 			}
@@ -112,7 +167,7 @@ func (s *Server) remember(tgt target, ref vcs.Ref, text, author, sourceRef strin
 			}
 			note := "📝 Noted for future reviews of `" + ref.Repo + "`: " + l.Text
 			if l.Status == store.LearningPending {
-				note += "\n\n_An admin approves new learnings in the console before they apply._"
+				note += "\n\n_It applies once an admin approves it in the console._"
 			}
 			return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, note)
 		},
@@ -167,7 +222,7 @@ func (s *Server) learnFromReply(tgt target, ref vcs.Ref, in learnInput, sourceRe
 				rep.Skipped, rep.Note = true, "no learning: "+out.Reason
 				return nil
 			}
-			l, err := s.saveLearning(ctx, ref, out.Text, out.Path, "reply", webURL(ref), in.Author, sourceRef)
+			l, err := s.saveLearning(ctx, tgt, ref, out.Text, out.Path, "reply", webURL(ref), in.Author, sourceRef)
 			if errors.Is(err, store.ErrDuplicate) {
 				rep.Skipped, rep.Note = true, "already learned from this comment"
 				return nil
