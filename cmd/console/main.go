@@ -124,6 +124,7 @@ func serve(ctx context.Context, args []string) error {
 	if err := requireExecutor(cfg, lic); err != nil {
 		return err
 	}
+	warnSSORules(cfg, lic, logger)
 	exec, err := newExecutor(cfg)
 	if err != nil {
 		return err
@@ -289,6 +290,17 @@ func loadLicense(ctx context.Context, cfg *config.Config, st store.Store, logger
 	return lic
 }
 
+// warnSSORules warns when admin domain or group rules are configured but the
+// license doesn't cover them, so only allowed_emails can sign in.
+func warnSSORules(cfg *config.Config, lic *license.Manager, logger *slog.Logger) {
+	o := cfg.Admin.OIDC
+	if !cfg.Admin.Enabled || len(o.AllowedDomains)+len(o.AllowedGroups) == 0 || lic.Has(license.SSORules) {
+		return
+	}
+	logger.Warn("admin.oidc allowed_domains and allowed_groups are ignored until a license with the sso_rules feature is added; only allowed_emails can sign in",
+		"allowed_emails", len(o.AllowedEmails))
+}
+
 // requireExecutor refuses the docker and kubernetes executors without a
 // license that covers them.
 func requireExecutor(cfg *config.Config, lic *license.Manager) error {
@@ -296,7 +308,8 @@ func requireExecutor(cfg *config.Config, lic *license.Manager) error {
 		return nil
 	}
 	if err := lic.Require(license.Executors); err != nil {
-		return fmt.Errorf("executor.type %s: %w", cfg.Executor.Type, err)
+		return fmt.Errorf("executor.type %s: %w (on a first start, provide the key with CODEREVIEW_CONSOLE_LICENSE or license.file, "+
+			"or start once with executor.type: local and paste it in the admin panel)", cfg.Executor.Type, err)
 	}
 	return nil
 }

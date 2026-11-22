@@ -45,7 +45,17 @@ The key is read from the first of these that is set:
 Keys are verified offline against Divmora's public key; nothing is sent anywhere. A new key
 applies at once, except for the executor type, which is checked when the console starts:
 `executor.type: docker` or `kubernetes` without the `executors` feature stops startup with a clear
-error. When a license expires, paid features keep working for its grace period (14 days unless
+error.
+
+**First start with the docker or kubernetes executor.** Because the check runs before the admin
+panel is up, a fresh install can't use the panel to add its first key. Either:
+
+- provide the key by `CODEREVIEW_CONSOLE_LICENSE` or `license.file` for the first start (it can
+  stay there, or you can paste it in the panel later and remove it), or
+- start once with `executor.type: local`, paste the key under **License**, then switch the executor
+  and restart. The pasted key is stored in the database and read on every later start.
+
+When a license expires, paid features keep working for its grace period (14 days unless
 the license says otherwise), with a banner in the admin panel. After that the console goes back
 to the free core. It never stops reviewing, and settings for paid features are kept for when the
 license is renewed.

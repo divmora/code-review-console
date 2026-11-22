@@ -54,6 +54,8 @@ admin:
 
 Any one matching rule grants admin access. Email and domain rules only match when the provider doesn't mark the email unverified.
 
+> **`allowed_domains` and `allowed_groups` need a license.** They are a paid feature (`sso_rules`). On the free core, or with a key that doesn't include `sso_rules`, only `allowed_emails` grants access, and the console logs a warning at startup when domain or group rules are configured. List at least one admin in `allowed_emails` so you can sign in and paste a key under **License**; domain and group rules start working as soon as a key with `sso_rules` is saved, with no restart.
+
 When you run several instances behind a load balancer, also set `admin.cookie_secret` (32+ random characters) so a sign-in started on one instance can finish on another.
 
 ## 3. Use it
