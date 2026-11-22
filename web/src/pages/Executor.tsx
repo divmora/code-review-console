@@ -156,9 +156,9 @@ export default function Executor() {
           </CardHeader>
           <CardContent className="grid gap-5">
             <FormGrid>
-              <Field label="Version" className="lg:col-span-3" hint={<Sub>The image tag (or a sha256: digest). The console needs code-review-bot {v.min_cli_version} or later. Now running <code className="break-all">{v.image}</code>.</Sub>}>
+              <Field label="Version" className="lg:col-span-3" hint={<Sub>The image tag, a sha256: digest, or both to pin it (0.5.0@sha256:…). The console needs code-review-bot {v.min_cli_version} or later. Now running <code className="break-all">{v.image}</code>.</Sub>}>
                 <div className="flex min-w-0 items-center gap-1.5">
-                  <code className="hidden shrink truncate text-xs text-muted-foreground sm:block">{v.image_repo}:</code>
+                  <code className="hidden shrink truncate text-xs text-muted-foreground sm:block">{v.image_repo}{f.version.startsWith("sha256:") ? "@" : ":"}</code>
                   <Input value={f.version} onChange={set("version")} placeholder="0.5.0" spellCheck={false} className="sm:max-w-48" />
                 </div>
               </Field>
