@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plug, Plus } from "lucide-react";
+import { Check, Copy, Plug, Plus, Webhook } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,12 @@ type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
   secrets: { token: boolean; app_private_key: boolean; api_token: boolean; webhook_secrets: number; signing_tokens: number };
-  webhook_url: string; events: string[]; licensed: boolean;
+  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean;
+};
+
+type Hook = {
+  id: string; host_id: number; name: string; enabled: boolean; url: string;
+  secrets: { webhook_secret: boolean; signing_tokens: number }; created_at: string; created_by: string;
 };
 
 const names = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
@@ -30,6 +35,171 @@ function Secret({ label, set, multi, list, help, value, onChange }: { label: str
         <Input type="password" placeholder={ph} autoComplete="new-password" value={value} onChange={(e) => onChange(e.target.value)} />
       )}
     </Field>
+  );
+}
+
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const toast = useToast();
+  const [done, setDone] = useState(false);
+  const copy = () =>
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setDone(true);
+        setTimeout(() => setDone(false), 1500);
+      })
+      .catch(() => toast("Copy failed: select the text and copy it", true));
+  return (
+    <Button variant="ghost" size="sm" onClick={copy} aria-label={label}>
+      {done ? <Check /> : <Copy />} {label}
+    </Button>
+  );
+}
+
+// SecretOnce shows a newly generated secret, which is never shown again.
+function SecretOnce({ secret, platform, onDone }: { secret: string; platform: Host["platform"]; onDone: () => void }) {
+  const where = platform === "gitlab" ? "GitLab's Secret token field" : platform === "github" ? "the webhook's Secret field" : "the webhook's Secret field";
+  return (
+    <div className="grid gap-2 rounded-lg border border-warning/40 bg-warning-soft p-3">
+      <div className="text-sm font-medium">Copy the secret now: it is not shown again.</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="min-w-0 flex-1 break-all font-mono text-xs">{secret}</code>
+        <CopyButton text={secret} />
+      </div>
+      <Sub>Paste it into {where}, together with the URL.</Sub>
+      <div>
+        <Button size="sm" variant="outline" onClick={onDone}>
+          I've copied it
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["platform"]; onChanged: () => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [secret, setSecret] = useState("");
+  const [name, setName] = useState(hook.name);
+  const [signing, setSigning] = useState("");
+  const update = (body: any, msg: string) =>
+    put<{ webhook: Hook; secret?: string }>("/admin/api/webhooks/" + hook.id, body)
+      .then((r) => {
+        toast(msg);
+        if (r.secret) setSecret(r.secret);
+        onChanged();
+      })
+      .catch((e) => toast(errMsg(e), true));
+  const regenerate = async () => {
+    if (!(await confirm({ title: "Replace the secret of " + hook.name + "?", description: "Deliveries signed with the old secret are rejected until you paste the new one into the code host.", action: "Replace secret", danger: true }))) return;
+    update({ regenerate_secret: true }, "New secret for " + hook.name);
+  };
+  const remove = async () => {
+    if (!(await confirm({ title: "Delete " + hook.name + "?", description: "Its URL stops working at once. Remove the webhook from the code host too.", action: "Delete webhook", danger: true }))) return;
+    del("/admin/api/webhooks/" + hook.id)
+      .then(() => {
+        toast("Deleted " + hook.name);
+        onChanged();
+      })
+      .catch((e) => toast(errMsg(e), true));
+  };
+  return (
+    <div className="grid gap-3 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input className="h-8 max-w-64" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() !== hook.name && update({ name }, "Renamed")} />
+        <StateBadge kind={hook.enabled ? "on" : "idle"}>{hook.enabled ? "Enabled" : "Disabled"}</StateBadge>
+        {platform === "gitlab" && hook.secrets.signing_tokens > 0 && <Badge variant="outline" className="font-normal text-muted-foreground">signing token ✓</Badge>}
+        <span className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => update({ enabled: !hook.enabled }, hook.enabled ? "Disabled " + hook.name : "Enabled " + hook.name)}>
+          {hook.enabled ? "Disable" : "Enable"}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={regenerate}>
+          New secret
+        </Button>
+        <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={remove}>
+          Delete
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="hosturl min-w-0 flex-1 break-all">{hook.url}</code>
+        <CopyButton text={hook.url} label="Copy URL" />
+      </div>
+      {secret && <SecretOnce secret={secret} platform={platform} onDone={() => setSecret("")} />}
+      {platform === "gitlab" && (
+        <Field label={"Signing token (whsec_…) — GitLab 19.0+, " + (hook.secrets.signing_tokens ? "set ✓, paste to replace" : "optional: copy it from the webhook in GitLab")}>
+          <div className="flex gap-2">
+            <Input type="password" autoComplete="off" value={signing} placeholder={hook.secrets.signing_tokens ? "Set ✓" : ""} onChange={(e) => setSigning(e.target.value)} />
+            <Button variant="outline" size="sm" disabled={!signing.trim()} onClick={() => update({ signing_tokens: [signing.trim()] }, "Saved signing token").then(() => setSigning(""))}>
+              Save
+            </Button>
+            {hook.secrets.signing_tokens > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => update({ signing_tokens: [] }, "Removed signing token")}>
+                Remove
+              </Button>
+            )}
+          </div>
+        </Field>
+      )}
+      <Sub>
+        Added {new Date(hook.created_at).toLocaleDateString()}
+        {hook.created_by ? " by " + hook.created_by : ""}
+      </Sub>
+    </div>
+  );
+}
+
+function HostWebhooks({ host, managed, onChanged }: { host: Host; managed: boolean; onChanged: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<{ id: string; secret: string } | null>(null);
+  const add = () =>
+    post<{ webhook: Hook; secret: string }>(`/admin/api/hosts/${host.id}/webhooks`, { name: name.trim() })
+      .then((r) => {
+        setName("");
+        setCreated({ id: r.webhook.id, secret: r.secret });
+        toast("Added " + r.webhook.name);
+        onChanged();
+      })
+      .catch((e) => toast(errMsg(e), true));
+  const shared = host.secrets.webhook_secrets > 0 || host.secrets.signing_tokens > 0;
+  return (
+    <div className="grid gap-6">
+      {managed && (
+        <Section title="Add a webhook">
+          <div className="flex flex-wrap gap-2">
+            <Input className="max-w-80" value={name} placeholder={host.platform === "gitlab" ? "e.g. the group it's for" : "e.g. where it's set up"} onChange={(e) => setName(e.target.value)} />
+            <Button onClick={add}>
+              <Plus /> Add webhook
+            </Button>
+          </div>
+          <Sub>The console generates a URL and a secret. Set the code host's webhook to them, with these events: {host.events.join(", ")}.</Sub>
+        </Section>
+      )}
+      <Section title={`Webhooks (${host.webhooks.length})`}>
+        {!host.webhooks.length ? (
+          <Sub>No webhooks yet{managed ? ": add one above." : "."}</Sub>
+        ) : (
+          host.webhooks.map((w) => (
+            <div key={w.id} className="grid gap-2">
+              {created?.id === w.id && <SecretOnce secret={created.secret} platform={host.platform} onDone={() => setCreated(null)} />}
+              <HookRow hook={w} platform={host.platform} onChanged={onChanged} />
+            </div>
+          ))
+        )}
+      </Section>
+      <Separator />
+      <Section title="Shared URL">
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="hosturl min-w-0 flex-1 break-all">{host.webhook_url}</code>
+          <CopyButton text={host.webhook_url} label="Copy URL" />
+        </div>
+        <Sub>
+          {shared
+            ? "Still accepted for existing hooks. It is shared by every " + names[host.platform] + " host and checked with the secrets in the host's settings. Move hooks to their own URL above when you can."
+            : "Shared by every " + names[host.platform] + " host. This host has no secrets of its own for it, so only the webhooks above work."}
+        </Sub>
+      </Section>
+    </div>
   );
 }
 
@@ -131,7 +301,8 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
         </div>
       </Section>
       <Separator />
-      <Section title="Webhooks">
+      <Section title="Shared URL secrets (optional)">
+        <Sub>Only for hooks on the shared {"/webhooks/" + plat} URL. Webhooks added under Webhooks have their own URL and secret.</Sub>
         <div className="grid gap-4">
           {plat === "gitlab" ? (
             <>
@@ -176,6 +347,7 @@ export default function Hosts() {
   const multi = useFeature("hosts");
   const [data, setData] = useState<{ mode: string; key_env?: string; hosts: Host[] } | null>(null);
   const [editing, setEditing] = useState<number | null>(null); // 0 = new
+  const [hooks, setHooks] = useState<number | null>(null);
   const [tests, setTests] = useState<Record<number, { pending?: boolean; ok?: boolean; message?: string }>>({});
   const load = () => get<{ mode: string; key_env?: string; hosts: Host[] }>("/admin/api/hosts").then(setData).catch((e) => toast(errMsg(e), true));
   useEffect(() => {
@@ -198,6 +370,7 @@ export default function Hosts() {
   };
   const managed = data?.mode === "database";
   const editHost = editing ? data?.hosts.find((h) => h.id === editing) ?? null : null;
+  const hooksHost = hooks ? data?.hosts.find((h) => h.id === hooks) ?? null : null;
   return (
     <section className="grid gap-4">
       <Toolbar>
@@ -223,7 +396,7 @@ export default function Hosts() {
               <TableRow>
                 <TableHead className="pl-4">Host</TableHead>
                 <TableHead>Credentials</TableHead>
-                <TableHead>Webhook URL</TableHead>
+                <TableHead>Webhooks</TableHead>
                 <TableHead>Check</TableHead>
                 <TableHead />
               </TableRow>
@@ -263,8 +436,20 @@ export default function Hosts() {
                       </Sub>
                     </TableCell>
                     <TableCell className="max-w-80 align-top whitespace-normal">
-                      <code className="hosturl break-all">{h.webhook_url}</code>
-                      <Sub>Events: {h.events.join(", ")}</Sub>
+                      {h.webhooks.length ? (
+                        <div className="grid gap-0.5 text-sm">
+                          {h.webhooks.map((w) => (
+                            <div key={w.id} className={w.enabled ? "" : "text-muted-foreground line-through"}>
+                              {w.name}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <Sub>{h.secrets.webhook_secrets || h.secrets.signing_tokens ? "Shared URL only" : "None yet"}</Sub>
+                      )}
+                      <Button variant="link" size="sm" className="h-auto px-0" onClick={() => setHooks(h.id)}>
+                        <Webhook /> {managed ? "Manage webhooks" : "Show URLs"}
+                      </Button>
                     </TableCell>
                     <TableCell className="max-w-56 align-top whitespace-normal">
                       {t && (t.pending ? <span className="text-sm text-muted-foreground">testing…</span> : <StateBadge kind={t.ok ? "on" : "off"}>{t.message}</StateBadge>)}
@@ -294,8 +479,12 @@ export default function Hosts() {
         )}
       </Panel>
       <Note>
-        Each host is a GitHub (github.com or Enterprise), GitLab (gitlab.com or self-managed) or Bitbucket Cloud account the console reviews for. Tokens and webhook secrets are encrypted with <code>CODEREVIEW_CONSOLE_SECRET_KEY</code> before they are stored and are never shown again: leave a secret blank to keep it. Point each code host's webhook at the URL shown, with the events listed. Several hooks on one host (a GitLab system hook plus group hooks) can each have their own secret: add one per line.
+        Each host is a GitHub (github.com or Enterprise), GitLab (gitlab.com or self-managed) or Bitbucket Cloud account the console reviews for. Tokens and webhook secrets are encrypted with <code>CODEREVIEW_CONSOLE_SECRET_KEY</code> before they are stored and are never shown again: leave a secret blank to keep it. Under <b>Manage webhooks</b>, add one webhook per hook you set up (a GitLab system hook, each group hook): each gets its own URL and secret, so one can be replaced or removed without touching the others.
       </Note>
+
+      <SidePanel open={hooksHost !== null} onClose={() => setHooks(null)} title={hooksHost ? "Webhooks: " + hooksHost.name : ""} description="Each webhook has its own URL and secret." wide>
+        {hooksHost && <HostWebhooks key={hooksHost.id} host={hooksHost} managed={managed} onChanged={load} />}
+      </SidePanel>
 
       <SidePanel open={editing !== null} onClose={() => setEditing(null)} title={editHost ? "Edit " + editHost.name : "New host"} description="Credentials are encrypted before they are stored.">
         {editing !== null && (

@@ -29,7 +29,7 @@ Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host a
 
 ### Code hosts (GitHub, GitLab, Bitbucket)
 
-Hosts are managed under **Code hosts** in the admin panel: github.com or GitHub Enterprise (token or GitHub App), gitlab.com or self-managed GitLab, and Bitbucket Cloud (access token, or account email plus API token). Each host shows the webhook URL to configure (`/webhooks/github`, `/webhooks/gitlab`, `/webhooks/bitbucket`) and the events to send, and a **Test** button that checks the token.
+Hosts are managed under **Code hosts** in the admin panel: github.com or GitHub Enterprise (token or GitHub App), gitlab.com or self-managed GitLab, and Bitbucket Cloud (access token, or account email plus API token). Under **Manage webhooks**, each host gets one webhook per hook you set up (a GitLab system hook, each group hook). The console generates its URL (`/webhooks/<platform>/<uuid>`) and its own secret, and lists the events to send. A **Test** button checks the token. The shared `/webhooks/github`, `/webhooks/gitlab` and `/webhooks/bitbucket` URLs keep working with the secrets in the host's settings.
 
 Set `CODEREVIEW_CONSOLE_SECRET_KEY` (32 random bytes, `openssl rand -base64 32`, kept outside the database): tokens, App keys, webhook secrets and signing tokens are encrypted with it (AES-256-GCM) before they are stored, and the admin panel never shows them again. Losing the key means entering the secrets again. The `github:`, `gitlab:` and `bitbucket:` sections of the config file are the initial configuration: on first start they are copied into the database, and from then on the admin panel is where hosts change. Without the key (or without a database) the config file is used as is and the Hosts page is read-only.
 

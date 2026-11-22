@@ -104,7 +104,6 @@ func TestValidate(t *testing.T) {
 		h    Host
 		want string
 	}{
-		{Host{Platform: GitHub, Secrets: Secrets{Token: "t"}}, "webhook secret"},
 		{Host{Platform: GitHub, Settings: Settings{AppID: 1}, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "token, or a GitHub App"},
 		{Host{Platform: GitLab, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "access token"},
 		{Host{Platform: GitLab, Secrets: Secrets{Token: "t", SigningTokens: []string{"nope"}}}, "whsec_"},
@@ -113,6 +112,22 @@ func TestValidate(t *testing.T) {
 		if err := c.h.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: want %q, got %v", c.h, c.want, err)
 		}
+	}
+	for _, c := range []struct {
+		h    Host
+		want string
+	}{
+		{Host{Platform: GitHub}, "webhook secret"},
+		{Host{Platform: GitLab}, "signing token"},
+		{Host{Platform: GitLab, Settings: Settings{RequireSignature: true}, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "require signature"},
+		{Host{Platform: Bitbucket}, "webhook secret"},
+	} {
+		if err := c.h.ValidateShared(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("shared URL %+v: want %q, got %v", c.h, c.want, err)
+		}
+	}
+	if err := (Host{Platform: GitHub, Secrets: Secrets{Token: "t"}}).Validate(); err != nil {
+		t.Errorf("a host managed in the admin panel needs no webhook secret of its own: %v", err)
 	}
 	h := Host{Platform: "gitlab", BaseURL: "ftp://x"}
 	if err := h.Normalize(); err == nil {
@@ -132,4 +147,70 @@ func randomSigningToken(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return "whsec_" + base64.StdEncoding.EncodeToString(b)
+}
+
+func TestEndpointsEncryptedAndRouted(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New()
+	r := New(fileConfig(t), st, testBox(t), nil)
+	if _, err := r.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gl, _ := r.Find(GitLab, "gitlab.example.com")
+	e, secret, err := r.AddEndpoint(ctx, gl.ID, "  platform group  ", "a@x")
+	if err != nil || len(secret) != 64 || e.Name != "platform group" || len(e.ID) != 36 {
+		t.Fatalf("add: %+v %q %v", e, secret, err)
+	}
+	rows, _ := st.ListWebhookEndpoints(ctx)
+	if len(rows) != 1 || strings.Contains(rows[0].Secrets, secret) || !strings.HasPrefix(rows[0].Secrets, "v1:") {
+		t.Fatalf("endpoint secrets must be stored encrypted: %+v", rows)
+	}
+	// A fresh registry decrypts them.
+	r2 := New(fileConfig(t), st, testBox(t), nil)
+	if err := r2.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h, got, err := r2.Route(GitLab, strings.ToUpper(e.ID))
+	if err != nil || got.ID != e.ID || h.ID != gl.ID || len(h.WebhookSecrets) != 1 || h.WebhookSecrets[0] != secret || len(h.SigningTokens) != 0 || h.Token != "glpat-file" {
+		t.Fatalf("route: %+v %+v %v", h, got, err)
+	}
+	if _, _, err := r2.Route(GitHub, e.ID); err != ErrNoEndpoint {
+		t.Errorf("another platform must not find it: %v", err)
+	}
+	// Signing tokens are GitLab-only and must be well formed.
+	e.SigningTokens = []string{"nope"}
+	if _, err := r2.SaveEndpoint(ctx, e, "a@x"); err == nil {
+		t.Error("a malformed signing token must be rejected")
+	}
+	gh, _ := r2.Find(GitHub, "")
+	ghEP, _, _ := r2.AddEndpoint(ctx, gh.ID, "", "a@x")
+	if ghEP.Name != "Webhook" {
+		t.Errorf("default name: %q", ghEP.Name)
+	}
+	ghEP.SigningTokens = []string{randomSigningToken(t)}
+	if _, err := r2.SaveEndpoint(ctx, ghEP, "a@x"); err == nil {
+		t.Error("signing tokens are for GitLab only")
+	}
+	// Disabling the host makes its endpoints unusable; deleting it removes them.
+	gl.Enabled = false
+	if _, err := r2.Save(ctx, gl, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r2.Route(GitLab, e.ID); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Errorf("disabled host: %v", err)
+	}
+	if err := r2.Delete(ctx, gl.ID, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r2.Endpoint(e.ID); ok {
+		t.Error("deleting a host deletes its webhooks")
+	}
+	// Without a key (config mode) webhooks can't be managed.
+	ro := New(fileConfig(t), storetest.New(), nil, nil)
+	if _, err := ro.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ro.AddEndpoint(ctx, ro.All()[0].ID, "x", "a@x"); err == nil || !strings.Contains(err.Error(), secrets.EnvKey) {
+		t.Errorf("config mode must refuse webhooks: %v", err)
+	}
 }

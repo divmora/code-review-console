@@ -348,8 +348,61 @@ func TestLoginAndManageRepos(t *testing.T) {
 	if code, body := e.do(t, "POST", fmt.Sprintf("/admin/api/hosts/%d/test", hv.ID), csrf, nil); code != 200 || !bytes.Contains(body, []byte(`"user":"gitlab-bot"`)) {
 		t.Errorf("test host: %d %s", code, body)
 	}
-	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://other.example", "token": "x"}); code != 400 {
-		t.Errorf("a GitLab host without webhook credentials must be rejected: %d", code)
+	// Webhooks: a UUID URL and a generated secret, returned once.
+	code, body = e.do(t, "POST", fmt.Sprintf("/admin/api/hosts/%d/webhooks", hv.ID), csrf, map[string]any{"name": "group platform"})
+	var created struct {
+		Webhook struct {
+			ID, URL, Name string
+			Secrets       struct {
+				WebhookSecret bool `json:"webhook_secret"`
+			}
+		}
+		Secret string
+	}
+	_ = json.Unmarshal(body, &created)
+	if code != 201 || len(created.Secret) != 64 || created.Webhook.Name != "group platform" || !created.Webhook.Secrets.WebhookSecret ||
+		created.Webhook.URL != e.app.URL+"/webhooks/gitlab/"+created.Webhook.ID || len(created.Webhook.ID) != 36 {
+		t.Fatalf("create webhook: %d %s", code, body)
+	}
+	if code, body := e.do(t, "GET", "/admin/api/hosts", "", nil); code != 200 || bytes.Contains(body, []byte(created.Secret)) || !bytes.Contains(body, []byte(created.Webhook.ID)) {
+		t.Errorf("the host list shows the webhook but never its secret: %s", body)
+	}
+	if code, body := e.do(t, "PUT", "/admin/api/webhooks/"+created.Webhook.ID, csrf, map[string]any{"signing_tokens": []string{"nope"}}); code != 400 {
+		t.Errorf("a malformed signing token must be rejected: %d %s", code, body)
+	}
+	code, body = e.do(t, "PUT", "/admin/api/webhooks/"+created.Webhook.ID, csrf, map[string]any{"regenerate_secret": true, "enabled": false})
+	var regen struct{ Secret string }
+	_ = json.Unmarshal(body, &regen)
+	if code != 200 || len(regen.Secret) != 64 || regen.Secret == created.Secret || !bytes.Contains(body, []byte(`"enabled":false`)) {
+		t.Errorf("regenerate: %d %s", code, body)
+	}
+	if code, body := e.do(t, "PUT", "/admin/api/webhooks/"+created.Webhook.ID, csrf, map[string]any{"name": "renamed"}); code != 200 || bytes.Contains(body, []byte(`"secret"`)) {
+		t.Errorf("a rename returns no secret: %d %s", code, body)
+	}
+	if ep, ok := e.adm.Hosts.Endpoint(created.Webhook.ID); !ok || ep.Name != "renamed" || ep.WebhookSecrets[0] != regen.Secret {
+		t.Errorf("stored webhook: %+v", ep)
+	}
+	if code, _ := e.do(t, "DELETE", "/admin/api/webhooks/"+created.Webhook.ID, csrf, nil); code != 200 {
+		t.Errorf("delete webhook: %d", code)
+	}
+	if code, _ := e.do(t, "DELETE", "/admin/api/webhooks/"+created.Webhook.ID, csrf, nil); code != 404 {
+		t.Errorf("deleted webhook: %d", code)
+	}
+	entries, _ := e.st.ListAudit(context.Background(), 50)
+	var audited []string
+	for _, a := range entries {
+		if strings.HasPrefix(a.Action, "webhook.") {
+			audited = append(audited, a.Action)
+			if d, _ := json.Marshal(a.Detail); bytes.Contains(d, []byte(regen.Secret)) || bytes.Contains(d, []byte(created.Secret)) {
+				t.Errorf("audit must not hold secrets: %s", d)
+			}
+		}
+	}
+	if len(audited) < 4 {
+		t.Errorf("webhook changes must be audited: %v", audited)
+	}
+	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://other.example", "webhook_secrets": []string{"x"}}); code != 400 {
+		t.Errorf("a GitLab host without an access token must be rejected: %d", code)
 	}
 	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, nil); code != 200 {
 		t.Errorf("delete host: %d", code)

@@ -123,7 +123,13 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 	if p.ObjectKind == "note" {
 		hm.Number = p.MergeRequest.IID
 	}
-	inst, ok := s.gitlabInstance(r, p.Project.WebURL)
+	inst, viaEndpoint, ok := s.endpointHost(w, r, hosts.GitLab)
+	if !ok {
+		return
+	}
+	if !viaEndpoint {
+		inst, ok = s.gitlabInstance(r, p.Project.WebURL)
+	}
 	if !ok {
 		hm.Auth, hm.Reason = "failed", "unknown GitLab instance "+r.Header.Get("X-Gitlab-Instance")
 		s.logger.Warn("gitlab webhook from an unknown instance", "instance", r.Header.Get("X-Gitlab-Instance"))

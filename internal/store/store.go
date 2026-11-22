@@ -81,6 +81,23 @@ type HostRow struct {
 	UpdatedBy string          `json:"updated_by"`
 }
 
+// WebhookEndpoint is a webhook URL of a host, /webhooks/<platform>/<id>,
+// created in the admin panel. ID is a random UUID. Secrets holds the
+// endpoint's own webhook secrets and signing tokens, encrypted by the
+// console (see internal/hosts); deliveries on its URL are verified against
+// them only.
+type WebhookEndpoint struct {
+	ID        string    `json:"id"`
+	HostID    int64     `json:"host_id"`
+	Name      string    `json:"name"`
+	Enabled   bool      `json:"enabled"`
+	Secrets   string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy string    `json:"updated_by"`
+}
+
 // Learning statuses.
 const (
 	LearningActive   = "active"
@@ -130,11 +147,14 @@ type WebhookEvent struct {
 	Action     string    `json:"action"`
 	Sender     string    `json:"sender"`
 	Delivery   string    `json:"delivery"`
-	Auth       string    `json:"auth"`    // signature, token, failed
-	Outcome    string    `json:"outcome"` // queued, ignored, duplicate, rejected, error
-	Reason     string    `json:"reason"`
-	Status     int       `json:"status"`
-	DurationMS int       `json:"duration_ms"`
+	// Endpoint is the webhook endpoint ID the delivery came in on; empty for
+	// the shared /webhooks/<platform> URL.
+	Endpoint   string `json:"endpoint"`
+	Auth       string `json:"auth"`    // signature, token, failed
+	Outcome    string `json:"outcome"` // queued, ignored, duplicate, rejected, error
+	Reason     string `json:"reason"`
+	Status     int    `json:"status"`
+	DurationMS int    `json:"duration_ms"`
 }
 
 // Webhook outcomes.
@@ -252,6 +272,13 @@ type Store interface {
 	ListHosts(ctx context.Context) ([]HostRow, error)
 	PutHost(ctx context.Context, h HostRow, actor string) (*HostRow, error)
 	DeleteHost(ctx context.Context, id int64, actor string) error
+
+	// Webhook endpoints. PutWebhookEndpoint creates or updates by ID;
+	// deleting a host deletes its endpoints. Audit details never include
+	// secrets.
+	ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error)
+	PutWebhookEndpoint(ctx context.Context, e WebhookEndpoint, actor string) (*WebhookEndpoint, error)
+	DeleteWebhookEndpoint(ctx context.Context, id string, actor string) error
 
 	// Learnings. CreateLearning ignores a duplicate SourceRef (returns
 	// ErrDuplicate).
@@ -511,6 +538,20 @@ var migrations = []string{
 	);
 	CREATE INDEX learnings_scope_idx ON learnings (platform, host, status);
 	CREATE UNIQUE INDEX learnings_source_ref_idx ON learnings (source_ref) WHERE source_ref <> '';`,
+	// 9: webhook endpoints (one URL per webhook, each with its own secrets)
+	`CREATE TABLE webhook_endpoints (
+		id          uuid PRIMARY KEY,
+		host_id     bigint NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+		name        text NOT NULL DEFAULT '',
+		enabled     boolean NOT NULL DEFAULT true,
+		secrets     text NOT NULL DEFAULT '',
+		created_at  timestamptz NOT NULL DEFAULT now(),
+		created_by  text NOT NULL DEFAULT '',
+		updated_at  timestamptz NOT NULL DEFAULT now(),
+		updated_by  text NOT NULL DEFAULT ''
+	);
+	CREATE INDEX webhook_endpoints_host_idx ON webhook_endpoints (host_id);
+	ALTER TABLE webhook_events ADD COLUMN endpoint text NOT NULL DEFAULT '';`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -969,7 +1010,76 @@ func (p *Postgres) DeleteHost(ctx context.Context, id int64, actor string) error
 	return tx.Commit(ctx)
 }
 
-const hookCols = `id, received_at, platform, host, project, number, event, kind, action, sender, delivery, auth, outcome, reason, status, duration_ms`
+const endpointCols = `id::text, host_id, name, enabled, secrets, created_at, created_by, updated_at, updated_by`
+
+func scanEndpoint(row pgx.Row) (*WebhookEndpoint, error) {
+	var e WebhookEndpoint
+	err := row.Scan(&e.ID, &e.HostID, &e.Name, &e.Enabled, &e.Secrets, &e.CreatedAt, &e.CreatedBy, &e.UpdatedAt, &e.UpdatedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &e, err
+}
+
+func endpointAudit(e *WebhookEndpoint) map[string]any {
+	return map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "secrets_set": e.Secrets != ""}
+}
+
+func (p *Postgres) ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+endpointCols+` FROM webhook_endpoints ORDER BY host_id, created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []WebhookEndpoint{}
+	for rows.Next() {
+		e, err := scanEndpoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *e)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) PutWebhookEndpoint(ctx context.Context, in WebhookEndpoint, actor string) (*WebhookEndpoint, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	e, err := scanEndpoint(tx.QueryRow(ctx, `
+		INSERT INTO webhook_endpoints (id, host_id, name, enabled, secrets, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, secrets = EXCLUDED.secrets,
+			updated_by = EXCLUDED.updated_by, updated_at = now()
+		WHERE webhook_endpoints.host_id = EXCLUDED.host_id
+		RETURNING `+endpointCols, in.ID, in.HostID, in.Name, in.Enabled, in.Secrets, actor))
+	if err != nil {
+		return nil, err
+	}
+	if err := audit(ctx, tx, actor, "webhook.put", e.ID, endpointAudit(e)); err != nil {
+		return nil, err
+	}
+	return e, tx.Commit(ctx)
+}
+
+func (p *Postgres) DeleteWebhookEndpoint(ctx context.Context, id string, actor string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	e, err := scanEndpoint(tx.QueryRow(ctx, `DELETE FROM webhook_endpoints WHERE id::text = $1 RETURNING `+endpointCols, id))
+	if err != nil {
+		return err
+	}
+	if err := audit(ctx, tx, actor, "webhook.delete", e.ID, endpointAudit(e)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const hookCols = `id, received_at, platform, host, project, number, event, kind, action, sender, delivery, endpoint, auth, outcome, reason, status, duration_ms`
 
 func (p *Postgres) InsertWebhookEvents(ctx context.Context, events []WebhookEvent) error {
 	if len(events) == 0 {
@@ -981,10 +1091,10 @@ func (p *Postgres) InsertWebhookEvents(ctx context.Context, events []WebhookEven
 			e.ReceivedAt = time.Now()
 		}
 		rows = append(rows, []any{e.ReceivedAt, e.Platform, e.Host, e.Project, e.Number, e.Event, e.Kind, e.Action,
-			e.Sender, e.Delivery, e.Auth, e.Outcome, e.Reason, e.Status, e.DurationMS})
+			e.Sender, e.Delivery, e.Endpoint, e.Auth, e.Outcome, e.Reason, e.Status, e.DurationMS})
 	}
 	_, err := p.pool.CopyFrom(ctx, pgx.Identifier{"webhook_events"},
-		[]string{"received_at", "platform", "host", "project", "number", "event", "kind", "action", "sender", "delivery", "auth", "outcome", "reason", "status", "duration_ms"},
+		[]string{"received_at", "platform", "host", "project", "number", "event", "kind", "action", "sender", "delivery", "endpoint", "auth", "outcome", "reason", "status", "duration_ms"},
 		pgx.CopyFromRows(rows))
 	return err
 }
@@ -1022,7 +1132,7 @@ func (p *Postgres) ListWebhookEvents(ctx context.Context, f WebhookFilter) ([]We
 	for rows.Next() {
 		var e WebhookEvent
 		if err := rows.Scan(&e.ID, &e.ReceivedAt, &e.Platform, &e.Host, &e.Project, &e.Number, &e.Event, &e.Kind, &e.Action,
-			&e.Sender, &e.Delivery, &e.Auth, &e.Outcome, &e.Reason, &e.Status, &e.DurationMS); err != nil {
+			&e.Sender, &e.Delivery, &e.Endpoint, &e.Auth, &e.Outcome, &e.Reason, &e.Status, &e.DurationMS); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

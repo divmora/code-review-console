@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/store"
 )
 
@@ -21,6 +22,8 @@ const maxStoredHooks = 100_000
 type hookMeta struct {
 	Platform, Host, Project, Event, Kind, Action, Sender, Delivery, Auth string
 	Number                                                               int
+	// Endpoint is the webhook endpoint ID from the URL ("" = shared URL).
+	Endpoint string
 	// Reason overrides the reason taken from the response (e.g. the exact
 	// verification failure, which the response keeps generic).
 	Reason string
@@ -90,6 +93,37 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// endpointHost resolves a delivery on /webhooks/<platform>/<id>. via is
+// false for the shared URL. On failure it records why and writes a 404, so
+// the caller just returns.
+func (s *Server) endpointHost(w http.ResponseWriter, r *http.Request, platform string) (h hosts.Host, via, ok bool) {
+	id := r.PathValue("id")
+	if id == "" {
+		return hosts.Host{}, false, true
+	}
+	hm := hookMetaOf(r.Context())
+	hm.Endpoint = truncate(id, 64)
+	h, e, err := s.hosts.Route(platform, id)
+	if err != nil {
+		hm.Auth, hm.Reason = "failed", err.Error()
+		if e.ID != "" {
+			hm.Host = hostOf(s.hosts, e.HostID)
+		}
+		s.logger.Warn(platform+" webhook on an unusable URL", "endpoint", hm.Endpoint, "reason", err.Error())
+		http.Error(w, "unknown webhook", http.StatusNotFound)
+		return hosts.Host{}, true, false
+	}
+	hm.Endpoint, hm.Host = e.ID, h.Host
+	return h, true, true
+}
+
+func hostOf(r *hosts.Registry, id int64) string {
+	if h, ok := r.Get(id); ok {
+		return h.Host
+	}
+	return ""
+}
+
 // recordHooks wraps a webhook handler so every delivery lands in the
 // webhook history, whatever the handler decided.
 func (s *Server) recordHooks(platform string, h http.HandlerFunc) http.HandlerFunc {
@@ -108,7 +142,7 @@ func (s *Server) recordHooks(platform string, h http.HandlerFunc) http.HandlerFu
 		}
 		s.hooks.add(store.WebhookEvent{
 			ReceivedAt: start, Platform: m.Platform, Host: m.Host, Project: m.Project, Number: m.Number,
-			Event: m.Event, Kind: m.Kind, Action: m.Action, Sender: m.Sender, Delivery: m.Delivery, Auth: m.Auth,
+			Event: m.Event, Kind: m.Kind, Action: m.Action, Sender: m.Sender, Delivery: m.Delivery, Endpoint: m.Endpoint, Auth: m.Auth,
 			Outcome: out, Reason: truncate(reason, 500), Status: cw.status, DurationMS: int(time.Since(start).Milliseconds()),
 		})
 	}

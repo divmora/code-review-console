@@ -115,6 +115,9 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/api/hosts/{id}", a.requireAPI(a.apiUpdateHost))
 	mux.HandleFunc("DELETE /admin/api/hosts/{id}", a.requireAPI(a.apiDeleteHost))
 	mux.HandleFunc("POST /admin/api/hosts/{id}/test", a.requireAPI(a.apiTestHost))
+	mux.HandleFunc("POST /admin/api/hosts/{id}/webhooks", a.requireAPI(a.apiCreateWebhook))
+	mux.HandleFunc("PUT /admin/api/webhooks/{wid}", a.requireAPI(a.apiUpdateWebhook))
+	mux.HandleFunc("DELETE /admin/api/webhooks/{wid}", a.requireAPI(a.apiDeleteWebhook))
 	mux.HandleFunc("GET /admin/api/settings", a.requireAPI(a.apiGetSettings))
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
@@ -567,16 +570,19 @@ func (a *Admin) serverError(w http.ResponseWriter, err error) {
 // hostView is a host as the admin UI sees it: settings, which secrets are
 // set (never their values), and where to point the webhook.
 type hostView struct {
-	ID         int64          `json:"id"`
-	Platform   string         `json:"platform"`
-	Host       string         `json:"host"`
-	BaseURL    string         `json:"base_url"`
-	Name       string         `json:"name"`
-	Enabled    bool           `json:"enabled"`
-	Settings   hosts.Settings `json:"settings"`
-	Secrets    hosts.Status   `json:"secrets"`
-	WebhookURL string         `json:"webhook_url"`
-	Events     []string       `json:"events"`
+	ID       int64          `json:"id"`
+	Platform string         `json:"platform"`
+	Host     string         `json:"host"`
+	BaseURL  string         `json:"base_url"`
+	Name     string         `json:"name"`
+	Enabled  bool           `json:"enabled"`
+	Settings hosts.Settings `json:"settings"`
+	Secrets  hosts.Status   `json:"secrets"`
+	// WebhookURL is the shared URL, verified with the host's own secrets.
+	WebhookURL string `json:"webhook_url"`
+	// Webhooks have their own URL and secrets (added in the admin panel).
+	Webhooks []webhookView `json:"webhooks"`
+	Events   []string      `json:"events"`
 	// Licensed is false for a host the license does not cover (a second
 	// host on a platform without the hosts feature): it is not used.
 	Licensed bool `json:"licensed"`
@@ -589,9 +595,130 @@ var hookEvents = map[string][]string{
 }
 
 func (a *Admin) viewHost(h hosts.Host) hostView {
-	return hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
-		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Events: hookEvents[h.Platform],
-		Licensed: !h.Enabled || a.Hosts.Active(h)}
+	v := hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
+		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Webhooks: []webhookView{},
+		Events: hookEvents[h.Platform], Licensed: !h.Enabled || a.Hosts.Active(h)}
+	for _, e := range a.Hosts.Endpoints(h.ID) {
+		v.Webhooks = append(v.Webhooks, a.viewWebhook(h.Platform, e))
+	}
+	return v
+}
+
+// webhookView is a webhook endpoint as the admin UI sees it: its URL and
+// which secrets are set, never their values.
+type webhookView struct {
+	ID        string               `json:"id"`
+	HostID    int64                `json:"host_id"`
+	Name      string               `json:"name"`
+	Enabled   bool                 `json:"enabled"`
+	URL       string               `json:"url"`
+	Secrets   hosts.EndpointStatus `json:"secrets"`
+	CreatedAt time.Time            `json:"created_at"`
+	CreatedBy string               `json:"created_by"`
+}
+
+func (a *Admin) viewWebhook(platform string, e hosts.Endpoint) webhookView {
+	return webhookView{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, URL: a.cfg.BaseURL + e.Path(platform),
+		Secrets: e.SecretStatus(), CreatedAt: e.CreatedAt, CreatedBy: e.CreatedBy}
+}
+
+// apiCreateWebhook adds a webhook to a host: a new UUID URL and a generated
+// secret, returned once.
+func (a *Admin) apiCreateWebhook(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	h, ok := a.hostByID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	e, secret, err := a.Hosts.AddEndpoint(r.Context(), h.ID, req.Name, s.Email)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	a.logger.Info("admin added webhook", "by", s.Email, "host", h.Host, "webhook", e.ID, "name", e.Name)
+	writeJSON(w, http.StatusCreated, map[string]any{"webhook": a.viewWebhook(h.Platform, e), "secret": secret})
+}
+
+func (a *Admin) webhookByID(w http.ResponseWriter, r *http.Request) (hosts.Endpoint, hosts.Host, bool) {
+	if a.Hosts == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		return hosts.Endpoint{}, hosts.Host{}, false
+	}
+	e, ok := a.Hosts.Endpoint(r.PathValue("wid"))
+	var h hosts.Host
+	if ok {
+		h, ok = a.Hosts.Get(e.HostID)
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+	}
+	return e, h, ok
+}
+
+// apiUpdateWebhook renames, enables or disables a webhook, sets its GitLab
+// signing tokens (absent keeps them, [] clears them), or replaces its
+// secret with a new one (returned once).
+func (a *Admin) apiUpdateWebhook(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	e, h, ok := a.webhookByID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name             *string   `json:"name"`
+		Enabled          *bool     `json:"enabled"`
+		SigningTokens    *[]string `json:"signing_tokens"`
+		RegenerateSecret bool      `json:"regenerate_secret"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Name != nil {
+		e.Name = *req.Name
+	}
+	if req.Enabled != nil {
+		e.Enabled = *req.Enabled
+	}
+	if req.SigningTokens != nil {
+		e.SigningTokens = *req.SigningTokens
+	}
+	secret := ""
+	if req.RegenerateSecret {
+		var err error
+		if secret, err = hosts.GenerateSecret(); err != nil {
+			a.serverError(w, err)
+			return
+		}
+		e.WebhookSecrets = []string{secret}
+	}
+	saved, err := a.Hosts.SaveEndpoint(r.Context(), e, s.Email)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	a.logger.Info("admin updated webhook", "by", s.Email, "host", h.Host, "webhook", e.ID, "new_secret", secret != "")
+	out := map[string]any{"webhook": a.viewWebhook(h.Platform, saved)}
+	if secret != "" {
+		out["secret"] = secret
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *Admin) apiDeleteWebhook(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	e, h, ok := a.webhookByID(w, r)
+	if !ok {
+		return
+	}
+	if err := a.Hosts.DeleteEndpoint(r.Context(), e.ID, s.Email); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	a.logger.Info("admin deleted webhook", "by", s.Email, "host", h.Host, "webhook", e.ID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (a *Admin) apiListHosts(w http.ResponseWriter, r *http.Request, s *store.Session) {

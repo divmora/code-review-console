@@ -8,10 +8,12 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 | Field | Value |
 |---|---|
-| Webhook URL | `https://<your-host>/webhooks/github` |
-| Webhook secret | a long random string; put it in `GITHUB_WEBHOOK_SECRET` |
+| Webhook URL | from the console: **Code hosts** → **Manage webhooks** → **Add webhook** gives `https://<your-host>/webhooks/github/<uuid>` |
+| Webhook secret | the secret the console shows with it (once) |
 | Repository permissions | **Pull requests**: Read and write · **Contents**: Read-only · **Metadata**: Read-only |
 | Subscribe to events | **Pull request** · **Issue comment** |
+
+Without a database (hosts from the config file), use the shared URL `https://<your-host>/webhooks/github` and a long random secret in `GITHUB_WEBHOOK_SECRET` instead. The shared URL keeps working for existing apps.
 
 Name the app after your `bot_name` (default `codereview`) so `@codereview` mentions match. If the app slug differs, set `bot_name` to the slug.
 

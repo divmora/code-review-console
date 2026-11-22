@@ -119,6 +119,11 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		if err := h.Validate(); err != nil {
 			return nil, fmt.Errorf("host %s: %w", h.Host, err)
 		}
+		if s.hosts.Mode() != "database" {
+			if err := h.ValidateShared(); err != nil {
+				return nil, fmt.Errorf("host %s: %w", h.Host, err)
+			}
+		}
 	}
 	if len(s.hosts.Enabled("")) == 0 && (deps.Store == nil || s.hosts.Mode() != "database") {
 		return nil, errors.New("nothing to serve: configure github, gitlab and/or bitbucket hosts (or set " + secrets.EnvKey + " and add them in the admin panel)")
@@ -227,9 +232,13 @@ func (s *Server) ghApp(hostID int64) *vcs.GitHubApp {
 // Handler returns the HTTP routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /webhooks/github", s.recordHooks("github", s.handleGitHub))
-	mux.HandleFunc("POST /webhooks/gitlab", s.recordHooks("gitlab", s.handleGitLab))
-	mux.HandleFunc("POST /webhooks/bitbucket", s.recordHooks("bitbucket", s.handleBitbucket))
+	// The shared URL per platform matches the host from the delivery; a
+	// webhook added in the admin panel has its own URL (/<platform>/<id>)
+	// and secrets.
+	for platform, h := range map[string]http.HandlerFunc{"github": s.handleGitHub, "gitlab": s.handleGitLab, "bitbucket": s.handleBitbucket} {
+		mux.HandleFunc("POST /webhooks/"+platform, s.recordHooks(platform, h))
+		mux.HandleFunc("POST /webhooks/"+platform+"/{id}", s.recordHooks(platform, h))
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		p, run := s.queue.Stats()
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": version.Version, "pending": p, "running": run})

@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type Hook = {
   id: number; received_at: string; platform: string; host: string; project: string; event: string; kind: string;
-  action: string; number: number; sender: string; outcome: string; reason: string; auth: string;
+  action: string; number: number; sender: string; outcome: string; reason: string; auth: string; endpoint: string;
 };
 const outcomes = ["queued", "ignored", "duplicate", "rejected", "error"];
 const badge = (o: string) => ({ queued: "on", rejected: "off", error: "off" } as Record<string, "on" | "off">)[o] || "idle";
@@ -21,6 +21,13 @@ export default function Webhooks() {
   const [more, setMore] = useState(false);
   const [project, setProject] = useState("");
   const [outcome, setOutcome] = useState("");
+  // Webhook names by ID, to show which URL a delivery came in on.
+  const [hookNames, setHookNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    get<{ hosts: { webhooks?: { id: string; name: string }[] }[] }>("/admin/api/hosts")
+      .then((d) => setHookNames(Object.fromEntries(d.hosts.flatMap((h) => (h.webhooks || []).map((w) => [w.id, w.name])))))
+      .catch(() => {});
+  }, []);
   const load = (older?: boolean) => {
     const before = older && hooks?.length ? hooks[hooks.length - 1].id : undefined;
     get<{ events: Hook[]; counts_24h: Record<string, number> }>("/admin/api/webhooks" + qs({ limit: 100, project: project.trim(), outcome, before }))
@@ -70,7 +77,7 @@ export default function Webhooks() {
                 <TableHead>Event</TableHead>
                 <TableHead>Outcome</TableHead>
                 <TableHead>Reason</TableHead>
-                <TableHead className="pr-4">Auth</TableHead>
+                <TableHead className="pr-4">Via</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -93,7 +100,10 @@ export default function Webhooks() {
                       <StateBadge kind={badge(e.outcome)}>{e.outcome}</StateBadge>
                     </TableCell>
                     <TableCell className="reason min-w-64 align-top text-sm whitespace-normal text-muted-foreground">{e.reason}</TableCell>
-                    <TableCell className="pr-4 align-top text-muted-foreground">{e.auth}</TableCell>
+                    <TableCell className="pr-4 align-top text-muted-foreground">
+                      <div>{e.endpoint ? hookNames[e.endpoint] || "unknown webhook" : "shared URL"}</div>
+                      <Sub>{e.auth}</Sub>
+                    </TableCell>
                   </TableRow>
                 );
               })}

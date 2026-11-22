@@ -93,12 +93,20 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 	var p ghPayload
 	_ = json.Unmarshal(body, &p)
 	host := ""
-	if u, err := url.Parse(p.Repository.HTMLURL); err == nil && u.Host != "" {
-		host = strings.ToLower(u.Host)
-	}
-	h, ok := s.hosts.Find(hosts.GitHub, host)
+	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.GitHub)
 	if !ok {
-		h, ok = s.hosts.Find(hosts.GitHub, "")
+		return
+	}
+	if viaEndpoint {
+		host = h.Host // the URL names the host
+	} else {
+		if u, err := url.Parse(p.Repository.HTMLURL); err == nil && u.Host != "" {
+			host = strings.ToLower(u.Host)
+		}
+		h, ok = s.hosts.Find(hosts.GitHub, host)
+		if !ok {
+			h, ok = s.hosts.Find(hosts.GitHub, "")
+		}
 	}
 	hm.Host = firstNonEmpty(host, h.Host)
 	if !ok {

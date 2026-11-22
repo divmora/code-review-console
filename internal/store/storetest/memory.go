@@ -22,6 +22,7 @@ type Memory struct {
 	rules    map[int64]*store.Rule
 	hooks    []store.WebhookEvent
 	hosts    map[int64]*store.HostRow
+	hooksEP  map[string]*store.WebhookEndpoint
 	learns   []*store.Learning
 	jobs     []store.Job
 	sessions map[string]store.Session
@@ -32,7 +33,7 @@ type Memory struct {
 
 // New returns an empty store.
 func New() *Memory {
-	return &Memory{repos: map[int64]*store.Repo{}, rules: map[int64]*store.Rule{}, hosts: map[int64]*store.HostRow{}, sessions: map[string]store.Session{},
+	return &Memory{repos: map[int64]*store.Repo{}, rules: map[int64]*store.Rule{}, hosts: map[int64]*store.HostRow{}, hooksEP: map[string]*store.WebhookEndpoint{}, sessions: map[string]store.Session{},
 		models: map[string]store.ModelProfile{}, settings: map[string][]byte{}}
 }
 
@@ -241,7 +242,61 @@ func (m *Memory) DeleteHost(_ context.Context, id int64, actor string) error {
 		return store.ErrNotFound
 	}
 	delete(m.hosts, id)
+	for k, e := range m.hooksEP {
+		if e.HostID == id {
+			delete(m.hooksEP, k)
+		}
+	}
 	m.addAudit(actor, "host.delete", h.Platform+":"+h.Host, map[string]any{})
+	return nil
+}
+
+func (m *Memory) ListWebhookEndpoints(context.Context) ([]store.WebhookEndpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.WebhookEndpoint{}
+	for _, e := range m.hooksEP {
+		out = append(out, *e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].HostID != out[j].HostID {
+			return out[i].HostID < out[j].HostID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt) || (out[i].CreatedAt.Equal(out[j].CreatedAt) && out[i].ID < out[j].ID)
+	})
+	return out, nil
+}
+
+func (m *Memory) PutWebhookEndpoint(_ context.Context, in store.WebhookEndpoint, actor string) (*store.WebhookEndpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.hosts[in.HostID]; !ok {
+		return nil, store.ErrNotFound
+	}
+	now := time.Now()
+	e, ok := m.hooksEP[in.ID]
+	if ok && e.HostID != in.HostID {
+		return nil, store.ErrNotFound
+	}
+	if !ok {
+		e = &store.WebhookEndpoint{ID: in.ID, HostID: in.HostID, CreatedAt: now, CreatedBy: actor}
+		m.hooksEP[in.ID] = e
+	}
+	e.Name, e.Enabled, e.Secrets, e.UpdatedAt, e.UpdatedBy = in.Name, in.Enabled, in.Secrets, now, actor
+	m.addAudit(actor, "webhook.put", e.ID, map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "secrets_set": e.Secrets != ""})
+	c := *e
+	return &c, nil
+}
+
+func (m *Memory) DeleteWebhookEndpoint(_ context.Context, id string, actor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.hooksEP[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	delete(m.hooksEP, id)
+	m.addAudit(actor, "webhook.delete", id, map[string]any{"host_id": e.HostID, "name": e.Name})
 	return nil
 }
 
