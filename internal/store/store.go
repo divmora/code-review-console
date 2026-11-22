@@ -195,11 +195,19 @@ type WebhookFilter struct {
 
 // Session is an admin login session.
 type Session struct {
+	// ID identifies the session for listing and revoking (never the
+	// cookie value or its hash).
+	ID      int64
 	Subject string
 	Email   string
 	Name    string
-	CSRF    string
-	Expires time.Time
+	// Groups and Verified are the identity provider's claims at sign-in,
+	// so every request can be checked against the current sign-in rules.
+	Groups   []string
+	Verified bool
+	CSRF     string
+	Created  time.Time
+	Expires  time.Time
 }
 
 // JobFilter narrows ListJobs. Zero values match everything.
@@ -346,6 +354,12 @@ type Store interface {
 	CreateSession(ctx context.Context, idHash []byte, s Session) error
 	GetSession(ctx context.Context, idHash []byte) (*Session, error)
 	DeleteSession(ctx context.Context, idHash []byte) error
+	// ListSessions returns the sessions that haven't expired, newest first.
+	ListSessions(ctx context.Context) ([]Session, error)
+	// DeleteSessionByID ends one session (ErrNotFound if there is none).
+	DeleteSessionByID(ctx context.Context, id int64) (*Session, error)
+	// DeleteOtherSessions ends every session except keep's; it returns how many.
+	DeleteOtherSessions(ctx context.Context, keep []byte) (int, error)
 
 	Audit(ctx context.Context, actor, action, target string, detail any) error
 	ListAudit(ctx context.Context, limit int) ([]AuditEntry, error)
@@ -582,6 +596,10 @@ var migrations = []string{
 	);
 	CREATE INDEX webhook_endpoints_host_idx ON webhook_endpoints (host_id);
 	ALTER TABLE webhook_events ADD COLUMN endpoint text NOT NULL DEFAULT '';`,
+	// 10: sessions keep the sign-in claims (re-checked on every request) and
+	// an ID to list and revoke them. Sessions from before have groups NULL.
+	`ALTER TABLE sessions ADD COLUMN id bigserial, ADD COLUMN groups jsonb, ADD COLUMN verified boolean NOT NULL DEFAULT true;
+	CREATE UNIQUE INDEX sessions_id_idx ON sessions (id);`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -1570,19 +1588,78 @@ func (p *Postgres) CreateSession(ctx context.Context, idHash []byte, s Session) 
 	if _, err := p.pool.Exec(ctx, `DELETE FROM sessions WHERE expires < now()`); err != nil {
 		return err
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO sessions (id_hash, subject, email, name, csrf, expires) VALUES ($1,$2,$3,$4,$5,$6)`,
-		idHash, s.Subject, s.Email, s.Name, s.CSRF, s.Expires)
+	groups, err := json.Marshal(nonNil(s.Groups))
+	if err != nil {
+		return err
+	}
+	_, err = p.pool.Exec(ctx, `INSERT INTO sessions (id_hash, subject, email, name, csrf, expires, groups, verified) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		idHash, s.Subject, s.Email, s.Name, s.CSRF, s.Expires, groups, s.Verified)
 	return err
 }
 
-func (p *Postgres) GetSession(ctx context.Context, idHash []byte) (*Session, error) {
+const sessionCols = `id, subject, email, name, csrf, created, expires, groups, verified`
+
+func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
-	err := p.pool.QueryRow(ctx, `SELECT subject, email, name, csrf, expires FROM sessions WHERE id_hash=$1 AND expires > now()`, idHash).
-		Scan(&s.Subject, &s.Email, &s.Name, &s.CSRF, &s.Expires)
+	var groups []byte
+	if err := row.Scan(&s.ID, &s.Subject, &s.Email, &s.Name, &s.CSRF, &s.Created, &s.Expires, &groups, &s.Verified); err != nil {
+		return nil, err
+	}
+	if groups != nil {
+		if err := json.Unmarshal(groups, &s.Groups); err != nil {
+			return nil, fmt.Errorf("session groups: %w", err)
+		}
+		s.Groups = nonNil(s.Groups)
+	}
+	return &s, nil
+}
+
+func nonNil(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
+}
+
+func (p *Postgres) GetSession(ctx context.Context, idHash []byte) (*Session, error) {
+	s, err := scanSession(p.pool.QueryRow(ctx, `SELECT `+sessionCols+` FROM sessions WHERE id_hash=$1 AND expires > now()`, idHash))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return &s, err
+	return s, err
+}
+
+func (p *Postgres) ListSessions(ctx context.Context) ([]Session, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+sessionCols+` FROM sessions WHERE expires > now() ORDER BY created DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Session{}
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteSessionByID(ctx context.Context, id int64) (*Session, error) {
+	s, err := scanSession(p.pool.QueryRow(ctx, `DELETE FROM sessions WHERE id=$1 AND expires > now() RETURNING `+sessionCols, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return s, err
+}
+
+func (p *Postgres) DeleteOtherSessions(ctx context.Context, keep []byte) (int, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM sessions WHERE id_hash <> $1`, keep)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (p *Postgres) DeleteSession(ctx context.Context, idHash []byte) error {

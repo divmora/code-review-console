@@ -1,7 +1,9 @@
 import { ReactNode, useEffect, useState } from "react";
-import { get, put } from "../api";
+import { del, get, post, put } from "../api";
 import type { Overrides } from "../types";
-import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, SettingsEditor, useFeature, useMe, useRefreshMe, useToast } from "../ui";
+import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, SettingsEditor, Sub, useConfirm, useFeature, useMe, useRefreshMe, useToast } from "../ui";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +14,95 @@ type Eff = {
   learnings_enabled: boolean; learnings_auto_activate: boolean; daily_token_budget: number; repo_daily_token_budget: number;
   dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; review_defaults: Overrides; source?: Record<string, string>;
 };
+
+type SessionRow = { id: number; email: string; name: string; created: string; expires: string; current: boolean };
+
+const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+// Sessions lists who is signed in to the admin panel and signs sessions
+// out. Sessions are also ended on their own when an admin no longer
+// matches the sign-in rules.
+function Sessions() {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [rows, setRows] = useState<SessionRow[] | null>(null);
+  useEffect(() => {
+    get<SessionRow[]>("/admin/api/sessions").then(setRows).catch((e) => toast(errMsg(e), true));
+  }, []);
+  const revoke = async (s: SessionRow) => {
+    if (s.current) {
+      if (!(await confirm({ title: "Sign yourself out?", description: "This is the session you are using now.", action: "Sign out" }))) return;
+      post("/admin/logout").finally(() => (location.href = "/admin/login"));
+      return;
+    }
+    if (!(await confirm({ title: "Sign out " + (s.name || s.email) + "?", description: "They can sign in again if the sign-in rules still allow them.", action: "Sign out", danger: true }))) return;
+    try {
+      setRows(await del<SessionRow[]>("/admin/api/sessions/" + s.id));
+      toast("Signed out " + s.email);
+    } catch (e) {
+      toast(errMsg(e), true);
+    }
+  };
+  const endOthers = async () => {
+    if (!(await confirm({ title: "Sign out everyone else?", description: "Every other admin session ends now. Use it after removing someone from the sign-in rules or if a session may be compromised.", action: "Sign out others", danger: true }))) return;
+    try {
+      setRows(await post<SessionRow[]>("/admin/api/sessions/end-others"));
+      toast("Signed out every other session");
+    } catch (e) {
+      toast(errMsg(e), true);
+    }
+  };
+  const others = rows ? rows.filter((r) => !r.current).length : 0;
+  return (
+    <Card className="gap-0 overflow-hidden pb-0">
+      <CardHeader className="pb-4">
+        <CardTitle className="h2">Signed-in admins</CardTitle>
+        <CardDescription>
+          Every request is checked against the current sign-in rules, so someone removed from them is signed out at once. Group changes at the identity provider apply when the session ends (session_ttl) or here.
+        </CardDescription>
+        {others > 0 && (
+          <div>
+            <Button variant="outline" size="sm" onClick={endOthers}>Sign out everyone else</Button>
+          </div>
+        )}
+      </CardHeader>
+      {!rows ? (
+        <Empty>Loading…</Empty>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-6">Admin</TableHead>
+              <TableHead>Signed in</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((s) => (
+              <TableRow key={s.id}>
+                <TableCell className="pl-6">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium">{s.name || s.email}</span>
+                    {s.current && <Badge variant="secondary">you, this browser</Badge>}
+                  </div>
+                  {s.name && <Sub>{s.email}</Sub>}
+                </TableCell>
+                <TableCell>{when(s.created)}</TableCell>
+                <TableCell>{when(s.expires)}</TableCell>
+                <TableCell className="pr-6 text-right">
+                  <Button size="sm" variant="ghost" className={s.current ? "" : "text-destructive"} onClick={() => revoke(s)}>
+                    Sign out
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Card>
+  );
+}
 
 // Bool is a two-option select for a boolean setting; the first option is true.
 function Bool({ label, value, onChange, yes, no, disabled, note }: { label: ReactNode; value: boolean; onChange: (v: boolean) => void; yes: string; no: string; disabled?: boolean; note?: ReactNode }) {
@@ -136,6 +227,7 @@ export default function Settings() {
       <Group title="Default review settings" description="Apply to every repository. Group and pattern rules, then repository settings, override them.">
         <SettingsEditor key={edGen} value={eff.review_defaults} onSave={save} saveLabel="Save default review settings" />
       </Group>
+      <Sessions />
       <Note>
         The config file is the initial configuration: on first start its values are copied here, and from then on these settings are kept in the database. Editing the config file later does not change them; the server log notes any difference. Every change is in the audit log.
       </Note>

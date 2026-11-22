@@ -528,7 +528,9 @@ func TestConnectDoesNotMigrate(t *testing.T) {
 	if _, err := p.pool.Exec(ctx, `DELETE FROM codereview_schema WHERE version = $1`, before); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = p.pool.Exec(ctx, `INSERT INTO codereview_schema (version) VALUES ($1) ON CONFLICT DO NOTHING`, before) })
+	t.Cleanup(func() {
+		_, _ = p.pool.Exec(ctx, `INSERT INTO codereview_schema (version) VALUES ($1) ON CONFLICT DO NOTHING`, before)
+	})
 	_ = p.PutSetting(ctx, "probe", map[string]int{"n": 1}, "a@x")
 
 	c, err := Connect(ctx, os.Getenv("CODEREVIEW_TEST_DATABASE_URL"))
@@ -544,5 +546,52 @@ func TestConnectDoesNotMigrate(t *testing.T) {
 	var v map[string]int
 	if found, err := c.GetSetting(ctx, "probe", &v); !found || err != nil || v["n"] != 1 {
 		t.Errorf("Connect reads: %v %v %v", found, err, v)
+	}
+}
+
+func TestSessionClaimsListAndRevoke(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	h := func(s string) []byte { sum := sha256.Sum256([]byte(s)); return sum[:] }
+	for _, s := range []struct {
+		key    string
+		email  string
+		groups []string
+	}{{"a", "a@x.com", []string{"admins", "ops"}}, {"b", "b@x.com", nil}, {"c", "c@x.com", nil}} {
+		if err := p.CreateSession(ctx, h(s.key), Session{Subject: s.key, Email: s.email, Groups: s.groups, Verified: s.key != "c", CSRF: "x", Expires: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := p.GetSession(ctx, h("a"))
+	if err != nil || a.ID == 0 || strings.Join(a.Groups, ",") != "admins,ops" || !a.Verified || a.Created.IsZero() {
+		t.Fatalf("claims kept: %+v %v", a, err)
+	}
+	if c, _ := p.GetSession(ctx, h("c")); c.Verified {
+		t.Error("verified=false is kept")
+	}
+	list, err := p.ListSessions(ctx)
+	if err != nil || len(list) != 3 {
+		t.Fatalf("list: %d %v", len(list), err)
+	}
+	b, _ := p.GetSession(ctx, h("b"))
+	if gone, err := p.DeleteSessionByID(ctx, b.ID); err != nil || gone.Email != "b@x.com" {
+		t.Errorf("revoke: %+v %v", gone, err)
+	}
+	if _, err := p.DeleteSessionByID(ctx, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revoked twice: %v", err)
+	}
+	if n, err := p.DeleteOtherSessions(ctx, h("a")); err != nil || n != 1 {
+		t.Errorf("end others: %d %v", n, err)
+	}
+	if list, _ := p.ListSessions(ctx); len(list) != 1 || list[0].Email != "a@x.com" {
+		t.Errorf("only a is left: %+v", list)
+	}
+
+	// A session from before the migration has no groups (NULL).
+	if _, err := p.pool.Exec(ctx, `UPDATE sessions SET groups = NULL WHERE id_hash = $1`, h("a")); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := p.GetSession(ctx, h("a")); err != nil || len(a.Groups) != 0 {
+		t.Errorf("legacy session: %+v %v", a, err)
 	}
 }

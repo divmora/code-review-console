@@ -256,8 +256,8 @@ func (a *Admin) handleCallback(w http.ResponseWriter, r *http.Request) {
 	sid := randToken(32)
 	sum := sha256.Sum256([]byte(sid))
 	err = a.store.CreateSession(ctx, sum[:], store.Session{
-		Subject: id.Subject, Email: id.Email, Name: id.Name, CSRF: randToken(24),
-		Expires: time.Now().Add(a.cfg.SessionTTL),
+		Subject: id.Subject, Email: id.Email, Name: id.Name, Groups: id.Groups, Verified: id.Verified,
+		CSRF: randToken(24), Expires: time.Now().Add(a.cfg.SessionTTL),
 	})
 	if err != nil {
 		fail(http.StatusInternalServerError, "could not create session", "error", err)
@@ -353,6 +353,11 @@ func (a *Admin) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 type ctxKey struct{}
 
+// session returns the request's session. Every request checks it against
+// the current sign-in rules (and license): a session that no longer
+// matches, for example after an admin is removed from allowed_emails and
+// the console restarted, or the license with sso_rules ended, is ended at
+// once instead of lasting until session_ttl.
 func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil || c.Value == "" {
@@ -363,7 +368,25 @@ func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 	if err != nil {
 		return nil, false
 	}
+	id := identity{Subject: s.Subject, Email: s.Email, Name: s.Name, Groups: s.Groups, Verified: s.Verified}
+	if reason := a.authorize(id); reason != "" {
+		_ = a.store.DeleteSession(r.Context(), sum[:])
+		_ = a.store.Audit(r.Context(), firstNonEmpty(s.Email, s.Subject), "session.ended", "admin",
+			map[string]any{"reason": "no longer allowed by the sign-in rules: " + reason})
+		a.logger.Warn("admin session ended: no longer allowed by the sign-in rules", "email", s.Email, "why", reason)
+		return nil, false
+	}
 	return s, true
+}
+
+// sessionHash is the stored hash of the request's session cookie.
+func sessionHash(r *http.Request) []byte {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(c.Value))
+	return sum[:]
 }
 
 // checkCSRF requires the session's CSRF token in X-CSRF-Token and, when the
