@@ -3,7 +3,7 @@
 # The codereview CLI the local executor runs, pinned to a release that is at
 # least config.MinCLIVersion. A plain FROM line (not an ARG) so Dependabot
 # can bump it.
-FROM ghcr.io/divmora/code-review-bot:0.4.0 AS bot
+FROM ghcr.io/divmora/code-review-bot:0.4.1 AS bot
 
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS builder
 ARG TARGETOS

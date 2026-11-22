@@ -311,6 +311,9 @@ func (s *Server) enqueueReview(tgt target, ref vcs.Ref, opts reviewOpts, debounc
 		rep.TokensIn, rep.TokensOut = res.TokensIn, res.TokensOut
 		rep.Result = res.Raw
 		switch {
+		case res.Unreadable != "":
+			rep.Note = res.Unreadable
+			s.logger.Warn("review result unreadable", "pr", ref.String(), "reason", res.Unreadable, "logs", tail(res.Logs, 2000))
 		case res.TooLarge:
 			rep.Note = "too many files for an automatic review"
 		case res.Partial:
