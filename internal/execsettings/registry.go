@@ -120,7 +120,7 @@ func (t *Tags) fetch(ctx context.Context, repo string) ([]string, error) {
 		}
 		if resp.StatusCode == http.StatusUnauthorized && auth == "" {
 			challenge := resp.Header.Get("Www-Authenticate")
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if auth, err = t.authorize(ctx, challenge, name); err != nil {
 				return nil, err
 			}
@@ -128,7 +128,7 @@ func (t *Tags) fetch(ctx context.Context, repo string) ([]string, error) {
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			hint := ""
 			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 				hint = " (for a private repository, set " + EnvRegistryUser + " and " + EnvRegistryPassword + ")"
@@ -140,7 +140,7 @@ func (t *Tags) fetch(ctx context.Context, repo string) ([]string, error) {
 		}
 		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&body)
 		link := resp.Header.Get("Link")
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("list tags of %s: %w", repo, err)
 		}
@@ -205,7 +205,7 @@ func (t *Tags) authorize(ctx context.Context, challenge, name string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("registry token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("registry token: HTTP %d (for a private repository, set %s and %s)", resp.StatusCode, EnvRegistryUser, EnvRegistryPassword)
 	}
