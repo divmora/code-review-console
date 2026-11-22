@@ -953,3 +953,40 @@ func TestSessionsAPI(t *testing.T) {
 		t.Errorf("audit: %+v", entries)
 	}
 }
+
+// TestAdminURLsPeopleReach: /admin/ and trailing slashes redirect, an
+// unknown section shows the panel's "not found" view (404), and a GET
+// /admin/logout shows the panel (its Sign out button POSTs) (issue #60).
+func TestAdminURLsPeopleReach(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	noFollow := *e.client
+	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	get := func(path string) *http.Response {
+		resp, err := noFollow.Get(e.app.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp
+	}
+	for path, want := range map[string]string{"/admin/": "/admin", "/admin/?x=1": "/admin?x=1", "/admin/settings/": "/admin/settings"} {
+		if r := get(path); r.StatusCode != http.StatusPermanentRedirect || r.Header.Get("Location") != want {
+			t.Errorf("%s: %d %q", path, r.StatusCode, r.Header.Get("Location"))
+		}
+	}
+	if r := get("/admin/review"); r.StatusCode != http.StatusNotFound || !strings.HasPrefix(r.Header.Get("Content-Type"), "text/html") {
+		t.Errorf("unknown section: %d %s", r.StatusCode, r.Header.Get("Content-Type"))
+	}
+	if r := get("/admin/logout"); r.StatusCode != http.StatusOK || !strings.HasPrefix(r.Header.Get("Content-Type"), "text/html") {
+		t.Errorf("GET /admin/logout: %d", r.StatusCode)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 200 {
+		t.Error("GET /admin/logout must not sign out")
+	}
+	// Assets still load.
+	if r := get("/admin/assets/theme.js"); r.StatusCode != http.StatusOK {
+		t.Errorf("assets: %d", r.StatusCode)
+	}
+}
