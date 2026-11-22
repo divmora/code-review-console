@@ -52,6 +52,9 @@ type Admin struct {
 	// Hosts is the code host registry shared with the server; nil hides
 	// the Hosts page.
 	Hosts *hosts.Registry
+	// ExecutorType is the configured executor (local, docker, kubernetes);
+	// docker and kubernetes need the executors license feature to run.
+	ExecutorType string
 	// Lic is the installed license (nil = the free core). License keys
 	// pasted in the panel are stored under licenseKey.
 	Lic *license.Manager

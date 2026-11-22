@@ -66,6 +66,10 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 	default:
 		lic.Detail = "free core"
 	}
+	if paused := a.reviewsPaused(); paused != "" {
+		lic.Optional, lic.Done, lic.Detail = false, false, paused
+		lic.Help = "The " + a.ExecutorType + " executor runs reviews only with a Divmora license that includes executors. Paste the key under License: it applies at once, no restart."
+	}
 	steps = append(steps, lic)
 
 	// 2. A code host, and 3. a webhook on it.
@@ -206,6 +210,14 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 	}
 	out.Complete = out.Done == out.Total
 	return out, nil
+}
+
+// reviewsPaused says why reviews can't run with the current license, or "".
+func (a *Admin) reviewsPaused() string {
+	if a.ExecutorType == "" || a.ExecutorType == "local" || a.Lic.Has(license.Executors) {
+		return ""
+	}
+	return "reviews are paused: the " + a.ExecutorType + " executor needs a license with the executors feature"
 }
 
 func plural(n int, noun string) string {

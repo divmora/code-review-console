@@ -157,7 +157,7 @@ func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profiles, "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
-		"setup": setup,
+		"setup": setup, "reviews_paused": a.reviewsPaused(),
 	})
 }
 

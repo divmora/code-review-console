@@ -110,8 +110,9 @@ database:
 repos:
   allowlist: true                      # review only repositories enabled directly or by a group/pattern rule
   require_reviewer: false              # true: review an MR/PR only when the bot user is one of its reviewers
-# Divmora license key for paid features (or CODEREVIEW_CONSOLE_LICENSE, or paste it in the
-# admin panel under License). Without one the console runs the free core.
+# The Divmora license key is managed in the admin panel under License (without one the console runs
+# the free core). license.file is deprecated: its key is copied into the database once.
+# CODEREVIEW_CONSOLE_LICENSE overrides the panel, for example when nobody can sign in.
 # license:
 #   file: /etc/console/license.key
 

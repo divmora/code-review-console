@@ -125,12 +125,17 @@ func serve(ctx context.Context, args []string) error {
 	}
 	lic := loadLicense(ctx, cfg, deps.Store, logger)
 	if err := requireExecutor(cfg, lic); err != nil {
-		return err
+		// Start anyway, so the license can be added in the admin panel;
+		// reviews are refused until it is (see licensedExecutor).
+		logger.Error("reviews are paused until a license is added in the admin panel", "error", err)
 	}
 	warnSSORules(cfg, lic, logger)
 	exec, err := newExecutor(cfg)
 	if err != nil {
 		return err
+	}
+	if cfg.Executor.Type != "local" {
+		exec = &licensedExecutor{Executor: exec, lic: lic}
 	}
 	deps.License = lic
 	deps.Settings = settings.New(cfg, deps.Store)
@@ -175,6 +180,7 @@ func serve(ctx context.Context, args []string) error {
 		adm.Settings = deps.Settings
 		adm.Lic = lic
 		adm.Hosts = deps.Hosts
+		adm.ExecutorType = cfg.Executor.Type
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
 	}
@@ -202,7 +208,7 @@ func checkConfig(ctx context.Context, args []string) error {
 		return err
 	}
 	if err := requireExecutor(cfg, loadLicense(ctx, cfg, nil, slog.New(slog.DiscardHandler))); err != nil {
-		fmt.Printf("note: %v\n      (a key pasted in the admin panel is read from the database when the console starts)\n", err)
+		fmt.Printf("note: %v\n      (the console still starts; reviews wait until the license is added in the admin panel)\n", err)
 	}
 	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled, cfg.Repos.Allowlist, cfg.Database.URL != "")
 	if len(hosts.FromConfig(cfg)) > 0 {
@@ -253,27 +259,59 @@ func checkConfig(ctx context.Context, args []string) error {
 	return nil
 }
 
-// loadLicense reads the license key: $CODEREVIEW_CONSOLE_LICENSE, then
-// license.file, then a key pasted in the admin panel (database). Without a
-// valid key the console runs the free core.
+// loadLicense reads the license key: $CODEREVIEW_CONSOLE_LICENSE (an
+// override, e.g. when nobody can sign in), then the key managed in the admin
+// panel (database). license.file is deprecated: when the database has no key
+// yet, a valid key from the file is copied into it once, and from then on
+// the admin panel is where the license changes. Without a database the file
+// is read as before. Without a valid key the console runs the free core.
 func loadLicense(ctx context.Context, cfg *config.Config, st store.Store, logger *slog.Logger) *license.Manager {
-	lic := license.Default()
+	return loadLicenseInto(ctx, license.Default(), cfg, st, logger)
+}
+
+// loadLicenseInto is loadLicense with the Manager given (tests trust a test key).
+func loadLicenseInto(ctx context.Context, lic *license.Manager, cfg *config.Config, st store.Store, logger *slog.Logger) *license.Manager {
 	key, source := strings.TrimSpace(os.Getenv("CODEREVIEW_CONSOLE_LICENSE")), "env"
-	if key == "" && cfg.License.File != "" {
+	var stored admin.StoredLicense
+	found := false
+	if st != nil {
+		var err error
+		if found, err = st.GetSetting(ctx, admin.LicenseSetting, &stored); err != nil {
+			logger.Error("could not read the stored license", "error", err)
+		}
+		found = found && stored.Key != ""
+	}
+	if key == "" && found {
+		key, source = stored.Key, "database"
+	}
+	if cfg.License.File != "" {
+		switch {
+		case st == nil:
+			logger.Warn("deprecated: license.file; set database.url and manage the license in the admin panel")
+		case found:
+			logger.Warn("license.file is ignored: the license is managed in the admin panel (remove license.file)")
+		default:
+			logger.Warn("deprecated: license.file; its key is copied into the database once, then the license is managed in the admin panel (remove license.file)")
+		}
+	}
+	if key == "" && !found && cfg.License.File != "" {
 		b, err := os.ReadFile(cfg.License.File)
 		if err != nil {
 			lic.Fail("file", err)
 			logger.Error("license file unreadable; running the free core", "file", cfg.License.File, "error", err)
 			return lic
 		}
-		key, source = strings.TrimSpace(string(b)), "file"
-	}
-	if key == "" && st != nil {
-		var stored admin.StoredLicense
-		if found, err := st.GetSetting(ctx, admin.LicenseSetting, &stored); err != nil {
-			logger.Error("could not read the stored license; running the free core", "error", err)
-		} else if found {
-			key, source = stored.Key, "database"
+		key, source = strings.Join(strings.Fields(string(b)), ""), "file"
+		if st != nil {
+			if c, err := lic.Verify(key); err == nil {
+				detail := map[string]any{"id": c.ID, "customer": c.Customer.Name, "plan": c.Plan, "expires_at": c.ExpiresAt, "from": "license.file"}
+				if err := st.PutSettingAudited(ctx, admin.LicenseSetting, admin.StoredLicense{Key: key}, detail, "license.file (initial)"); err != nil {
+					logger.Error("could not copy the license from license.file into the database", "error", err)
+				} else {
+					source = "database"
+					logger.Info("license copied from license.file into the database; manage it in the admin panel from now on")
+				}
+			}
 		}
 	}
 	if key == "" {
@@ -308,15 +346,29 @@ func warnSSORules(cfg *config.Config, lic *license.Manager, logger *slog.Logger)
 		"allowed_emails", len(o.AllowedEmails))
 }
 
-// requireExecutor refuses the docker and kubernetes executors without a
-// license that covers them.
+// requireExecutor reports whether the docker and kubernetes executors are
+// covered by the license.
 func requireExecutor(cfg *config.Config, lic *license.Manager) error {
 	if cfg.Executor.Type == "local" {
 		return nil
 	}
 	if err := lic.Require(license.Executors); err != nil {
-		return fmt.Errorf("executor.type %s: %w (on a first start, provide the key with CODEREVIEW_CONSOLE_LICENSE or license.file, "+
-			"or start once with executor.type: local and paste it in the admin panel)", cfg.Executor.Type, err)
+		return fmt.Errorf("executor.type %s: %w", cfg.Executor.Type, err)
 	}
 	return nil
+}
+
+// licensedExecutor refuses to run jobs while the license does not cover the
+// docker or kubernetes executor. It checks on every job, so a key added in
+// the admin panel applies without a restart.
+type licensedExecutor struct {
+	executor.Executor
+	lic *license.Manager
+}
+
+func (e *licensedExecutor) Run(ctx context.Context, t executor.Task) (*executor.Result, error) {
+	if err := e.lic.Require(license.Executors); err != nil {
+		return nil, &executor.RunError{Message: "the " + e.Name() + " executor needs a Divmora license with the executors feature: add one under License in the admin panel"}
+	}
+	return e.Executor.Run(ctx, t)
 }

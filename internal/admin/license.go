@@ -61,7 +61,7 @@ func (a *Admin) apiPutLicense(w http.ResponseWriter, r *http.Request, s *store.S
 		return
 	}
 	if a.Lic.Status().Managed {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the license comes from CODEREVIEW_CONSOLE_LICENSE or license.file; change it there"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the license comes from CODEREVIEW_CONSOLE_LICENSE, which overrides the panel: remove the variable and restart to manage it here"})
 		return
 	}
 	var req StoredLicense
