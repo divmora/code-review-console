@@ -103,12 +103,20 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 	var p bbPayload
 	_ = json.Unmarshal(body, &p)
 	webHost := ""
-	if u, err := url.Parse(p.Repository.Links.HTML.Href); err == nil && u.Host != "" {
-		webHost = strings.ToLower(u.Host)
-	}
-	h, ok := s.hosts.Find(hosts.Bitbucket, webHost)
+	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.Bitbucket)
 	if !ok {
-		h, ok = s.hosts.Find(hosts.Bitbucket, "")
+		return
+	}
+	if viaEndpoint {
+		webHost = h.Host
+	} else {
+		if u, err := url.Parse(p.Repository.Links.HTML.Href); err == nil && u.Host != "" {
+			webHost = strings.ToLower(u.Host)
+		}
+		h, ok = s.hosts.Find(hosts.Bitbucket, webHost)
+		if !ok {
+			h, ok = s.hosts.Find(hosts.Bitbucket, "")
+		}
 	}
 	hm.Host = firstNonEmpty(webHost, h.Host)
 	if !ok {

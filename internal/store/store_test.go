@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/divmora/code-review-console/internal/config"
 )
 
@@ -431,5 +433,61 @@ func TestTokensUsed(t *testing.T) {
 	}
 	if n, _ := p.TokensUsed(ctx, now, "", "", ""); n-before != 1165 {
 		t.Errorf("all today = %d", n)
+	}
+}
+
+func TestWebhookEndpointsStore(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	h, err := p.PutHost(ctx, HostRow{Platform: "gitlab", Host: fmt.Sprintf("ep-%d.example.com", time.Now().UnixNano()), BaseURL: "https://gl.example.com"}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := p.PutHost(ctx, HostRow{Platform: "github", Host: fmt.Sprintf("ep-%d.example.org", time.Now().UnixNano()), BaseURL: "https://ghe.example.org/api/v3"}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	e, err := p.PutWebhookEndpoint(ctx, WebhookEndpoint{ID: id, HostID: h.ID, Name: "group a", Enabled: true, Secrets: "v1:sealed"}, "a@x")
+	if err != nil || e.ID != id || e.CreatedBy != "a@x" || e.Secrets != "v1:sealed" {
+		t.Fatalf("create: %+v %v", e, err)
+	}
+	if e, err = p.PutWebhookEndpoint(ctx, WebhookEndpoint{ID: id, HostID: h.ID, Name: "group b", Enabled: false, Secrets: "v1:other"}, "b@x"); err != nil ||
+		e.Name != "group b" || e.Enabled || e.CreatedBy != "a@x" || e.UpdatedBy != "b@x" {
+		t.Fatalf("update: %+v %v", e, err)
+	}
+	if _, err := p.PutWebhookEndpoint(ctx, WebhookEndpoint{ID: id, HostID: other.ID, Name: "moved", Secrets: "v1:x"}, "c@x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an endpoint cannot move to another host: %v", err)
+	}
+	list, _ := p.ListWebhookEndpoints(ctx)
+	found := false
+	for _, x := range list {
+		found = found || (x.ID == id && x.Name == "group b")
+	}
+	if !found {
+		t.Errorf("list: %+v", list)
+	}
+	if err := p.InsertWebhookEvents(ctx, []WebhookEvent{{Platform: "gitlab", Project: "ep/test", Endpoint: id, Outcome: HookQueued}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := p.ListWebhookEvents(ctx, WebhookFilter{Project: "ep/test"}); len(got) != 1 || got[0].Endpoint != id {
+		t.Errorf("webhook event endpoint: %+v", got)
+	}
+	// Deleting the host deletes its endpoints.
+	if err := p.DeleteHost(ctx, h.ID, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteWebhookEndpoint(ctx, id, "a@x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("endpoint should be gone with its host: %v", err)
+	}
+	id2 := uuid.NewString()
+	if _, err := p.PutWebhookEndpoint(ctx, WebhookEndpoint{ID: id2, HostID: other.ID, Name: "x", Secrets: "v1:x"}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteWebhookEndpoint(ctx, id2, "a@x"); err != nil {
+		t.Errorf("delete: %v", err)
+	}
+	if err := p.DeleteWebhookEndpoint(ctx, "not-a-uuid", "a@x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a malformed ID is just not found: %v", err)
 	}
 }

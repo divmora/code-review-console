@@ -8,16 +8,27 @@ Create a dedicated user (for example `codereview`) or a **project/group access t
 
 ## 2. Webhook
 
-Project (or group) → Settings → Webhooks → **Add new webhook**:
+In the console, open **Code hosts**, then **Manage webhooks** on the GitLab host, and click **Add webhook**. Name it after where you'll set it up (for example the group). The console generates:
+
+- a URL of its own, `https://<your-host>/webhooks/gitlab/<uuid>`;
+- a secret token, shown once.
+
+Then in GitLab, Project (or group, or Admin → System hooks) → Settings → Webhooks → **Add new webhook**:
 
 | Field | Value |
 |---|---|
-| URL | `https://<your-host>/webhooks/gitlab` |
-| Secret token | a long random string |
+| URL | the webhook's URL from the console |
+| Secret token | the secret from the console |
 | Triggers | **Merge request events** · **Comments** |
 | SSL verification | enabled |
 
+Add one webhook in the console for each hook you set up in GitLab (a system hook, each group hook). Each has its own URL and secret, so one can be given a new secret, disabled or deleted without touching the others. The URL alone picks the host, and only that webhook's secret verifies it.
+
+**Signing tokens (GitLab 19.0+, recommended).** After saving the hook, GitLab shows its signing token (`whsec_…`). Paste it into the webhook in the console. Signed deliveries are then checked by signature. If the host's **Unsigned webhooks** setting is **Reject**, the webhook only works once its signing token is saved.
+
 Only pushes trigger reviews (`update` events with new commits). Title, label and description edits are ignored.
+
+**Shared URL.** `https://<your-host>/webhooks/gitlab` still works for existing hooks. It is shared by every GitLab host: the console matches the instance by the `X-Gitlab-Instance` header, then by the project URL host, and checks the secret tokens or signing tokens in the host's settings. It never accepts a webhook's own secret. The webhook history (**Webhooks** page) shows which URL each delivery used, so you can move hooks over at your own pace.
 
 ## 3. Server config
 
@@ -29,7 +40,7 @@ gitlab:
     webhook_secret: ${GITLAB_WEBHOOK_SECRET}
 ```
 
-Add one entry per instance. The server matches webhooks by the `X-Gitlab-Instance` header, then by the project URL host.
+Add one entry per instance. Secrets in the config file are for the shared URL. With `CODEREVIEW_CONSOLE_SECRET_KEY` and a database, hosts are copied into the admin panel on first start, where you add webhooks with their own URLs.
 
 ## CI instead of a server
 

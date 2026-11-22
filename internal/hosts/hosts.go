@@ -164,31 +164,53 @@ func (h Host) Validate() error {
 		if h.Token == "" && (h.AppID == 0 || h.AppPrivateKey == "") {
 			return errors.New("github: set a token, or a GitHub App ID and private key")
 		}
-		if len(h.WebhookSecrets) == 0 {
-			return errors.New("github: set a webhook secret (GitHub signs every delivery with it)")
-		}
 	case GitLab:
 		if h.Token == "" {
 			return errors.New("gitlab: set an access token with api scope")
 		}
+		if err := checkSigningTokens(h.SigningTokens); err != nil {
+			return err
+		}
+	case Bitbucket:
+		if h.Token == "" && (h.Email == "" || h.APIToken == "") {
+			return errors.New("bitbucket: set an access token, or an account email and API token")
+		}
+	}
+	// Webhook secrets on the host are optional: they verify the shared
+	// /webhooks/<platform> URL. Webhooks added in the admin panel
+	// (endpoints) have their own URL and secrets.
+	return nil
+}
+
+// ValidateShared checks that a host can verify deliveries on the shared
+// /webhooks/<platform> URL. Hosts from the config file (read-only mode)
+// have no other URL, so they need it.
+func (h Host) ValidateShared() error {
+	switch h.Platform {
+	case GitHub:
+		if len(h.WebhookSecrets) == 0 {
+			return errors.New("github: set a webhook secret (GitHub signs every delivery with it)")
+		}
+	case GitLab:
 		if len(h.WebhookSecrets) == 0 && len(h.SigningTokens) == 0 {
 			return errors.New("gitlab: set a webhook signing token (GitLab 19.0+, recommended) or a secret token")
 		}
 		if h.RequireSignature && len(h.SigningTokens) == 0 {
 			return errors.New("gitlab: require signature needs a signing token")
 		}
-		for _, t := range h.SigningTokens {
-			raw, ok := strings.CutPrefix(t, "whsec_")
-			if _, err := base64.StdEncoding.DecodeString(raw); !ok || err != nil {
-				return errors.New(`gitlab: a signing token starts with "whsec_" followed by base64 (copy it from GitLab)`)
-			}
-		}
 	case Bitbucket:
-		if h.Token == "" && (h.Email == "" || h.APIToken == "") {
-			return errors.New("bitbucket: set an access token, or an account email and API token")
-		}
 		if len(h.WebhookSecrets) == 0 {
 			return errors.New("bitbucket: set a webhook secret")
+		}
+	}
+	return nil
+}
+
+func checkSigningTokens(tokens []string) error {
+	for _, t := range tokens {
+		raw, ok := strings.CutPrefix(t, "whsec_")
+		if _, err := base64.StdEncoding.DecodeString(raw); !ok || err != nil {
+			return errors.New(`gitlab: a signing token starts with "whsec_" followed by base64 (copy it from GitLab)`)
 		}
 	}
 	return nil
@@ -201,10 +223,11 @@ type Registry struct {
 	box    *secrets.Box
 	logger *slog.Logger
 
-	mu    sync.RWMutex
-	list  []Host
-	mode  string // "database" or "config"
-	notes []string
+	mu        sync.RWMutex
+	list      []Host
+	endpoints []Endpoint
+	mode      string // "database" or "config"
+	notes     []string
 	// OnChange runs after hosts change (e.g. to refresh bot identities).
 	OnChange func()
 	// Lic gates the Hosts feature: without it only the first host of each
@@ -302,8 +325,22 @@ func (r *Registry) Load(ctx context.Context) error {
 		}
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Platform+list[i].Host < list[j].Platform+list[j].Host })
+	var eps []Endpoint
+	if r.st != nil && mode == "database" && r.box != nil {
+		rows, err := r.st.ListWebhookEndpoints(ctx)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			e, err := r.decodeEndpoint(row)
+			if err != nil {
+				return fmt.Errorf("webhook %s: %w", row.ID, err)
+			}
+			eps = append(eps, e)
+		}
+	}
 	r.mu.Lock()
-	r.list, r.mode = list, mode
+	r.list, r.mode, r.endpoints = list, mode, eps
 	r.mu.Unlock()
 	return nil
 }
