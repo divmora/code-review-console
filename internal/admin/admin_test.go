@@ -858,3 +858,98 @@ func TestExecutorAPI(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestSessionRecheckedAgainstRules: a session ends as soon as its identity
+// no longer matches the sign-in rules or the license (issue #35).
+func TestSessionRecheckedAgainstRules(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}, AllowedGroups: []string{"admins"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 200 {
+		t.Fatalf("signed in: %d", code)
+	}
+	// Alice is removed from allowed_emails (config change + restart).
+	e.adm.cfg.OIDC.AllowedEmails = []string{"bob@example.com"}
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Errorf("a removed admin's session must end at once: %d", code)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Error("and stay ended")
+	}
+	entries, _ := e.st.ListAudit(context.Background(), 10)
+	if len(entries) == 0 || entries[0].Action != "session.ended" || entries[0].Actor != "alice@example.com" {
+		t.Errorf("audit: %+v", entries)
+	}
+
+	// Group membership is stored with the session; the license with
+	// sso_rules ending ends group-based sessions.
+	e2 := setup(t, config.OIDC{AllowedGroups: []string{"admins"}})
+	e2.idp.as(map[string]any{"sub": "u2", "email": "gina@example.com", "email_verified": true, "groups": []any{"admins"}})
+	_ = e2.login(t).Body.Close()
+	if code, _ := e2.do(t, "GET", "/admin/api/me", "", nil); code != 200 {
+		t.Fatalf("group sign-in: %d", code)
+	}
+	e2.adm.Lic = nil // the free core: group rules need sso_rules
+	if code, _ := e2.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Errorf("a group session must end without sso_rules: %d", code)
+	}
+}
+
+func TestSessionsAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com", "bob@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+
+	// Bob signs in from another browser.
+	jar, _ := cookiejar.New(nil)
+	bob := &env{idp: e.idp, app: e.app, st: e.st, adm: e.adm, client: &http.Client{Jar: jar, Timeout: 10 * time.Second}}
+	e.idp.as(map[string]any{"sub": "u2", "email": "bob@example.com", "email_verified": true})
+	_ = bob.login(t).Body.Close()
+
+	var list []struct {
+		ID      int64  `json:"id"`
+		Email   string `json:"email"`
+		Current bool   `json:"current"`
+	}
+	code, body := e.do(t, "GET", "/admin/api/sessions", "", nil)
+	if code != 200 || json.Unmarshal(body, &list) != nil || len(list) != 2 {
+		t.Fatalf("list: %d %s", code, body)
+	}
+	var bobID int64
+	for _, s := range list {
+		if s.Email == "bob@example.com" {
+			bobID = s.ID
+			if s.Current {
+				t.Error("bob's session is not alice's current one")
+			}
+		} else if !s.Current {
+			t.Error("alice's own session is marked current")
+		}
+	}
+	if code, _ := e.do(t, "DELETE", "/admin/api/sessions/"+strconv.FormatInt(bobID, 10), "", nil); code != 403 {
+		t.Errorf("revoking needs the CSRF token: %d", code)
+	}
+	if code, _ := e.do(t, "DELETE", "/admin/api/sessions/"+strconv.FormatInt(bobID, 10), csrf, nil); code != 200 {
+		t.Fatalf("revoke: %d", code)
+	}
+	if code, _ := bob.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Errorf("bob is signed out: %d", code)
+	}
+
+	// Bob signs in again; "sign out everyone else" keeps only alice.
+	_ = bob.login(t).Body.Close()
+	if code, body := e.do(t, "POST", "/admin/api/sessions/end-others", csrf, nil); code != 200 || json.Unmarshal(body, &list) != nil || len(list) != 1 || !list[0].Current {
+		t.Fatalf("end others: %d %s", code, body)
+	}
+	if code, _ := bob.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Errorf("bob is signed out again: %d", code)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 200 {
+		t.Errorf("alice stays signed in: %d", code)
+	}
+	entries, _ := e.st.ListAudit(context.Background(), 5)
+	if len(entries) < 2 || entries[0].Action != "session.revoke_others" || entries[0].Actor != "alice@example.com" {
+		t.Errorf("audit: %+v", entries)
+	}
+}

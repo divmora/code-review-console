@@ -17,19 +17,20 @@ import (
 
 // Memory is a thread-safe in-memory store.Store.
 type Memory struct {
-	mu       sync.Mutex
-	nextID   int64
-	repos    map[int64]*store.Repo
-	rules    map[int64]*store.Rule
-	hooks    []store.WebhookEvent
-	hosts    map[int64]*store.HostRow
-	hooksEP  map[string]*store.WebhookEndpoint
-	learns   []*store.Learning
-	jobs     []store.Job
-	sessions map[string]store.Session
-	audit    []store.AuditEntry
-	models   map[string]store.ModelProfile
-	settings map[string][]byte
+	mu        sync.Mutex
+	nextID    int64
+	repos     map[int64]*store.Repo
+	rules     map[int64]*store.Rule
+	hooks     []store.WebhookEvent
+	hosts     map[int64]*store.HostRow
+	hooksEP   map[string]*store.WebhookEndpoint
+	learns    []*store.Learning
+	jobs      []store.Job
+	sessions  map[string]store.Session
+	sessionID int64
+	audit     []store.AuditEntry
+	models    map[string]store.ModelProfile
+	settings  map[string][]byte
 }
 
 // New returns an empty store.
@@ -647,6 +648,11 @@ func (m *Memory) PutSettingAudited(_ context.Context, key string, value, detail 
 func (m *Memory) CreateSession(_ context.Context, idHash []byte, s store.Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.sessionID++
+	s.ID, s.Created = m.sessionID, time.Now()
+	if s.Groups == nil {
+		s.Groups = []string{}
+	}
 	m.sessions[string(idHash)] = s
 	return nil
 }
@@ -666,6 +672,44 @@ func (m *Memory) DeleteSession(_ context.Context, idHash []byte) error {
 	defer m.mu.Unlock()
 	delete(m.sessions, string(idHash))
 	return nil
+}
+
+func (m *Memory) ListSessions(context.Context) ([]store.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.Session{}
+	for _, s := range m.sessions {
+		if time.Now().Before(s.Expires) {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	return out, nil
+}
+
+func (m *Memory) DeleteSessionByID(_ context.Context, id int64) (*store.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, s := range m.sessions {
+		if s.ID == id && time.Now().Before(s.Expires) {
+			delete(m.sessions, k)
+			return &s, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *Memory) DeleteOtherSessions(_ context.Context, keep []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k := range m.sessions {
+		if k != string(keep) {
+			delete(m.sessions, k)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (m *Memory) addAudit(actor, action, target string, detail any) {
