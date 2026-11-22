@@ -65,3 +65,7 @@ func checkImageTag(key, image string) error {
 	}
 	return nil
 }
+
+// CheckImageTag is checkImageTag for other packages (the admin panel's
+// executor settings).
+func CheckImageTag(key, image string) error { return checkImageTag(key, image) }

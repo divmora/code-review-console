@@ -54,6 +54,9 @@ Changing this contract means changing the bot's CLI too; keep them in step.
   `.codereview.yaml`; admin-chosen models must be configured profiles.
 - **Admin auth**: verify ID-token signature, audience, nonce and allow rules; unverified emails
   never match email/domain rules.
+- Executor settings in the DB (internal/execsettings) cover only tunables; the image repository,
+  namespace, service account, token automount, kubeconfig and env stay config-file-only (a panel
+  admin must not be able to choose what code or identity runs with the job's secrets).
 - Model profiles stored in the DB never contain API keys (only `api_key_env`). internal/models
   merges them with the config file's (DB wins) and passes each DB profile's api_key_env value
   to jobs; names holding the console's own secrets (CODEREVIEW_CONSOLE_*, host tokens) are refused.

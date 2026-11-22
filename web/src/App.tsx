@@ -4,6 +4,7 @@ import {
   BookOpen,
   Bot,
   ChartColumn,
+  Container,
   FolderGit2,
   KeyRound,
   ListChecks,
@@ -63,6 +64,7 @@ import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
 import License from "./pages/License";
 import Models from "./pages/Models";
+import Executor from "./pages/Executor";
 import Setup from "./pages/Setup";
 
 // Each section has its own URL under /admin, so a reload lands on it.
@@ -73,6 +75,7 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "learnings", title: "Learnings", icon: BookOpen, el: <Learnings />, paid: "learnings" },
   { path: "hosts", title: "Code hosts", icon: Server, el: <Hosts /> },
   { path: "models", title: "Models", icon: Bot, el: <Models /> },
+  { path: "executor", title: "Executor", icon: Container, el: <Executor /> },
   { path: "rules", title: "Rules", icon: ListChecks, el: <Rules />, paid: "rules" },
   { path: "webhooks", title: "Webhooks", icon: Webhook, el: <Webhooks /> },
   { path: "settings", title: "Settings", icon: SlidersHorizontal, el: <Settings /> },

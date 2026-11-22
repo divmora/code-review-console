@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -63,6 +64,73 @@ func NewKubernetes(cfg config.KubeExecutor, pass []string) (*Kubernetes, error) 
 // NewKubernetesWithClient is for tests.
 func NewKubernetesWithClient(cfg config.KubeExecutor, pass []string, cs kubernetes.Interface) (*Kubernetes, error) {
 	return newKubernetes(cfg, pass, cs, 50*time.Millisecond)
+}
+
+// With returns a copy that uses cfg (changed in the admin panel) and the
+// same Kubernetes client. The connection settings (kubeconfig, namespace)
+// are the caller's to keep.
+func (k *Kubernetes) With(cfg config.KubeExecutor) (*Kubernetes, error) {
+	return newKubernetes(cfg, k.pass, k.cs, k.poll)
+}
+
+// CheckKube checks the pod settings of cfg the way the executor reads them:
+// tolerations and affinity as Kubernetes types (unknown fields rejected),
+// label and annotation keys, label values, the priority class name and
+// resource quantities.
+func CheckKube(cfg config.KubeExecutor) error {
+	if _, err := newKubernetes(cfg, nil, nil, 0); err != nil {
+		return err
+	}
+	for _, q := range []struct{ name, v string }{{"cpu", cfg.CPU}, {"memory", cfg.Memory}} {
+		if q.v != "" {
+			if _, err := resource.ParseQuantity(q.v); err != nil {
+				return fmt.Errorf("%s %q: want a Kubernetes quantity such as 500m or 1Gi", q.name, q.v)
+			}
+		}
+	}
+	for k, v := range cfg.NodeSelector {
+		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
+			return fmt.Errorf("node_selector key %q: %s", k, errs[0])
+		}
+		if errs := validation.IsValidLabelValue(v); len(errs) > 0 {
+			return fmt.Errorf("node_selector %s value %q: %s", k, v, errs[0])
+		}
+	}
+	for k, v := range cfg.PodLabels {
+		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
+			return fmt.Errorf("pod_labels key %q: %s", k, errs[0])
+		}
+		if errs := validation.IsValidLabelValue(v); len(errs) > 0 {
+			return fmt.Errorf("pod_labels %s value %q: %s", k, v, errs[0])
+		}
+	}
+	for k := range cfg.PodAnnotations {
+		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
+			return fmt.Errorf("pod_annotations key %q: %s", k, errs[0])
+		}
+	}
+	if p := cfg.PriorityClassName; p != "" {
+		if errs := validation.IsDNS1123Subdomain(p); len(errs) > 0 {
+			return fmt.Errorf("priority_class_name %q: %s", p, errs[0])
+		}
+	}
+	b := cfg.CABundle
+	if b.ConfigMap != "" && b.Secret != "" {
+		return fmt.Errorf("ca_bundle: set config_map or secret, not both")
+	}
+	for _, n := range []string{b.ConfigMap, b.Secret} {
+		if n != "" {
+			if errs := validation.IsDNS1123Subdomain(n); len(errs) > 0 {
+				return fmt.Errorf("ca_bundle name %q: %s", n, errs[0])
+			}
+		}
+	}
+	if b.Key != "" {
+		if errs := validation.IsConfigMapKey(b.Key); len(errs) > 0 {
+			return fmt.Errorf("ca_bundle key %q: %s", b.Key, errs[0])
+		}
+	}
+	return nil
 }
 
 func newKubernetes(cfg config.KubeExecutor, pass []string, cs kubernetes.Interface, poll time.Duration) (*Kubernetes, error) {

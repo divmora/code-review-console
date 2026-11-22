@@ -123,6 +123,18 @@ token, so review pods never get one by default, with or without a service accoun
 token in review pods. Review pods run untrusted PR content, so keep RBAC bound to that service account
 to a minimum.
 
+### Settings in the admin panel
+
+With a database, the **Executor** page manages the image version (the tag; the repository stays in
+the config file), CPU and memory, and for Kubernetes the job TTL, node selector, tolerations,
+affinity, priority class, pod labels and annotations, and the CA bundle below. On the first start
+they are copied from the config file; from then on the panel's values win, the log names any config
+file value that is ignored, and a change applies to the next review without a restart.
+
+The executor type, binaries, the Docker network, `kubeconfig`, `namespace`, `service_account`,
+`automount_service_account_token` and `env` stay in the config file only: they decide what review
+jobs, which carry the code host tokens and model keys, can reach.
+
 ### Where review pods run
 
 Optional fields under `executor.kubernetes` are copied into each review Job's pod template:
@@ -210,8 +222,9 @@ written, and unknown fields are rejected. Imports are audited as `cli: hosts imp
 ## Upgrading
 
 1. Read the release notes for a new minimum CLI version.
-2. Update the image or binary, and for `docker` or `kubernetes` executors, the CLI image tag.
-3. Run `check-config`.
+2. Update the image or binary. For `docker` or `kubernetes` executors, change the CLI version on the
+   **Executor** page (or the image tag in the config file when there is no database).
+3. Run `check-config` (it checks the config file's image, not a version set in the panel).
 4. Restart. Database migrations apply automatically. On SIGTERM the console stops taking work and
    gives running reviews up to 2 minutes to finish; give the container at least that long
    (Kubernetes `terminationGracePeriodSeconds: 150`). The queue is in memory: reviews still

@@ -25,6 +25,7 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
+	"github.com/divmora/code-review-console/internal/execsettings"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/settings"
@@ -58,6 +59,8 @@ type Admin struct {
 	// Models are the model profiles shared with the server; nil means
 	// those in the database only.
 	Models *models.Service
+	// Executor holds the executor settings; nil hides them.
+	Executor *execsettings.Service
 	// Lic is the installed license (nil = the free core). License keys
 	// pasted in the panel are stored under licenseKey.
 	Lic *license.Manager

@@ -126,12 +126,14 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/api/models/{name}", a.requireAPI(a.apiPutModel))
 	mux.HandleFunc("DELETE /admin/api/models/{name}", a.requireAPI(a.apiDeleteModel))
 	mux.HandleFunc("PUT /admin/api/model-choice", a.requireAPI(a.apiPutModelChoice))
+	mux.HandleFunc("GET /admin/api/executor", a.requireAPI(a.apiGetExecutor))
+	mux.HandleFunc("PUT /admin/api/executor", a.requireAPI(a.apiPutExecutor))
 	mux.HandleFunc("GET /admin/api/license", a.requireAPI(a.apiGetLicense))
 	mux.HandleFunc("PUT /admin/api/license", a.requireAPI(a.apiPutLicense))
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true}
 
 func (a *Admin) handlePage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.session(r); !ok {
