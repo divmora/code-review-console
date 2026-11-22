@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/divmora/code-review-console/compare/v0.7.1...v0.8.0) (2026-11-22)
+
+
+### Features
+
+* add the Code Review logo (code brackets with a check) ([#53](https://github.com/divmora/code-review-console/issues/53)) ([7268d90](https://github.com/divmora/code-review-console/commit/7268d90b8827218a4e313ffd2ea701218ed8d924))
+
+
+### Bug Fixes
+
+* **commands:** only authors who can push run model commands; rate limit them ([#58](https://github.com/divmora/code-review-console/issues/58)) ([f4e55f2](https://github.com/divmora/code-review-console/commit/f4e55f28b06fd9daa23ed7eba8117f14c20292fa)), closes [#28](https://github.com/divmora/code-review-console/issues/28)
+* **webhooks:** share replay protection across replicas and restarts ([#59](https://github.com/divmora/code-review-console/issues/59)) ([3cbab9e](https://github.com/divmora/code-review-console/commit/3cbab9e1faa595a1dec820d9ae12cfcaf1baa02d)), closes [#34](https://github.com/divmora/code-review-console/issues/34)
+
 ## [0.7.1](https://github.com/divmora/code-review-console/compare/v0.7.0...v0.7.1) (2026-11-22)
 
 
