@@ -152,7 +152,13 @@ func (s *Server) jobConfig(ctx context.Context, tgt target) ([]byte, map[string]
 // UI-managed models), as YAML plus the env vars holding moved API keys.
 // "console check-config" validates it with the CLI.
 func EngineConfig(cfg *config.Config) ([]byte, map[string]string, error) {
-	ec, env := buildEngineConfig(cfg, cfg.Models, cfg.Model, cfg.Fallback)
+	return EngineConfigWith(cfg, cfg.Models, cfg.Model, cfg.Fallback)
+}
+
+// EngineConfigWith is EngineConfig with the given model profiles, default
+// and fallbacks (those managed in the admin panel, see models.Service).
+func EngineConfigWith(cfg *config.Config, models map[string]config.ModelProfile, defModel string, fallback []string) ([]byte, map[string]string, error) {
+	ec, env := buildEngineConfig(cfg, models, defModel, fallback)
 	b, err := yaml.Marshal(ec)
 	return b, env, err
 }

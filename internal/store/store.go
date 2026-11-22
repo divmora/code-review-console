@@ -360,6 +360,21 @@ type Postgres struct {
 
 // Open connects and applies migrations.
 func Open(ctx context.Context, url string) (*Postgres, error) {
+	p, err := Connect(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.migrate(ctx); err != nil {
+		p.pool.Close()
+		return nil, err
+	}
+	return p, nil
+}
+
+// Connect connects without applying migrations, for commands that only
+// read (check-config), so running a newer binary never changes the schema
+// under the console that is serving.
+func Connect(ctx context.Context, url string) (*Postgres, error) {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("connect to database: %w", err)
@@ -370,12 +385,7 @@ func Open(ctx context.Context, url string) (*Postgres, error) {
 		pool.Close()
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
-	p := &Postgres{pool: pool}
-	if err := p.migrate(ctx); err != nil {
-		pool.Close()
-		return nil, err
-	}
-	return p, nil
+	return &Postgres{pool: pool}, nil
 }
 
 // Close releases the pool.

@@ -14,6 +14,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
+	"github.com/divmora/code-review-console/internal/execsettings"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
@@ -101,5 +102,45 @@ func TestLicensedExecutorAppliesWithoutRestart(t *testing.T) {
 	cfg := &config.Config{Executor: config.Executor{Type: "kubernetes"}}
 	if err := requireExecutor(cfg, k.Manager(t)); err == nil {
 		t.Error("requireExecutor still reports the missing feature (for logs and check-config)")
+	}
+}
+
+// TestCheckConfigUsesSavedSettings: check-config runs its Job with the
+// executor settings saved in the admin panel, like reviews (issue #45),
+// and never writes to the database.
+func TestCheckConfigUsesSavedSettings(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New()
+	cfg := &config.Config{Executor: config.Executor{Type: "kubernetes", Kubernetes: config.KubeExecutor{
+		Image: "ghcr.io/divmora/code-review-bot:0.4.0", Namespace: "code-review", TTL: 10 * time.Minute}}}
+
+	run, source, err := checkExecutorConfig(ctx, cfg, readOnlyStore{st})
+	if err != nil || run != cfg || !strings.Contains(source, "not saved") {
+		t.Fatalf("nothing saved yet: %v %q", err, source)
+	}
+	saved := execsettings.Settings{Type: "kubernetes", Version: "0.4.1", CPU: "500m", Memory: "1Gi", NodeSelector: map[string]string{"pool": "batch"}}
+	_ = st.PutSetting(ctx, execsettings.Key, saved, "a@x")
+	run, source, err = checkExecutorConfig(ctx, cfg, readOnlyStore{st})
+	k := run.Executor.Kubernetes
+	if err != nil || k.Image != "ghcr.io/divmora/code-review-bot:0.4.1" || k.CPU != "500m" || k.Memory != "1Gi" || k.NodeSelector["pool"] != "batch" ||
+		k.Namespace != "code-review" || !strings.Contains(source, "admin panel (version 0.4.1)") {
+		t.Errorf("saved settings must apply: %+v %q %v", k, source, err)
+	}
+	if cfg.Executor.Kubernetes.CPU != "" {
+		t.Error("the loaded config must not be changed")
+	}
+
+	// license.file is not copied into the database by check-config.
+	lk := licensetest.NewKey(t)
+	path := filepath.Join(t.TempDir(), "license.key")
+	_ = os.WriteFile(path, []byte(lk.Issue(t, 24*time.Hour, license.Executors)), 0o600)
+	t.Setenv("CODEREVIEW_CONSOLE_LICENSE", "")
+	lic := loadLicenseInto(ctx, lk.Manager(t), &config.Config{License: config.License{File: path}}, readOnlyStore{st}, quiet)
+	if !lic.Has(license.Executors) {
+		t.Error("the file's license still counts for the check")
+	}
+	var stored admin.StoredLicense
+	if found, _ := st.GetSetting(ctx, admin.LicenseSetting, &stored); found {
+		t.Error("check-config must not write the license into the database")
 	}
 }

@@ -2,13 +2,19 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/divmora/code-review-console/internal/config"
 )
@@ -162,5 +168,43 @@ func TestJobSpecCABundle(t *testing.T) {
 	pod := k.jobSpec("crb-x", "ns", nil, nil, context.Background()).Spec.Template.Spec
 	if len(pod.Volumes) != 1 || len(pod.Containers[0].Env) != 0 {
 		t.Errorf("without ca_bundle: volumes %+v env %+v", pod.Volumes, pod.Containers[0].Env)
+	}
+}
+
+// TestCreateFailedReportedAtOnce: a pod a ResourceQuota rejects is never
+// created; the Job's FailedCreate event is reported instead of waiting
+// for the deadline (issue #45).
+func TestCreateFailedReportedAtOnce(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewClientset(&corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "crb-x.1", Namespace: "ns"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Job", Name: "crb-x", Namespace: "ns"},
+		Reason:         "FailedCreate",
+		Message:        `pods "crb-x-abc" is forbidden: failed quota: code-review: must specify requests.cpu for: codereview`,
+	})
+	k, _ := NewKubernetesWithClient(config.KubeExecutor{Namespace: "ns"}, nil, cs)
+	if err := k.checkPodStuck(ctx, "crb-x"); err == nil || !strings.Contains(err.Error(), "failed quota") {
+		t.Errorf("want the quota error, got %v", err)
+	}
+	if err := k.checkPodStuck(ctx, "crb-other"); err != nil {
+		t.Errorf("another job's event must not count: %v", err)
+	}
+}
+
+func TestCreateFailedWithoutEventsPermission(t *testing.T) {
+	cs := fake.NewClientset()
+	calls := 0
+	cs.PrependReactor("list", "events", func(k8stesting.Action) (bool, runtime.Object, error) {
+		calls++
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "events"}, "", errors.New("no"))
+	})
+	k, _ := NewKubernetesWithClient(config.KubeExecutor{Namespace: "ns"}, nil, cs)
+	for i := 0; i < 3; i++ {
+		if err := k.checkPodStuck(context.Background(), "crb-x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("a forbidden events list is asked once, then skipped: %d calls", calls)
 	}
 }
