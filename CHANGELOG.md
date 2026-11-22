@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/divmora/code-review-console/compare/v0.4.0...v0.5.0) (2026-11-22)
+
+
+### Features
+
+* **admin:** guided setup checklist ([#26](https://github.com/divmora/code-review-console/issues/26)) ([faa4f78](https://github.com/divmora/code-review-console/commit/faa4f781fe7871ead0ff4a443957be2b1861cec1))
+* **admin:** warn when a host's webhooks never carry comment events ([#27](https://github.com/divmora/code-review-console/issues/27)) ([b8ed340](https://github.com/divmora/code-review-console/commit/b8ed340c7ddf6553a9558dd300e7b8431cff3d0f)), closes [#25](https://github.com/divmora/code-review-console/issues/25)
+* **hosts:** import/export commands; deprecate hosts in the config file ([#24](https://github.com/divmora/code-review-console/issues/24)) ([48fca13](https://github.com/divmora/code-review-console/commit/48fca1366a1fdee5ce1753c08f43ee400c20e7d8))
+* **webhooks:** per-webhook URLs with their own secrets ([#22](https://github.com/divmora/code-review-console/issues/22)) ([482996f](https://github.com/divmora/code-review-console/commit/482996f6cbdc2ce55b959a838c274e26c0940f14))
+
 ## [0.4.0](https://github.com/divmora/code-review-console/compare/v0.3.1...v0.4.0) (2026-11-22)
 
 
