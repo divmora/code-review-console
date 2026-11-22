@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c6cff'/><rect x='8' y='8' width='16' height='16' rx='2' stroke='white' stroke-width='2.4' fill='none'/><path d='M13 8v16' stroke='white' stroke-width='2.4'/></svg>">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><rect width='32' height='32' rx='7' fill='%230F172A'/><path d='M10 10 5 16l5 6M22 10l5 6-5 6' stroke='%2360A5FA' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/><path d='m12 16.5 3 3 5.5-7' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
 :root {
   --bg: #0b0b10; --bg-soft: #111118; --panel: #15151d; --panel-2: #1b1b25; --line: #262633;
@@ -53,8 +53,7 @@ header.nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srg
 .nav .wrap { display: flex; align-items: center; gap: 22px; height: 60px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); white-space: nowrap; }
 .brand:hover { text-decoration: none; }
-.logo { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; color: #fff; }
-.logo svg { width: 16px; height: 16px; stroke: #fff; }
+.logo { width: 28px; height: 28px; display: block; flex: none; }
 .nav nav { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
 .nav nav a { color: var(--muted); }
 .nav nav a:hover { color: var(--text); text-decoration: none; }
@@ -227,7 +226,7 @@ footer a { color: var(--muted); }
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="#top"><span class="logo"><svg class="i"><use href="#i-panel"/></svg></span>Code Review Console</a>
+    <a class="brand" href="#top"><svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0F172A"/><path d="M10 10 5 16l5 6M22 10l5 6-5 6" stroke="#60A5FA" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="m12 16.5 3 3 5.5-7" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Code Review Console</a>
     <nav>
       <a href="#how" class="hide-sm">How it works</a>
       <a href="#features" class="hide-sm">Features</a>
