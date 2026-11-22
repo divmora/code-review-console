@@ -1,3 +1,5 @@
+<img src="docs/brand/logo.svg" alt="" width="64" height="64">
+
 # Divmora Code Review Console
 
 [![Latest Release](https://img.shields.io/github/v/release/divmora/code-review-console?logo=github)](https://github.com/divmora/code-review-console/releases)

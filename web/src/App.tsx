@@ -14,7 +14,6 @@ import {
   Moon,
   ScrollText,
   Server,
-  Settings as SettingsIcon,
   SlidersHorizontal,
   Sun,
   Webhook,
@@ -54,6 +53,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Logo } from "./components/Logo";
 import Repositories from "./pages/Repositories";
 import Reviews from "./pages/Reviews";
 import Learnings from "./pages/Learnings";
@@ -181,9 +181,7 @@ function AppSidebar({ me }: { me: Me }) {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <div className="flex items-center gap-2 px-1 py-1.5">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <SettingsIcon className="size-4" />
-          </div>
+          <Logo />
           <div className="grid leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-semibold">Code review</span>
             <span className="truncate text-xs text-muted-foreground">Divmora console</span>
