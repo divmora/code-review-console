@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.1](https://github.com/divmora/code-review-console/compare/v0.7.0...v0.7.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **admin:** recheck sessions against the sign-in rules; sign sessions out ([#48](https://github.com/divmora/code-review-console/issues/48)) ([0c01d92](https://github.com/divmora/code-review-console/commit/0c01d925539b67690be0495fa93e2e4da3484d65)), closes [#35](https://github.com/divmora/code-review-console/issues/35)
+* **check-config:** print the allowlist saved in the admin panel ([#52](https://github.com/divmora/code-review-console/issues/52)) ([737b3b7](https://github.com/divmora/code-review-console/commit/737b3b7fbda75e61b331128a144da0d33a273525)), closes [#50](https://github.com/divmora/code-review-console/issues/50)
+* **learnings:** only authors who can push activate learnings; wait by default ([#51](https://github.com/divmora/code-review-console/issues/51)) ([5ff4dbd](https://github.com/divmora/code-review-console/commit/5ff4dbd17deb3c29f6df92c532394d7bf3f90d74)), closes [#32](https://github.com/divmora/code-review-console/issues/32)
+
 ## [0.7.0](https://github.com/divmora/code-review-console/compare/v0.6.0...v0.7.0) (2026-11-22)
 
 
