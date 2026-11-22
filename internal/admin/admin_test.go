@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/store/storetest"
@@ -136,13 +138,18 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 		oidcCfg.GroupsClaim = "groups"
 	}
 	st := storetest.New()
-	a, err := New(context.Background(), config.Admin{Enabled: true, BaseURL: app.URL, OIDC: oidcCfg, SessionTTL: time.Hour}, st, []string{"fast", "smart"}, quiet)
+	a, err := New(context.Background(), config.Admin{Enabled: true, BaseURL: app.URL, OIDC: oidcCfg, SessionTTL: time.Hour}, st, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
 	box, _ := secrets.New("a test passphrase that is long enough for a key")
 	a.Lic = licensetest.Full(t)
+	// Two config file profiles; "fast" is the default and needs no key.
+	a.Models = models.New(&config.Config{Model: "fast", Models: map[string]config.ModelProfile{
+		"fast":  {"provider": "ollama", "model": "qwen2.5-coder:14b"},
+		"smart": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
+	}}, st)
 	a.Hosts = hosts.New(&config.Config{}, st, box, quiet)
 	a.Hosts.Lic = a.Lic
 	if _, err := a.Hosts.Init(context.Background()); err != nil {
@@ -557,13 +564,13 @@ func TestCallbackRejectsForgery(t *testing.T) {
 
 func TestNewValidation(t *testing.T) {
 	st := storetest.New()
-	if _, err := New(context.Background(), config.Admin{BaseURL: "https://x", OIDC: config.OIDC{Issuer: "https://i", ClientID: "c"}}, st, nil, quiet); err == nil || !strings.Contains(err.Error(), "allowed_") {
+	if _, err := New(context.Background(), config.Admin{BaseURL: "https://x", OIDC: config.OIDC{Issuer: "https://i", ClientID: "c"}}, st, quiet); err == nil || !strings.Contains(err.Error(), "allowed_") {
 		t.Errorf("missing allow rules should fail: %v", err)
 	}
-	if _, err := New(context.Background(), config.Admin{OIDC: config.OIDC{Issuer: "https://i", ClientID: "c", AllowedEmails: []string{"a@b"}}}, st, nil, quiet); err == nil || !strings.Contains(err.Error(), "base_url") {
+	if _, err := New(context.Background(), config.Admin{OIDC: config.OIDC{Issuer: "https://i", ClientID: "c", AllowedEmails: []string{"a@b"}}}, st, quiet); err == nil || !strings.Contains(err.Error(), "base_url") {
 		t.Errorf("missing base_url should fail: %v", err)
 	}
-	if _, err := New(context.Background(), config.Admin{BaseURL: "https://x", CookieSecret: "short", OIDC: config.OIDC{Issuer: "https://i", ClientID: "c", AllowedEmails: []string{"a@b"}}}, st, nil, quiet); err == nil {
+	if _, err := New(context.Background(), config.Admin{BaseURL: "https://x", CookieSecret: "short", OIDC: config.OIDC{Issuer: "https://i", ClientID: "c", AllowedEmails: []string{"a@b"}}}, st, quiet); err == nil {
 		t.Errorf("a short cookie_secret should fail (or discovery fails first)")
 	}
 }
@@ -779,5 +786,41 @@ func TestReviewsPausedWithoutExecutorLicense(t *testing.T) {
 	e.adm.ExecutorType, e.adm.Lic = "local", nil
 	if _, body := e.do(t, "GET", "/admin/api/me", "", nil); !bytes.Contains(body, []byte(`"reviews_paused":""`)) {
 		t.Errorf("the local executor never needs a license: %s", body)
+	}
+}
+
+func TestModelsAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	t.Setenv("TEAM_CLAUDE_KEY", "sk-ant")
+
+	if code, body := e.do(t, "PUT", "/admin/api/models/claude", csrf, map[string]any{"config": map[string]any{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key": "sk-ant"}}); code != 400 || !bytes.Contains(body, []byte("not stored")) {
+		t.Errorf("literal keys are refused: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "PUT", "/admin/api/models/claude", "", map[string]any{"config": map[string]any{}}); code != 403 {
+		t.Errorf("writes need the CSRF token: %d", code)
+	}
+	code, body := e.do(t, "PUT", "/admin/api/models/claude", csrf, map[string]any{"config": map[string]any{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "TEAM_CLAUDE_KEY"}})
+	if code != 200 || !bytes.Contains(body, []byte(`"name":"claude"`)) || !bytes.Contains(body, []byte(`"key_set":true`)) {
+		t.Fatalf("put: %d %s", code, body)
+	}
+	if code, body := e.do(t, "PUT", "/admin/api/model-choice", csrf, map[string]any{"default": "claude", "fallback": []string{"fast"}}); code != 200 || !bytes.Contains(body, []byte(`"choice_source":"console"`)) {
+		t.Fatalf("choice: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "DELETE", "/admin/api/models/claude", csrf, nil); code != 409 {
+		t.Errorf("the default can't be deleted: %d", code)
+	}
+	if code, _ := e.do(t, "DELETE", "/admin/api/models/fast", csrf, nil); code != 404 {
+		t.Errorf("config file profiles aren't deleted from the panel: %d", code)
+	}
+	// The repository form offers console profiles too.
+	if code, body := e.do(t, "GET", "/admin/api/me", "", nil); code != 200 || !bytes.Contains(body, []byte(`"profiles":["claude","fast","smart"]`)) {
+		t.Errorf("/me profiles: %s", body)
+	}
+	repo, _ := e.st.CreateRepo(context.Background(), "gitlab", "g.example", "team/app", "enabled", "a@x")
+	if code, body := e.do(t, "PUT", "/admin/api/repos/"+strconv.FormatInt(repo.ID, 10), csrf, map[string]any{"mode": "enabled", "settings": map[string]any{"model": "claude"}}); code != 200 {
+		t.Errorf("a repository can use a console profile: %d %s", code, body)
 	}
 }

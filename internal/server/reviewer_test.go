@@ -15,6 +15,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/store/storetest"
@@ -408,4 +409,30 @@ func TestTokenBudgets(t *testing.T) {
 	}
 	_ = s.enqueueReview(tgt, vcs.Ref{Platform: "gitlab", Host: "127.0.0.1:1", Repo: "g/small", Number: 2}, reviewOpts{By: "admin@x"}, false)
 	waitFor(t, func() bool { exec.mu.Lock(); defer exec.mu.Unlock(); return len(exec.tasks) == 1 })
+}
+
+// TestConsoleModelKeyReachesJob: a profile added in the admin panel names
+// an env var; the job gets that variable from the console's environment
+// (the executor only passes config file key names through on its own).
+func TestConsoleModelKeyReachesJob(t *testing.T) {
+	t.Setenv("CODEREVIEW_CONFIG", "")
+	t.Setenv("TEAM_CLAUDE_KEY", "sk-ant-test")
+	cfg, _ := config.Load("")
+	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
+	st := storetest.New()
+	ctx := context.Background()
+	_ = st.PutModelProfile(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "c", "api_key_env": "TEAM_CLAUDE_KEY"}, "a@x")
+	_ = st.PutSetting(ctx, models.SettingKey, models.Choice{Default: "claude"}, "a@x")
+	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.queue.Shutdown(ctx)
+	task, err := s.newTask(ctx, s.gitlabTarget(mustHost(t, s, "127.0.0.1:1")), vcs.Ref{Repo: "g/p", Number: 1}, "review", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Env["TEAM_CLAUDE_KEY"] != "sk-ant-test" || !bytes.Contains(task.ConfigYAML, []byte("model: claude")) || bytes.Contains(task.ConfigYAML, []byte("sk-ant-test")) {
+		t.Errorf("env %v\n%s", task.Env, task.ConfigYAML)
+	}
 }

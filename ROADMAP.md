@@ -7,8 +7,9 @@ Living backlog; remove items once implemented, tested and merged.
 - [ ] **`/api/v1` and React admin UI** (embedded in the binary): status (running/pending/recent),
   review history with findings, repositories and per-repo settings, audit log.
 - [ ] **Manual actions**: review a PR URL, full review, retry a failed job, cancel a pending one.
-- [ ] **Model management in the UI**: profiles (no secrets, `api_key_env` only), default and
-  fallback model, test a model.
+- [x] **Model management in the UI**: profiles (no secrets, `api_key_env` only), default and
+  fallback model.
+- [ ] Test a model from the Models page.
 - [ ] **Admin-controlled public status page**: enable/disable and hide repo names at runtime.
 - [ ] Move sign-in routes to `/auth/*` and retire the embedded `/admin` page.
 

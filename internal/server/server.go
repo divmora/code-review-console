@@ -20,6 +20,7 @@ import (
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
@@ -50,6 +51,7 @@ type Server struct {
 	hooks *hookWriter
 	// settings are the runtime settings (config defaults + admin changes).
 	settings *settings.Service
+	models   *models.Service
 	// stopPrune ends the review-history cleanup loop.
 	stopPrune chan struct{}
 	stopOnce  sync.Once
@@ -95,12 +97,17 @@ type Deps struct {
 	// License, when Settings is nil, goes to the settings built here;
 	// otherwise the license is Settings.Lic. nil = the free core.
 	License *license.Manager
+	// Models, when nil, is built here from the config file and Store.
+	Models *models.Service
 }
 
 // New validates config and builds a server.
 func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps Deps) (*Server, error) {
 	s := &Server{cfg: cfg, exec: exec, logger: logger, selfLogins: map[string]string{}, ghApps: map[int64]*vcs.GitHubApp{},
-		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts}
+		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts, models: deps.Models}
+	if s.models == nil {
+		s.models = models.New(cfg, deps.Store)
+	}
 	if s.settings == nil {
 		s.settings = settings.New(cfg, deps.Store)
 		s.settings.Lic = deps.License

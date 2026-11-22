@@ -26,6 +26,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 )
@@ -40,7 +41,6 @@ type Admin struct {
 	cfg      config.Admin
 	store    store.Store
 	logger   *slog.Logger
-	profiles []string
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
 	secret   []byte // signs the short-lived login-flow cookie
@@ -55,6 +55,9 @@ type Admin struct {
 	// ExecutorType is the configured executor (local, docker, kubernetes);
 	// docker and kubernetes need the executors license feature to run.
 	ExecutorType string
+	// Models are the model profiles shared with the server; nil means
+	// those in the database only.
+	Models *models.Service
 	// Lic is the installed license (nil = the free core). License keys
 	// pasted in the panel are stored under licenseKey.
 	Lic *license.Manager
@@ -65,6 +68,13 @@ type Admin struct {
 	}
 }
 
+func (a *Admin) models() *models.Service {
+	if a.Models == nil {
+		a.Models = models.New(nil, a.store)
+	}
+	return a.Models
+}
+
 func (a *Admin) settings() *settings.Service {
 	if a.Settings == nil {
 		a.Settings = settings.New(&config.Config{}, a.store)
@@ -73,7 +83,7 @@ func (a *Admin) settings() *settings.Service {
 }
 
 // New validates config and discovers the OIDC provider.
-func New(ctx context.Context, cfg config.Admin, st store.Store, profiles []string, logger *slog.Logger) (*Admin, error) {
+func New(ctx context.Context, cfg config.Admin, st store.Store, logger *slog.Logger) (*Admin, error) {
 	o := cfg.OIDC
 	switch {
 	case st == nil:
@@ -109,7 +119,7 @@ func New(ctx context.Context, cfg config.Admin, st store.Store, profiles []strin
 		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
 	}
 	return &Admin{
-		cfg: cfg, store: st, logger: logger, profiles: profiles,
+		cfg: cfg, store: st, logger: logger,
 		oauth: oauth2.Config{
 			ClientID: o.ClientID, ClientSecret: o.ClientSecret, Endpoint: provider.Endpoint(),
 			RedirectURL: cfg.BaseURL + "/admin/callback", Scopes: scopes,

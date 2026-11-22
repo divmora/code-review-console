@@ -54,7 +54,9 @@ Changing this contract means changing the bot's CLI too; keep them in step.
   `.codereview.yaml`; admin-chosen models must be configured profiles.
 - **Admin auth**: verify ID-token signature, audience, nonce and allow rules; unverified emails
   never match email/domain rules.
-- Model profiles stored in the DB never contain API keys (only `api_key_env`).
+- Model profiles stored in the DB never contain API keys (only `api_key_env`). internal/models
+  merges them with the config file's (DB wins) and passes each DB profile's api_key_env value
+  to jobs; names holding the console's own secrets (CODEREVIEW_CONSOLE_*, host tokens) are refused.
 - Learnings are stored and scoped by the console; the CLI only uses them (CODEREVIEW_OVERRIDES)
   and extracts them (`codereview learn`). The console never calls a model itself.
 - Host secrets are encrypted before the store sees them; APIs and audit entries expose only
