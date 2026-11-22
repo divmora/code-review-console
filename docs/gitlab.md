@@ -22,7 +22,9 @@ Then in GitLab, Project (or group, or Admin → System hooks) → Settings → W
 | Triggers | **Merge request events** · **Comments** |
 | SSL verification | enabled |
 
-Add one webhook in the console for each hook you set up in GitLab (a system hook, each group hook). Each has its own URL and secret, so one can be given a new secret, disabled or deleted without touching the others. The URL alone picks the host, and only that webhook's secret verifies it.
+Add one webhook in the console for each hook you set up in GitLab (a system hook, each group hook).
+
+**A system hook alone is not enough.** GitLab system hooks send merge request events but never comments, so `@bot` commands and learnings from replies need a group or project webhook with **Comments**. A system hook plus group hooks is fine: the console drops the duplicate merge request event. When a host receives deliveries but no comment events, the Code hosts page and Setup say so. Each has its own URL and secret, so one can be given a new secret, disabled or deleted without touching the others. The URL alone picks the host, and only that webhook's secret verifies it.
 
 **Signing tokens (GitLab 19.0+, recommended).** After saving the hook, GitLab shows its signing token (`whsec_…`). Paste it into the webhook in the console. Signed deliveries are then checked by signature. If the host's **Unsigned webhooks** setting is **Reject**, the webhook only works once its signing token is saved.
 

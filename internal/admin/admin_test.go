@@ -682,3 +682,69 @@ func TestSetupChecklist(t *testing.T) {
 		t.Errorf("reloading /admin/setup must serve the app: %d", code)
 	}
 }
+
+func TestCommentEventsWarning(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	ctx := context.Background()
+	gl, err := e.adm.Hosts.Save(ctx, hosts.Host{Platform: hosts.GitLab, BaseURL: "https://gitlab.example.com", Enabled: true,
+		Settings: hosts.Settings{BotName: "review-bot"}, Secrets: hosts.Secrets{Token: "t"}}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostWarning := func() string {
+		t.Helper()
+		_, body := e.do(t, "GET", "/admin/api/hosts", "", nil)
+		var list struct {
+			Hosts []struct {
+				ID             int64
+				CommentWarning string `json:"comment_warning"`
+			}
+		}
+		_ = json.Unmarshal(body, &list)
+		for _, h := range list.Hosts {
+			if h.ID == gl.ID {
+				return h.CommentWarning
+			}
+		}
+		t.Fatalf("host missing: %s", body)
+		return ""
+	}
+	if w := hostWarning(); w != "" {
+		t.Errorf("no deliveries yet: no warning, got %q", w)
+	}
+	// Only system hook deliveries (merge requests): the issue #25 setup.
+	_ = e.st.InsertWebhookEvents(ctx, []store.WebhookEvent{
+		{Platform: "gitlab", Host: "gitlab.example.com", Event: "System Hook", Kind: "merge_request", Auth: "signature", Outcome: store.HookQueued},
+		{Platform: "gitlab", Host: "gitlab.example.com", Event: "Note Hook", Kind: "note", Auth: "failed", Outcome: store.HookRejected}, // unverified: doesn't count
+	})
+	if w := hostWarning(); !strings.Contains(w, "system hooks don't send comments") || !strings.Contains(w, "@review-bot") {
+		t.Errorf("system hook only: %q", w)
+	}
+	code, body := e.do(t, "GET", "/admin/api/setup", "", nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"id":"comments","title":"Receive comments"`)) || !bytes.Contains(body, []byte("system hooks")) {
+		t.Errorf("setup comments step: %s", body)
+	}
+	// A verified comment clears it.
+	_ = e.st.InsertWebhookEvents(ctx, []store.WebhookEvent{{Platform: "gitlab", Host: "gitlab.example.com", Event: "Note Hook", Kind: "note", Auth: "token", Outcome: store.HookIgnored}})
+	if w := hostWarning(); w != "" {
+		t.Errorf("after a comment event: %q", w)
+	}
+	if _, body := e.do(t, "GET", "/admin/api/setup", "", nil); !bytes.Contains(body, []byte("1 comment event received")) {
+		t.Errorf("setup after a comment: %s", body)
+	}
+}
+
+func TestCommentWarningText(t *testing.T) {
+	gh := hosts.Host{Platform: hosts.GitHub}
+	if w := commentWarning(gh, store.HostHookStats{Verified: 3}); !strings.Contains(w, "Issue comment") || !strings.Contains(w, "@bot") {
+		t.Errorf("github: %q", w)
+	}
+	if w := commentWarning(hosts.Host{Platform: hosts.Bitbucket}, store.HostHookStats{Verified: 1}); !strings.Contains(w, "Comment created") {
+		t.Errorf("bitbucket: %q", w)
+	}
+	if w := commentWarning(hosts.Host{Platform: hosts.GitLab}, store.HostHookStats{Verified: 2, SystemHook: 1}); !strings.Contains(w, "Turn on Comments") {
+		t.Errorf("gitlab with a group hook but no comments: %q", w)
+	}
+}

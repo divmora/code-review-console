@@ -592,6 +592,9 @@ type hostView struct {
 	// Webhooks have their own URL and secrets (added in the admin panel).
 	Webhooks []webhookView `json:"webhooks"`
 	Events   []string      `json:"events"`
+	// CommentWarning is set when verified deliveries arrive but no comment
+	// events do, so @bot commands and learnings would fail silently.
+	CommentWarning string `json:"comment_warning,omitempty"`
 	// Licensed is false for a host the license does not cover (a second
 	// host on a platform without the hosts feature): it is not used.
 	Licensed bool `json:"licensed"`
@@ -603,14 +606,59 @@ var hookEvents = map[string][]string{
 	hosts.Bitbucket: {"Pull request: Created", "Updated", "Merged", "Declined", "Comment created"},
 }
 
-func (a *Admin) viewHost(h hosts.Host) hostView {
+func (a *Admin) viewHost(h hosts.Host, stats map[string]store.HostHookStats) hostView {
 	v := hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
 		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Webhooks: []webhookView{},
 		Events: hookEvents[h.Platform], Licensed: !h.Enabled || a.Hosts.Active(h)}
 	for _, e := range a.Hosts.Endpoints(h.ID) {
 		v.Webhooks = append(v.Webhooks, a.viewWebhook(h.Platform, e))
 	}
+	if h.Enabled {
+		v.CommentWarning = commentWarning(h, stats[h.Platform+":"+h.Host])
+	}
 	return v
+}
+
+// hookStats returns verified-delivery stats by "platform:host" (empty on
+// error: the warnings are a hint, not a reason to fail the page).
+func (a *Admin) hookStats(ctx context.Context) map[string]store.HostHookStats {
+	out := map[string]store.HostHookStats{}
+	list, err := a.store.HookStats(ctx)
+	if err != nil {
+		a.logger.Warn("webhook stats unavailable", "error", err)
+		return out
+	}
+	for _, s := range list {
+		out[s.Platform+":"+s.Host] = s
+	}
+	return out
+}
+
+// commentWarning explains why comment events are missing for a host that
+// does receive webhooks: a GitLab system hook never sends them, and other
+// hooks need the comment events switched on.
+func commentWarning(h hosts.Host, s store.HostHookStats) string {
+	if s.Verified == 0 || s.Comments > 0 {
+		return ""
+	}
+	bot := "@" + h.BotName
+	if h.BotName == "" {
+		bot = "@bot"
+	}
+	effect := bot + " commands and learnings from replies won't work"
+	switch h.Platform {
+	case hosts.GitLab:
+		if s.SystemHook == s.Verified {
+			return "Only system hook deliveries so far. GitLab system hooks don't send comments, so " + effect +
+				". Add a group or project webhook with Comments (Manage webhooks gives it its own URL)."
+		}
+		return "No comment events received yet, so " + effect + ". Turn on Comments on the group or project webhook."
+	case hosts.GitHub:
+		return "No comment events received yet, so " + effect + ". Subscribe the webhook or GitHub App to Issue comment and Pull request review comment."
+	case hosts.Bitbucket:
+		return "No comment events received yet, so " + effect + ". Turn on the Comment created trigger on the webhook."
+	}
+	return ""
 }
 
 // webhookView is a webhook endpoint as the admin UI sees it: its URL and
@@ -736,8 +784,9 @@ func (a *Admin) apiListHosts(w http.ResponseWriter, r *http.Request, s *store.Se
 		return
 	}
 	out := []hostView{}
+	stats := a.hookStats(r.Context())
 	for _, h := range a.Hosts.All() {
-		out = append(out, a.viewHost(h))
+		out = append(out, a.viewHost(h, stats))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"mode": a.Hosts.Mode(), "hosts": out, "key_env": secrets.EnvKey})
 }
@@ -793,7 +842,7 @@ func (a *Admin) saveHost(w http.ResponseWriter, r *http.Request, s *store.Sessio
 	if fresh, ok := a.Hosts.Get(saved.ID); ok {
 		saved = fresh
 	}
-	writeJSON(w, status, a.viewHost(saved))
+	writeJSON(w, status, a.viewHost(saved, a.hookStats(r.Context())))
 }
 
 func (a *Admin) apiCreateHost(w http.ResponseWriter, r *http.Request, s *store.Session) {

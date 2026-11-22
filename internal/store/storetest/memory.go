@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -369,6 +370,38 @@ func (m *Memory) InsertWebhookEvents(_ context.Context, events []store.WebhookEv
 		m.hooks = append(m.hooks, e)
 	}
 	return nil
+}
+
+func (m *Memory) HookStats(context.Context) ([]store.HostHookStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	by := map[string]*store.HostHookStats{}
+	var keys []string
+	for _, e := range m.hooks {
+		if (e.Auth != "signature" && e.Auth != "token") || e.Host == "" {
+			continue
+		}
+		k := e.Platform + ":" + e.Host
+		s := by[k]
+		if s == nil {
+			s = &store.HostHookStats{Platform: e.Platform, Host: e.Host}
+			by[k] = s
+			keys = append(keys, k)
+		}
+		s.Verified++
+		if slices.Contains(store.CommentKinds, e.Kind) || e.Event == "Note Hook" {
+			s.Comments++
+		}
+		if e.Event == "System Hook" {
+			s.SystemHook++
+		}
+	}
+	sort.Strings(keys)
+	out := []store.HostHookStats{}
+	for _, k := range keys {
+		out = append(out, *by[k])
+	}
+	return out, nil
 }
 
 func (m *Memory) ListWebhookEvents(_ context.Context, f store.WebhookFilter) ([]store.WebhookEvent, error) {

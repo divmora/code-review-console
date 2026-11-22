@@ -157,6 +157,24 @@ type WebhookEvent struct {
 	DurationMS int    `json:"duration_ms"`
 }
 
+// HostHookStats summarises a host's verified webhook deliveries in the
+// history (see PruneWebhookEvents for how long it is kept).
+type HostHookStats struct {
+	Platform string `json:"platform"`
+	Host     string `json:"host"`
+	// Verified counts deliveries whose signature or token matched.
+	Verified int `json:"verified"`
+	// Comments counts verified comment events (GitLab notes, GitHub issue
+	// and review comments, Bitbucket comment_created).
+	Comments int `json:"comments"`
+	// SystemHook counts verified deliveries from a GitLab system hook,
+	// which never sends comments.
+	SystemHook int `json:"system_hook"`
+}
+
+// CommentKinds are the webhook kinds that carry a comment.
+var CommentKinds = []string{"note", "issue_comment", "pull_request_review_comment", "pullrequest:comment_created"}
+
 // Webhook outcomes.
 const (
 	HookQueued    = "queued"
@@ -292,6 +310,8 @@ type Store interface {
 	ListWebhookEvents(ctx context.Context, f WebhookFilter) ([]WebhookEvent, error)
 	// CountWebhookEvents counts events by outcome since a time.
 	CountWebhookEvents(ctx context.Context, since time.Time) (map[string]int, error)
+	// HookStats summarises verified deliveries per host.
+	HookStats(ctx context.Context) ([]HostHookStats, error)
 	// PruneWebhookEvents deletes events older than before and keeps at most
 	// keep rows.
 	PruneWebhookEvents(ctx context.Context, before time.Time, keep int) (int64, error)
@@ -1158,6 +1178,26 @@ func (p *Postgres) CountWebhookEvents(ctx context.Context, since time.Time) (map
 			return nil, err
 		}
 		out[k] = n
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) HookStats(ctx context.Context) ([]HostHookStats, error) {
+	rows, err := p.pool.Query(ctx, `SELECT platform, host, count(*),
+		count(*) FILTER (WHERE kind = ANY($1) OR event = 'Note Hook'),
+		count(*) FILTER (WHERE event = 'System Hook')
+		FROM webhook_events WHERE auth IN ('signature', 'token') AND host <> '' GROUP BY platform, host ORDER BY platform, host`, CommentKinds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []HostHookStats{}
+	for rows.Next() {
+		var s HostHookStats
+		if err := rows.Scan(&s.Platform, &s.Host, &s.Verified, &s.Comments, &s.SystemHook); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
 	}
 	return out, rows.Err()
 }
