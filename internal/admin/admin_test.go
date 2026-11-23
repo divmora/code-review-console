@@ -1094,6 +1094,12 @@ func TestTokenExpiryWarnings(t *testing.T) {
 	if !bytes.Contains(body, []byte("the token expires on")) || !bytes.Contains(body, []byte("replace it soon")) {
 		t.Errorf("Test reports the expiry: %s", body)
 	}
+	if !bytes.Contains(body, []byte(`"summary":"OK as @gitlab-bot"`)) {
+		t.Errorf("Test has a short summary: %s", body)
+	}
+	if _, body := e.do(t, "GET", "/admin/api/hosts", "", nil); !bytes.Contains(body, []byte(`"check":{"ok":true,"summary":"OK as @gitlab-bot"`)) {
+		t.Errorf("the last check is shown again after a reload: %s", body)
+	}
 }
 
 func TestSignInsRecordWhereFrom(t *testing.T) {

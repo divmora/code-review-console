@@ -21,6 +21,17 @@ type SessionRow = { id: number; email: string; name: string; created: string; ex
 
 const when = (iso: string) => fmtDateTime(iso);
 
+// settingLabel names settings the way the page does.
+const settingLabel: Record<string, string> = {
+  allowlist: "Repositories no rule matches", require_reviewer: "Who asks for a review", skip_branch_sync: "Branch syncs",
+  sync_source_branches: "Also treat these source branches as syncs", score_labels: "Score labels", commit_status: "Commit status",
+  command_access: "Who can run review and question commands", learnings_enabled: "Learn from replies to the bot",
+  learnings_auto_activate: "New learnings", daily_token_budget: "Daily tokens, all repositories",
+  repo_daily_token_budget: "Daily tokens, per repository", review_retention_days: "Keep reviews",
+  webhook_retention_days: "Keep webhook deliveries", dashboard_enabled: "Dashboard", hide_repos: "Repository names",
+  dashboard_title: "Dashboard title",
+};
+
 // Sessions lists who is signed in to the admin panel and signs sessions
 // out. Sessions are also ended on their own when an admin no longer
 // matches the sign-in rules.
@@ -176,7 +187,7 @@ export default function Settings() {
       })
       .catch((e) => toast(errMsg(e), true));
   };
-  const fromFile = Object.keys(eff.source || {}).filter((k) => eff.source![k] === "config");
+  const fromFile = Object.keys(eff.source || {}).filter((k) => eff.source![k] === "config").map((k) => settingLabel[k] || k.replace(/_/g, " "));
   return (
     <section className="grid gap-4">
       <Group title="Repository access" description="Which repositories are reviewed, and when.">
@@ -199,7 +210,7 @@ export default function Settings() {
       </Group>
       <div className="grid gap-4 lg:grid-cols-2">
         <Group title="Learnings">
-          <FormGrid className="lg:grid-cols-2">
+          <FormGrid>
             <Bool label="Learn from replies to the bot" value={v.learnings_enabled} onChange={set("learnings_enabled")} yes="On" no="Off" disabled={!has.learnings} note={<LockNote feature="learnings" />} />
             <Bool label="New learnings" value={v.learnings_auto_activate} onChange={set("learnings_auto_activate")} yes="Apply at once" no="Wait for an admin's approval" disabled={!has.learnings}
               note={<Note className="text-xs">Even when set to apply at once, a learning only applies right away if its author can push to the repository (GitLab Developer or higher, GitHub write or above). Anyone else's waits for approval, and so does every learning from Bitbucket.</Note>} />
@@ -240,7 +251,7 @@ export default function Settings() {
       <Card className="py-4">
         <CardFooter className="flex flex-wrap items-center gap-3">
           <Button onClick={() => save(eff.review_defaults)}>Save settings</Button>
-          <span className="text-sm text-muted-foreground">{fromFile.length ? "Not saved yet (using the starting value): " + fromFile.join(", ") : ""}</span>
+          <span className="text-sm text-muted-foreground">{fromFile.length ? "Showing defaults for: " + fromFile.join("; ") + ". Save to keep them." : ""}</span>
         </CardFooter>
       </Card>
       <Group title="Default review settings" description="Apply to every repository. Group and pattern rules, then repository settings, override them.">

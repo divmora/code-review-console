@@ -230,7 +230,7 @@ function AppSidebar({ me }: { me: Me }) {
                     </SidebarMenuButton>
                     {s.path === "setup" && me.setup && !me.setup.complete && (
                       <SidebarMenuBadge className="text-[10px] font-normal text-muted-foreground" title="Setup steps done">
-                        {me.setup.done}/{me.setup.total}
+                        <span title={`${me.setup.done} of ${me.setup.total} required setup steps done`}>{me.setup.done}/{me.setup.total}</span>
                       </SidebarMenuBadge>
                     )}
                     {locked && (
