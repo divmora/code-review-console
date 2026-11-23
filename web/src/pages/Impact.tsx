@@ -17,7 +17,7 @@ type ImpactPoint = { bucket: string; reviews: number; findings: Record<string, n
 type Impact = {
   range: string; from: string; to: string; granularity: string; licensed: boolean;
   prs_reviewed: number; review_runs: number; active_repos: number; findings: number; by_severity: Record<string, number>;
-  by_category: Count[]; security_findings: number; comments: number; first_reviews: number; median_first_review_ms: number;
+  by_category: Count[]; security_findings: number; comments: number; approvals: number; first_reviews: number; median_first_review_ms: number;
   scored: number; quality_sum: number; security_sum: number; maintainability_sum: number;
   trend: ImpactPoint[]; top_by_reviews: Count[]; top_by_findings: Count[];
 };
@@ -213,7 +213,7 @@ export default function ImpactPage() {
             <Tile value={fmtNum(d.active_repos)} label="Active repositories" />
             <Tile value={fmtNum(d.comments)} label="Comments posted" />
             <Tile value={d.scored ? scoreKinds.map(([k]) => Math.round((scoreAvg as any)[k] || 0)).join(" / ") : "–"} label="Avg scores (Q / S / M)" sub={d.scored ? fmtNum(d.scored) + " scored reviews" : undefined} />
-            <Tile value="–" label="Findings acted on" sub="not tracked yet" />
+            <Tile value={fmtNum(d.approvals || 0)} label="Approvals by the bot" sub="merge requests approved on the code host" to={d.approvals ? reviewsLink(d, { approval: "approved" }) : undefined} />
           </div>
 
           {!licensed ? (

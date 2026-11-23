@@ -225,7 +225,7 @@ func (a *Admin) queueChange(w http.ResponseWriter, r *http.Request, s *store.Ses
 	}
 	a.logger.Info("operator change waits for approval", "by", s.Email, "change", c.Summary, "id", c.ID)
 	writeJSON(w, http.StatusAccepted, map[string]any{"pending": true, "id": c.ID,
-		"message": "Sent to an admin for approval: " + c.Summary + ". It applies once approved (Approvals)."})
+		"message": "Sent to an admin for approval: " + c.Summary + ". It applies once approved (Change requests)."})
 }
 
 // apiListApprovals lists change requests, newest first: pending ones

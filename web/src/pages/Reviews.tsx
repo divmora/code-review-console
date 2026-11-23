@@ -18,8 +18,32 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 type Job = {
   id: number; kind: string; platform: string; host: string; repo: string; number: number; url: string; trigger: string;
   state: string; started: string; finished: string; error: string; note: string; comments: number; files: number;
-  tokens_in: number; tokens_out: number; model: string; requested_by: string; result?: any; scores?: Scores | null;
+  tokens_in: number; tokens_out: number; model: string; requested_by: string; result?: any; scores?: Scores | null; approval?: string;
 };
+
+// ApprovalMark shows what a review did with the bot's approval of the
+// merge request on the code host (not operator change requests).
+function ApprovalMark({ a }: { a?: string }) {
+  if (a === "approved" || a === "already_approved")
+    return (
+      <StateBadge kind="on" className="ml-1" title={a === "approved" ? "The bot approved the merge request" : "The bot had already approved this head"}>
+        ✓ approved
+      </StateBadge>
+    );
+  if (a === "withdrawn")
+    return (
+      <StateBadge kind="warn" className="ml-1" title="The bot withdrew its approval">
+        approval withdrawn
+      </StateBadge>
+    );
+  if (a === "failed")
+    return (
+      <StateBadge kind="off" className="ml-1" title="The code host refused the approval">
+        approval failed
+      </StateBadge>
+    );
+  return null;
+}
 
 const severityKind: Record<string, "off" | "warn" | "idle"> = { critical: "off", major: "warn", minor: "idle", nitpick: "idle" };
 
@@ -129,9 +153,9 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
 const findingCategories = ["bug", "security", "performance", "reliability", "maintainability", "style", "docs", "tests"];
 
 // The query-string names match /admin/api/reviews.
-const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below", "severity", "category"] as const;
+const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below", "severity", "category", "approval"] as const;
 const reviewView = {
-  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "", severity: "", category: "",
+  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "", severity: "", category: "", approval: "",
   sort: "", granularity: "day", review: "",
 };
 
@@ -328,6 +352,14 @@ export default function Reviews() {
         </NativeSelect>
         <Input type="date" className="w-auto" aria-label="From" value={f.from} onChange={set("from")} />
         <Input type="date" className="w-auto" aria-label="To" value={f.to} onChange={set("to")} />
+        <NativeSelect className="w-auto" aria-label="Merge request approval" value={f.approval} onChange={set("approval")}>
+          <option value="">Any approval</option>
+          <option value="approved">Approved by the bot</option>
+          <option value="already_approved">Already approved</option>
+          <option value="withdrawn">Approval withdrawn</option>
+          <option value="not_approved">Not approved</option>
+          <option value="failed">Approval failed</option>
+        </NativeSelect>
         <NativeSelect className="w-auto" aria-label="Finding severity" value={f.severity} onChange={set("severity")}>
           <option value="">Any findings</option>
           <option value="any">With findings</option>
@@ -422,6 +454,7 @@ export default function Reviews() {
                     </TableCell>
                     <TableCell className="max-w-64 whitespace-normal">
                       <StateBadge kind={j.state === "done" ? "on" : j.state === "failed" ? "off" : "idle"}>{j.state}</StateBadge>
+                      <ApprovalMark a={j.approval} />
                       {(j.error || j.note) && <Sub className="line-clamp-2">{j.error ? j.error.slice(0, 120) : j.note}</Sub>}
                     </TableCell>
                     <TableCell>

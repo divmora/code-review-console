@@ -127,7 +127,7 @@ func (a *Admin) apiImpactExport(w http.ResponseWriter, r *http.Request, s *store
 	for _, x := range [][2]string{
 		{"from", v.From.Format(time.RFC3339)}, {"to", v.To.Format(time.RFC3339)},
 		{"merge_requests_reviewed", n(v.PRsReviewed)}, {"review_runs", n(v.ReviewRuns)}, {"active_repositories", n(v.ActiveRepos)},
-		{"findings", n(v.Findings)}, {"security_findings", n(v.SecurityFindings)}, {"comments_posted", n(v.Comments)},
+		{"findings", n(v.Findings)}, {"security_findings", n(v.SecurityFindings)}, {"comments_posted", n(v.Comments)}, {"approvals_by_the_bot", n(v.Approvals)},
 		{"first_reviews", n(v.FirstReviews)}, {"median_time_to_first_review_seconds", strconv.FormatFloat(float64(v.MedianFirstReviewMS)/1000, 'f', 1, 64)},
 		{"scored_reviews", n(v.Scored)}, {"average_quality", avg(v.QualitySum)}, {"average_security", avg(v.SecuritySum)},
 		{"average_maintainability", avg(v.MaintainabilitySum)},
