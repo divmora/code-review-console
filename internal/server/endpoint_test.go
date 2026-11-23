@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,6 +126,23 @@ func TestWebhookEndpoints(t *testing.T) {
 	if c := signed(glEP.Path("gitlab"), gl("4"), "sig-2"); c != http.StatusAccepted {
 		t.Errorf("gitlab endpoint with its signing token: %d", c)
 	}
+	// With a signing token, the old secret token alone no longer gets in
+	// (issue #86)...
+	if c := send(glEP.Path("gitlab"), gl("6"), glHdr(glSecret)); c != http.StatusUnauthorized {
+		t.Errorf("signing token set: an unsigned delivery with the secret token must be rejected: %d", c)
+	}
+	// ...unless the webhook is set to accept both while hooks migrate.
+	glEP.AcceptSecretToken = true
+	if _, err := reg.SaveEndpoint(ctx, glEP, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := send(glEP.Path("gitlab"), gl("7"), glHdr(glSecret)); c != http.StatusAccepted {
+		t.Errorf("accept_secret_token: the secret token works again: %d", c)
+	}
+	glEP.AcceptSecretToken = false
+	if _, err := reg.SaveEndpoint(ctx, glEP, "a@x"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Bitbucket.
 	bb := []byte(`{"actor":{"nickname":"dev"},"repository":{"full_name":"acme/web","links":{"html":{"href":"https://bitbucket.org/acme/web"}},"mainbranch":{"name":"main"}},` +
@@ -170,5 +188,17 @@ func TestWebhookEndpoints(t *testing.T) {
 	}
 	if viaEndpoint == 0 || viaShared != 2 || unknown != 1 {
 		t.Errorf("history endpoints: via endpoint %d, shared %d, unknown %d", viaEndpoint, viaShared, unknown)
+	}
+	var downgraded, rejected int
+	for _, e := range events {
+		if e.Endpoint == glEP.ID && e.Auth == AuthUnsignedToken {
+			downgraded++
+		}
+		if e.Endpoint == glEP.ID && e.Auth == "failed" && strings.Contains(e.Reason, "signed deliveries only") {
+			rejected++
+		}
+	}
+	if downgraded != 1 || rejected != 1 {
+		t.Errorf("the Webhooks page shows the downgrade (%d) and the rejection (%d)", downgraded, rejected)
 	}
 }

@@ -124,7 +124,7 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 	}
 	var lastFailed *store.WebhookEvent
 	for i, e := range events { // newest first
-		if e.Auth == "signature" || e.Auth == "token" {
+		if e.Auth == "signature" || e.Auth == "token" || e.Auth == "token-unsigned" {
 			delivery.Done, delivery.Detail = true, "last verified "+ago(e.ReceivedAt)
 			break
 		}

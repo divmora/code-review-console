@@ -48,6 +48,8 @@ type FileWebhook struct {
 	Enabled       *bool     `yaml:"enabled,omitempty"`
 	Secret        *string   `yaml:"secret,omitempty"`
 	SigningTokens *[]string `yaml:"signing_tokens,omitempty"`
+	// AcceptSecretToken: with a signing token, also accept the secret token.
+	AcceptSecretToken *bool `yaml:"accept_secret_token,omitempty"`
 	// URL is informational (written on export, ignored on import).
 	URL string `yaml:"url,omitempty"`
 }
@@ -67,6 +69,10 @@ func (r *Registry) Export(withSecrets bool, baseURL string) File {
 		for _, e := range r.Endpoints(h.ID) {
 			en := e.Enabled
 			fw := FileWebhook{ID: e.ID, Name: e.Name, Enabled: &en}
+			if e.AcceptSecretToken {
+				accept := true
+				fw.AcceptSecretToken = &accept
+			}
 			if baseURL != "" {
 				fw.URL = strings.TrimRight(baseURL, "/") + e.Path(h.Platform)
 			}
@@ -205,6 +211,9 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 			}
 			if fw.Secret != nil && strings.TrimSpace(*fw.Secret) != "" {
 				e.WebhookSecrets = []string{strings.TrimSpace(*fw.Secret)}
+			}
+			if fw.AcceptSecretToken != nil {
+				e.AcceptSecretToken = *fw.AcceptSecretToken
 			}
 			if fw.SigningTokens != nil {
 				e.SigningTokens = clean(*fw.SigningTokens)
