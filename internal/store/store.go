@@ -1489,8 +1489,6 @@ func previousAfter(detail json.RawMessage) any {
 	return detail
 }
 
-const queuedCols = `id, key, owner, kind, payload, ready_at, created_at, started_at`
-
 func (p *Postgres) PutQueued(ctx context.Context, q QueuedJob) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO queued_jobs (id, key, owner, kind, payload, ready_at) VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, ready_at = EXCLUDED.ready_at, owner = EXCLUDED.owner`,
