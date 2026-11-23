@@ -13,6 +13,7 @@ import {
   Monitor,
   Moon,
   ScrollText,
+  ClipboardCheck,
   Server,
   SlidersHorizontal,
   Sun,
@@ -63,6 +64,7 @@ import Hosts from "./pages/Hosts";
 import Rules from "./pages/Rules";
 import Webhooks from "./pages/Webhooks";
 import Settings from "./pages/Settings";
+import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
 import License from "./pages/License";
 import Models from "./pages/Models";
@@ -81,6 +83,7 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "rules", title: "Rules", icon: ListChecks, el: <Rules />, paid: "rules" },
   { path: "webhooks", title: "Webhooks", icon: Webhook, el: <Webhooks /> },
   { path: "settings", title: "Settings", icon: SlidersHorizontal, el: <Settings /> },
+  { path: "approvals", title: "Approvals", icon: ClipboardCheck, el: <Approvals /> },
   { path: "audit", title: "Audit log", icon: ScrollText, el: <Audit />, paid: "audit" },
   { path: "license", title: "License", icon: KeyRound, el: <License /> },
 ];
@@ -217,7 +220,7 @@ function AppSidebar({ me }: { me: Me }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="side" aria-label="Sections">
-              {sections.map((s) => {
+              {sections.filter((s) => s.path !== "approvals" || me.role === "operator" || (me.role === "admin" && (me.license.features.includes("sso_rules") || !!me.pending_approvals))).map((s) => {
                 const locked = s.paid && !me.license.features.includes(s.paid);
                 const active = current(loc.pathname)?.path === s.path;
                 return (
@@ -232,6 +235,9 @@ function AppSidebar({ me }: { me: Me }) {
                       <SidebarMenuBadge className="text-[10px] font-normal text-muted-foreground" title="Setup steps done">
                         <span title={`${me.setup.done} of ${me.setup.total} required setup steps done`}>{me.setup.done}/{me.setup.total}</span>
                       </SidebarMenuBadge>
+                    )}
+                    {s.path === "approvals" && !!me.pending_approvals && (
+                      <SidebarMenuBadge className="text-[10px]" title={me.pending_approvals + " waiting for approval"}>{me.pending_approvals}</SidebarMenuBadge>
                     )}
                     {locked && (
                       <SidebarMenuBadge className="paid text-[10px] font-normal text-muted-foreground" title="Needs a license">
@@ -341,6 +347,10 @@ export default function App() {
       .catch((e) => setErr(String(e.message || e)));
   useEffect(() => {
     loadMe();
+    // A change sent for approval updates the Approvals count.
+    const onPending = () => loadMe();
+    window.addEventListener("crc-pending", onPending);
+    return () => window.removeEventListener("crc-pending", onPending);
   }, []);
   if (!me) return <div className="grid min-h-svh place-items-center text-sm text-muted-foreground">{err || "Loading…"}</div>;
   return (
@@ -356,6 +366,11 @@ export default function App() {
                   <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 md:p-6">
                     <LicenseBanner me={me} />
                     <ExpiryBanner me={me} />
+                    {me.role === "viewer" && (
+                      <Alert role="status" className="banner">
+                        <AlertDescription>You have read-only access: you can see every page, and changes are refused. Ask an admin to change something.</AlertDescription>
+                      </Alert>
+                    )}
                     <Routes>
                       <Route path="/" element={<Navigate to={me.setup && !me.setup.complete ? "/setup" : "/repositories"} replace />} />
                       {sections.map((s) => (

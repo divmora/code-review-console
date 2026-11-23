@@ -70,6 +70,7 @@ var nonceMarker = []byte("__CSP_NONCE__")
 
 // Register mounts the admin routes.
 func (a *Admin) Register(mux *http.ServeMux) {
+	a.mux = mux // approved changes run through the same routes
 	mux.HandleFunc("GET /admin", a.handlePage)
 	// /admin/ and /admin/<section>/ (bookmarks, proxies and SSO return URLs
 	// add the slash) go to the URL without it.
@@ -148,10 +149,14 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/api/executor", a.requireAPI(a.apiPutExecutor))
 	mux.HandleFunc("GET /admin/api/license", a.requireAPI(a.apiGetLicense))
 	mux.HandleFunc("PUT /admin/api/license", a.requireAPI(a.apiPutLicense))
+	mux.HandleFunc("GET /admin/api/approvals", a.requireAPI(a.apiListApprovals))
+	mux.HandleFunc("POST /admin/api/approvals/{id}/approve", a.requireAPI(a.apiApprove))
+	mux.HandleFunc("POST /admin/api/approvals/{id}/reject", a.requireAPI(a.apiReject))
+	mux.HandleFunc("POST /admin/api/approvals/{id}/cancel", a.requireAPI(a.apiCancel))
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "approvals": true}
 
 // dropSlash redirects to the same URL without the trailing slash, keeping
 // the query string.
@@ -197,7 +202,7 @@ func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profileNames(r), "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
-		"setup": setup, "reviews_paused": a.reviewsPaused(), "expiry_warnings": expiry.All(a.Lic.Status(), a.Hosts, time.Now()),
+		"setup": setup, "reviews_paused": a.reviewsPaused(), "role": s.Role, "pending_approvals": a.pendingFor(r.Context(), s), "expiry_warnings": expiry.All(a.Lic.Status(), a.Hosts, time.Now()),
 	})
 }
 

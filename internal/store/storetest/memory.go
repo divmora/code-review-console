@@ -23,6 +23,7 @@ type Memory struct {
 	repos     map[int64]*store.Repo
 	rules     map[int64]*store.Rule
 	hooks     []store.WebhookEvent
+	changes   []store.ChangeRequest
 	hosts     map[int64]*store.HostRow
 	hooksEP   map[string]*store.WebhookEndpoint
 	learns    []*store.Learning
@@ -775,6 +776,62 @@ func (m *Memory) TouchSession(_ context.Context, idHash []byte, ip string) error
 	}
 	m.sessions[string(idHash)] = s
 	return nil
+}
+
+func (m *Memory) CreateChangeRequest(ctx context.Context, c store.ChangeRequest) (*store.ChangeRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextID++
+	c.ID, c.RequestedAt, c.Status = m.nextID, time.Now(), store.ChangePending
+	if len(c.Preview) == 0 {
+		c.Preview = json.RawMessage("{}")
+	}
+	m.changes = append(m.changes, c)
+	m.addAudit(c.RequestedBy, "change.requested", c.Summary, map[string]any{"id": c.ID, "method": c.Method, "path": c.Path, "after": c.Preview})
+	m.stampAudit(ctx)
+	return &c, nil
+}
+
+func (m *Memory) GetChangeRequest(_ context.Context, id int64) (*store.ChangeRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.changes {
+		if c.ID == id {
+			return &c, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *Memory) ListChangeRequests(_ context.Context, status string, limit int) ([]store.ChangeRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.ChangeRequest{}
+	for i := len(m.changes) - 1; i >= 0; i-- {
+		if status == "" || m.changes[i].Status == status {
+			out = append(out, m.changes[i])
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) DecideChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*store.ChangeRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.changes {
+		c := &m.changes[i]
+		if c.ID == id && c.Status == store.ChangePending {
+			c.Status, c.DecidedBy, c.DecidedAt, c.ResultStatus, c.Result = status, by, time.Now(), resultStatus, result
+			if status != store.ChangePending {
+				c.Body = ""
+			}
+			m.addAudit(by, "change."+status, c.Summary, map[string]any{"id": c.ID, "requested_by": c.RequestedBy, "result_status": resultStatus, "result": result})
+			m.stampAudit(ctx)
+			out := *c
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
 }
 
 func nonNilList(l []string) []string {

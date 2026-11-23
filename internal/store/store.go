@@ -226,6 +226,9 @@ type Session struct {
 	IP        string
 	UserAgent string
 	LastSeen  time.Time
+	// Role is the signed-in person's role (admin, operator, viewer),
+	// worked out from the sign-in rules on every request; not stored.
+	Role string
 }
 
 // JobFilter narrows ListJobs. Zero values match everything.
@@ -284,6 +287,38 @@ type ModelProfile struct {
 }
 
 // AuditEntry records an admin action.
+// Change request statuses.
+const (
+	ChangePending   = "pending"
+	ChangeApplied   = "applied"
+	ChangeFailed    = "failed"
+	ChangeRejected  = "rejected"
+	ChangeCancelled = "cancelled"
+	ChangeExpired   = "expired"
+)
+
+// ChangeRequest is a change an operator asked for that waits for an
+// admin. Body is the request body, encrypted with the console's secret
+// key (it can hold tokens); Preview is the same with secret values
+// masked, for display.
+type ChangeRequest struct {
+	ID           int64           `json:"id"`
+	Method       string          `json:"method"`
+	Path         string          `json:"path"`
+	Summary      string          `json:"summary"`
+	Preview      json.RawMessage `json:"preview"`
+	Body         string          `json:"-"`
+	RequestedBy  string          `json:"requested_by"`
+	RequestedAt  time.Time       `json:"requested_at"`
+	Status       string          `json:"status"`
+	DecidedBy    string          `json:"decided_by,omitempty"`
+	DecidedAt    time.Time       `json:"decided_at,omitzero"`
+	ResultStatus int             `json:"result_status,omitempty"`
+	// Result is what an applied or failed request answered, or why it was
+	// rejected (never the response body, which can hold a new secret).
+	Result string `json:"result,omitempty"`
+}
+
 // AuditFilter narrows SearchAudit. Zero values match everything.
 type AuditFilter struct {
 	Actor  string // substring, case-insensitive
@@ -421,6 +456,14 @@ type Store interface {
 	ListAudit(ctx context.Context, limit int) ([]AuditEntry, error)
 	// SearchAudit returns entries matching f, newest first.
 	SearchAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error)
+	// Change requests (operators' changes waiting for an admin).
+	CreateChangeRequest(ctx context.Context, c ChangeRequest) (*ChangeRequest, error)
+	GetChangeRequest(ctx context.Context, id int64) (*ChangeRequest, error)
+	// ListChangeRequests returns the newest first; status "" lists all.
+	ListChangeRequests(ctx context.Context, status string, limit int) ([]ChangeRequest, error)
+	// DecideChangeRequest moves a pending request to status, once: it
+	// returns ErrNotFound when the request isn't pending any more.
+	DecideChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*ChangeRequest, error)
 
 	Close()
 }
@@ -670,6 +713,23 @@ var migrations = []string{
 	`ALTER TABLE audit_log ADD COLUMN ip text NOT NULL DEFAULT '', ADD COLUMN user_agent text NOT NULL DEFAULT '';
 	ALTER TABLE sessions ADD COLUMN ip text NOT NULL DEFAULT '', ADD COLUMN user_agent text NOT NULL DEFAULT '', ADD COLUMN last_seen timestamptz;
 	ALTER TABLE webhook_events ADD COLUMN source_ip text NOT NULL DEFAULT '';`,
+	// 14: changes operators asked for, waiting for an admin (issue #68).
+	`CREATE TABLE change_requests (
+		id            bigserial PRIMARY KEY,
+		method        text NOT NULL,
+		path          text NOT NULL,
+		summary       text NOT NULL,
+		preview       jsonb NOT NULL DEFAULT '{}',
+		body          text NOT NULL DEFAULT '',
+		requested_by  text NOT NULL,
+		requested_at  timestamptz NOT NULL DEFAULT now(),
+		status        text NOT NULL DEFAULT 'pending',
+		decided_by    text NOT NULL DEFAULT '',
+		decided_at    timestamptz,
+		result_status int NOT NULL DEFAULT 0,
+		result        text NOT NULL DEFAULT ''
+	);
+	CREATE INDEX change_requests_status_idx ON change_requests (status, id DESC);`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -1377,6 +1437,83 @@ func previousAfter(detail json.RawMessage) any {
 		}
 	}
 	return detail
+}
+
+const changeCols = `id, method, path, summary, preview, body, requested_by, requested_at, status, decided_by, decided_at, result_status, result`
+
+func scanChange(row pgx.Row) (*ChangeRequest, error) {
+	var c ChangeRequest
+	var decided *time.Time
+	err := row.Scan(&c.ID, &c.Method, &c.Path, &c.Summary, &c.Preview, &c.Body, &c.RequestedBy, &c.RequestedAt, &c.Status, &c.DecidedBy, &decided, &c.ResultStatus, &c.Result)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if decided != nil {
+		c.DecidedAt = *decided
+	}
+	return &c, err
+}
+
+func (p *Postgres) CreateChangeRequest(ctx context.Context, c ChangeRequest) (*ChangeRequest, error) {
+	if len(c.Preview) == 0 {
+		c.Preview = json.RawMessage("{}")
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	out, err := scanChange(tx.QueryRow(ctx, `INSERT INTO change_requests (method, path, summary, preview, body, requested_by)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+changeCols, c.Method, c.Path, c.Summary, c.Preview, c.Body, c.RequestedBy))
+	if err != nil {
+		return nil, err
+	}
+	if err := audit(ctx, tx, c.RequestedBy, "change.requested", out.Summary, map[string]any{"id": out.ID, "method": out.Method, "path": out.Path, "after": out.Preview}); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func (p *Postgres) GetChangeRequest(ctx context.Context, id int64) (*ChangeRequest, error) {
+	return scanChange(p.pool.QueryRow(ctx, `SELECT `+changeCols+` FROM change_requests WHERE id = $1`, id))
+}
+
+func (p *Postgres) ListChangeRequests(ctx context.Context, status string, limit int) ([]ChangeRequest, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := p.pool.Query(ctx, `SELECT `+changeCols+` FROM change_requests WHERE ($1 = '' OR status = $1) ORDER BY id DESC LIMIT $2`, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ChangeRequest{}
+	for rows.Next() {
+		c, err := scanChange(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DecideChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*ChangeRequest, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	c, err := scanChange(tx.QueryRow(ctx, `UPDATE change_requests SET status = $2, decided_by = $3, decided_at = now(), result_status = $4, result = $5,
+		body = CASE WHEN $2 = 'pending' THEN body ELSE '' END
+		WHERE id = $1 AND status = 'pending' RETURNING `+changeCols, id, status, by, resultStatus, result))
+	if err != nil {
+		return nil, err
+	}
+	if err := audit(ctx, tx, by, "change."+status, c.Summary, map[string]any{"id": c.ID, "requested_by": c.RequestedBy, "result_status": resultStatus, "result": result}); err != nil {
+		return nil, err
+	}
+	return c, tx.Commit(ctx)
 }
 
 func (p *Postgres) SearchAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {

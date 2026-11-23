@@ -244,6 +244,7 @@ func serve(ctx context.Context, args []string) error {
 		adm.ExecutorType = cfg.Executor.Type
 		adm.Models = deps.Models
 		adm.Tuning = deps.Tuning
+		adm.Box = box
 		adm.Executor = execSvc
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
@@ -489,10 +490,10 @@ func loadLicenseInto(ctx context.Context, lic *license.Manager, cfg *config.Conf
 // license doesn't cover them, so only allowed_emails can sign in.
 func warnSSORules(cfg *config.Config, lic *license.Manager, logger *slog.Logger) {
 	o := cfg.Admin.OIDC
-	if !cfg.Admin.Enabled || len(o.AllowedDomains)+len(o.AllowedGroups) == 0 || lic.Has(license.SSORules) {
+	if !cfg.Admin.Enabled || len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups) == 0 || lic.Has(license.SSORules) {
 		return
 	}
-	logger.Warn("admin.oidc allowed_domains and allowed_groups are ignored until a license with the sso_rules feature is added; only allowed_emails can sign in",
+	logger.Warn("admin.oidc allowed_domains, allowed_groups, operators and viewers are ignored until a license with the sso_rules feature is added; only allowed_emails can sign in (as admins)",
 		"allowed_emails", len(o.AllowedEmails))
 }
 

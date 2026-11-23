@@ -763,3 +763,35 @@ func TestAuditBeforeAfterAndSearch(t *testing.T) {
 	}
 	_ = h
 }
+
+func TestChangeRequests(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	if _, err := p.pool.Exec(ctx, `TRUNCATE change_requests`); err != nil {
+		t.Fatal(err)
+	}
+	c, err := p.CreateChangeRequest(ctx, ChangeRequest{Method: "PUT", Path: "/admin/api/settings", Summary: "Change settings", Preview: json.RawMessage(`{"allowlist":true}`), Body: "sealed", RequestedBy: "op@x"})
+	if err != nil || c.Status != ChangePending || c.ID == 0 {
+		t.Fatalf("create: %+v %v", c, err)
+	}
+	got, _ := p.GetChangeRequest(ctx, c.ID)
+	if got.Body != "sealed" || got.Summary != "Change settings" {
+		t.Errorf("get: %+v", got)
+	}
+	d, err := p.DecideChangeRequest(ctx, c.ID, ChangeApplied, "admin@x", 200, "applied (200)")
+	if err != nil || d.Status != ChangeApplied || d.Body != "" || d.DecidedAt.IsZero() {
+		t.Fatalf("decide clears the body: %+v %v", d, err)
+	}
+	if _, err := p.DecideChangeRequest(ctx, c.ID, ChangeRejected, "admin@x", 0, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("decided once: %v", err)
+	}
+	if l, _ := p.ListChangeRequests(ctx, ChangePending, 10); len(l) != 0 {
+		t.Errorf("pending: %v", l)
+	}
+	if l, _ := p.ListChangeRequests(ctx, "", 10); len(l) != 1 {
+		t.Errorf("all: %v", l)
+	}
+	if a, _ := p.SearchAudit(ctx, AuditFilter{Action: "change.*"}); len(a) != 2 {
+		t.Errorf("audited: %d", len(a))
+	}
+}

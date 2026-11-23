@@ -29,6 +29,7 @@ import (
 	"github.com/divmora/code-review-console/internal/execsettings"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
+	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/tuning"
@@ -64,6 +65,11 @@ type Admin struct {
 	// Tuning holds the queue, review engine, bot name and dashboard token
 	// settings (built over the store when nil).
 	Tuning *tuning.Service
+	// Box encrypts the requests operators' changes wait with (their bodies
+	// can hold tokens). Without it, operators can't ask for those changes.
+	Box *secrets.Box
+	// mux is where approved changes are applied (set by Register).
+	mux *http.ServeMux
 	// Executor holds the executor settings; nil hides them.
 	Executor *execsettings.Service
 	// Tags lists image versions for the Executor page (built on first use).
@@ -309,37 +315,73 @@ func identityFrom(claims map[string]any, groupsClaim string) identity {
 
 // authorize returns why an identity is refused, or "".
 func (a *Admin) authorize(id identity) string {
+	_, reason := a.roleOf(id)
+	return reason
+}
+
+// roleOf works out the role an identity signs in with: admin when it
+// matches allowed_emails, allowed_domains or allowed_groups; otherwise
+// operator, then viewer, from their own lists. Domain and group rules,
+// and the operator and viewer roles, need the sso_rules license feature
+// (without it, allowed_emails are admins and nobody else signs in).
+func (a *Admin) roleOf(id identity) (string, string) {
 	o := a.cfg.OIDC
 	email := strings.ToLower(strings.TrimSpace(id.Email))
-	if email != "" && id.Verified {
-		for _, e := range o.AllowedEmails {
-			if strings.EqualFold(e, email) {
-				return ""
+	paid := a.Lic.Has(license.SSORules)
+	hasEmail := func(list []string) bool {
+		if email == "" || !id.Verified {
+			return false
+		}
+		for _, e := range list {
+			if strings.EqualFold(strings.TrimSpace(e), email) {
+				return true
 			}
 		}
-		if _, domain, ok := strings.Cut(email, "@"); ok && a.Lic.Has(license.SSORules) {
-			for _, d := range o.AllowedDomains {
-				if strings.EqualFold(strings.TrimPrefix(d, "@"), domain) {
-					return ""
+		return false
+	}
+	inGroup := func(list []string) bool {
+		for _, g := range id.Groups {
+			for _, want := range list {
+				if g == want {
+					return true
 				}
 			}
 		}
+		return false
 	}
-	for _, g := range id.Groups {
-		if !a.Lic.Has(license.SSORules) {
-			break // domain and group rules are a paid feature
-		}
-		for _, want := range o.AllowedGroups {
-			if g == want {
-				return ""
+	if hasEmail(o.AllowedEmails) {
+		return RoleAdmin, ""
+	}
+	if paid {
+		if _, domain, ok := strings.Cut(email, "@"); ok && email != "" && id.Verified {
+			for _, d := range o.AllowedDomains {
+				if strings.EqualFold(strings.TrimPrefix(d, "@"), domain) {
+					return RoleAdmin, ""
+				}
 			}
 		}
+		switch {
+		case inGroup(o.AllowedGroups):
+			return RoleAdmin, ""
+		case hasEmail(o.OperatorEmails) || inGroup(o.OperatorGroups):
+			return RoleOperator, ""
+		case hasEmail(o.ViewerEmails) || inGroup(o.ViewerGroups):
+			return RoleViewer, ""
+		}
 	}
+	return "", a.denyReason(id, email)
+}
+
+func (a *Admin) denyReason(id identity, email string) string {
+	o := a.cfg.OIDC
 	if email != "" && !id.Verified {
 		return "email not verified by the identity provider"
 	}
-	if !a.Lic.Has(license.SSORules) && len(o.AllowedDomains)+len(o.AllowedGroups) > 0 {
-		return "not in allowed_emails (allowed_domains and allowed_groups need a Divmora license with the sso_rules feature)"
+	if !a.Lic.Has(license.SSORules) && len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups) > 0 {
+		return "not in allowed_emails (domain and group rules, operators and viewers need a Divmora license with the sso_rules feature)"
+	}
+	if len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups) > 0 {
+		return "not in allowed_emails, allowed_domains or allowed_groups, nor an operator or viewer"
 	}
 	return "not in allowed_emails, allowed_domains or allowed_groups"
 }
@@ -375,7 +417,9 @@ func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 		return nil, false
 	}
 	id := identity{Subject: s.Subject, Email: s.Email, Name: s.Name, Groups: s.Groups, Verified: s.Verified}
-	if reason := a.authorize(id); reason != "" {
+	role, reason := a.roleOf(id)
+	s.Role = role
+	if reason != "" {
 		_ = a.store.DeleteSession(r.Context(), sum[:])
 		_ = a.store.Audit(r.Context(), firstNonEmpty(s.Email, s.Subject), "session.ended", "admin",
 			map[string]any{"reason": "no longer allowed by the sign-in rules: " + reason})
@@ -418,6 +462,11 @@ func (a *Admin) checkCSRF(r *http.Request, s *store.Session) bool {
 func (a *Admin) requireAPI(next func(http.ResponseWriter, *http.Request, *store.Session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		noStore(w)
+		// An approved change runs as its requester, approved by an admin.
+		if s, ok := replaySession(r); ok {
+			next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, s)), s)
+			return
+		}
 		s, ok := a.session(r)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "sign in at /admin/login"})
@@ -425,6 +474,17 @@ func (a *Admin) requireAPI(next func(http.ResponseWriter, *http.Request, *store.
 		}
 		if r.Method != http.MethodGet && !a.checkCSRF(r, s) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "missing or invalid CSRF token"})
+			return
+		}
+		switch ok, queue := allowed(s.Role, classOf(r)); {
+		case queue:
+			a.queueChange(w, r, s)
+			return
+		case !ok && s.Role == RoleViewer:
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "you have read-only access: ask an admin to make this change"})
+			return
+		case !ok:
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "only an admin can do this"})
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, s)), s)

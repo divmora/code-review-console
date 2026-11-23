@@ -41,6 +41,10 @@ export type Me = {
   reviews_paused?: string;
   // The license or host tokens that expire within two weeks, or have expired.
   expiry_warnings?: ExpiryWarning[];
+  // admin, operator or viewer; and how many changes wait for approval
+  // (all for an admin, their own for an operator).
+  role?: "admin" | "operator" | "viewer";
+  pending_approvals?: number;
 };
 
 export type ExpiryWarning = {

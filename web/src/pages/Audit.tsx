@@ -46,7 +46,7 @@ const secretLabel = (s: string) => {
 // Changes shows what an entry changed: only the fields whose value differs
 // (old → new), the secrets changed by name, or the values for other
 // entries; the raw JSON is one click away.
-function Changes({ detail }: { detail: unknown }) {
+export function Changes({ detail }: { detail: unknown }) {
   const [raw, setRaw] = useState(false);
   const d = (detail && typeof detail === "object" ? detail : {}) as Record<string, unknown>;
   const hasDiff = "before" in d || "after" in d;

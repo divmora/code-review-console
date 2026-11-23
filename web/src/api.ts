@@ -26,6 +26,13 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
   }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new APIError((data && data.error) || "HTTP " + r.status, r.status);
+  // An operator's change that waits for an admin: say so (not as an
+  // error), and stop the page from treating it as applied.
+  if (r.status === 202 && data && data.pending) {
+    window.dispatchEvent(new CustomEvent("crc-notice", { detail: data.message }));
+    window.dispatchEvent(new Event("crc-pending"));
+    throw new APIError("", 202);
+  }
   return data as T;
 }
 
