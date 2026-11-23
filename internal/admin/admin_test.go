@@ -1420,11 +1420,15 @@ func TestImpactAPI(t *testing.T) {
 		v.BySeverity["critical"] != 3 || len(v.TopByReviews) != 2 || len(v.ByCategory) != 2 || v.Granularity != "day" || v.MedianFirstReviewMS != 60000 {
 		t.Fatalf("impact: %d %s", code, body)
 	}
+	if want := time.Now().UTC().Format(time.DateOnly); v.Through != want || !v.To.Equal(v.From.AddDate(0, 0, 90)) {
+		t.Errorf("through is today, the last day included (to is the exclusive end): %s %s %s", v.From, v.To, v.Through)
+	}
 	if code, _ := e.do(t, "GET", "/admin/api/impact?range=7d", "", nil); code != 400 {
 		t.Errorf("unknown range: %d", code)
 	}
 	code, body = e.do(t, "GET", "/admin/api/impact/export?range=all&format=csv", "", nil)
-	if code != 200 || !bytes.Contains(body, []byte("summary,review_runs,3")) || !bytes.Contains(body, []byte("severity,critical,3")) {
+	if code != 200 || !bytes.Contains(body, []byte("summary,review_runs,3")) || !bytes.Contains(body, []byte("severity,critical,3")) ||
+		!bytes.Contains(body, []byte("summary,through,")) || !bytes.Contains(body, []byte("summary,to_exclusive,")) {
 		t.Errorf("csv export: %d %s", code, body)
 	}
 	code, body = e.do(t, "GET", "/admin/api/impact/export?range=30d&format=json", "", nil)

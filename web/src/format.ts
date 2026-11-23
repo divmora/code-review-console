@@ -38,6 +38,21 @@ export function fmtDate(t: string | Date): string {
   return isNaN(d.getTime()) ? "" : dateFmt.format(d);
 }
 
+// fmtDayUTC is the UTC calendar day of t ("2026-11-23" or a timestamp),
+// for ranges labelled UTC: "23 Nov 2026" whatever the browser's zone.
+const dayUTCFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const monthUTCFmt = new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
+export function fmtDayUTC(t: string): string {
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? "" : dayUTCFmt.format(d);
+}
+
+// fmtMonthUTC is "Nov 2026" (UTC).
+export function fmtMonthUTC(t: string): string {
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? "" : monthUTCFmt.format(d);
+}
+
 // fmtDateTime is "23 Nov 2026, 09:33 IST" (with seconds: 09:33:38).
 export function fmtDateTime(t: string | Date, seconds = false): string {
   const d = typeof t === "string" ? new Date(t) : t;
