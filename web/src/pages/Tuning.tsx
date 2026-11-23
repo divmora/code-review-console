@@ -106,7 +106,9 @@ export default function Tuning() {
   const [mToken, setMToken] = useState("");
   const [mClear, setMClear] = useState(false);
   const [mCopied, setMCopied] = useState(false);
-  const take = (n: View) => {
+  const take = (raw: Partial<View>) => {
+    // Older consoles leave empty fields out (#95): fill them in.
+    const n = { ...raw, extra_env: raw.extra_env ?? [], engine: raw.engine ?? {}, env_set: raw.env_set ?? {} } as View;
     setV(n);
     setEnv(n.extra_env.join(", "));
     setDefaults(n.engine.defaults ? JSON.stringify(n.engine.defaults, null, 2) : "");
@@ -118,7 +120,7 @@ export default function Tuning() {
     setMCopied(false);
   };
   useEffect(() => {
-    get<View>("/admin/api/tuning").then(take).catch((e) => toast(errMsg(e), true));
+    get<Partial<View>>("/admin/api/tuning").then(take).catch((e) => toast(errMsg(e), true));
   }, []);
   if (!v) return <Empty>Loading…</Empty>;
   const set = <K extends keyof View>(k: K) => (x: View[K]) => setV({ ...v, [k]: x });
@@ -140,7 +142,7 @@ export default function Tuning() {
       metrics_token: mToken, clear_metrics_token: mClear,
     };
     try {
-      take(await put<View>("/admin/api/tuning", body));
+      take(await put<Partial<View>>("/admin/api/tuning", body));
       toast("Settings saved");
     } catch (e) {
       toast(errMsg(e), true);

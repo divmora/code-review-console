@@ -1,4 +1,4 @@
-import { ComponentProps, createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Component, ComponentProps, createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CircleAlert, CircleCheck, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -408,4 +408,28 @@ export function shortAgent(ua?: string) {
   const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS X|Macintosh/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "";
   if (browser) return os ? browser + " on " + os : browser;
   return ua.length > 40 ? ua.slice(0, 40) + "…" : ua;
+}
+
+// Section keeps a crash in one part of a page from blanking the whole page
+// (#95): that part shows the error, the rest still works.
+export class Section extends Component<{ name: string; children: ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    console.error(`${this.props.name} failed to render`, error);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Alert variant="destructive">
+        <CircleAlert />
+        <AlertTitle>{this.props.name} could not be shown</AlertTitle>
+        <AlertDescription>
+          {this.state.error.message}. Reload the page; if it happens again, report it with the browser console output.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 }

@@ -19,6 +19,9 @@ type tuningView struct {
 	DashboardTokenExpired bool   `json:"dashboard_token_expired"`
 	MetricsTokenHash      string `json:"metrics_token_hash,omitempty"` // hides the embedded field
 	MetricsTokenSet       bool   `json:"metrics_token_set"`
+	// ExtraEnv hides the embedded field: always sent, as [] when empty
+	// (the stored settings omit it, and the page reads it as a list; #95).
+	ExtraEnv []string `json:"extra_env"`
 	// EnvSet says which extra variables the console has.
 	EnvSet map[string]bool `json:"env_set"`
 }
@@ -37,9 +40,7 @@ func viewTuning(t tuning.Settings) tuningView {
 	v.MetricsTokenSet, v.Settings.MetricsTokenHash = t.MetricsTokenHash != "", ""
 	v.MetricsAccess = t.Metrics()
 	v.DashboardTokenExpired = t.DashboardTokenHash != "" && t.TokenExpired(time.Now())
-	if v.ExtraEnv == nil {
-		v.ExtraEnv = []string{}
-	}
+	v.ExtraEnv = append([]string{}, t.ExtraEnv...)
 	for _, n := range t.ExtraEnv {
 		_, ok := os.LookupEnv(n)
 		v.EnvSet[n] = ok

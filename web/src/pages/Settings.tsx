@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { del, get, post, put } from "../api";
 import type { Overrides } from "../types";
-import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, SettingsEditor, shortAgent, Sub, useConfirm, useFeature, useMe, useRefreshMe, useToast } from "../ui";
+import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Section, SettingsEditor, shortAgent, Sub, useConfirm, useFeature, useMe, useRefreshMe, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -264,8 +264,8 @@ export default function Settings() {
       <Group title="Default review settings" description="Apply to every repository. Group and pattern rules, then repository settings, override them.">
         <SettingsEditor key={edGen} value={eff.review_defaults} onSave={save} saveLabel="Save default review settings" />
       </Group>
-      <Tuning />
-      <Sessions />
+      <Section name="Queue, review engine and access settings"><Tuning /></Section>
+      <Section name="Sign-in sessions"><Sessions /></Section>
       <Note>
         These settings are kept in the database and apply without a restart. Every change is in the audit log.
       </Note>
