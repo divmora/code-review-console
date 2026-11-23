@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fmtDate } from "../format";
 import type { TokenExpiry } from "../types";
+import { fmtDateTime } from "../format";
 import { Check, Copy, Plug, Plus, Webhook } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useToast } from "../ui";
@@ -15,7 +16,7 @@ type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
   secrets: { token: boolean; app_private_key: boolean; api_token: boolean; webhook_secrets: number; signing_tokens: number };
-  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string; token_expiry?: TokenExpiry;
+  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string; token_expiry?: TokenExpiry; check?: HostCheck;
 };
 
 type Hook = {
@@ -110,7 +111,7 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
       <div className="flex flex-wrap items-center gap-2">
         <Input className="h-8 max-w-64" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() !== hook.name && update({ name }, "Renamed")} />
         <StateBadge kind={hook.enabled ? "on" : "idle"}>{hook.enabled ? "Enabled" : "Disabled"}</StateBadge>
-        {platform === "gitlab" && hook.secrets.signing_tokens > 0 && <Badge variant="outline" className="font-normal text-muted-foreground">signing token ✓</Badge>}
+        {platform === "gitlab" && hook.secrets.signing_tokens > 0 && <Badge variant="outline" className="font-normal text-muted-foreground">signing token set</Badge>}
         <span className="flex-1" />
         <Button variant="ghost" size="sm" onClick={() => update({ enabled: !hook.enabled }, hook.enabled ? "Disabled " + hook.name : "Enabled " + hook.name)}>
           {hook.enabled ? "Disable" : "Enable"}
@@ -362,16 +363,16 @@ export default function Hosts() {
   const [data, setData] = useState<{ mode: string; key_env?: string; hosts: Host[] } | null>(null);
   const [editing, setEditing] = useState<number | null>(null); // 0 = new
   const [hooks, setHooks] = useState<number | null>(null);
-  const [tests, setTests] = useState<Record<number, { pending?: boolean; ok?: boolean; message?: string }>>({});
+  const [tests, setTests] = useState<Record<number, HostCheck & { pending?: boolean }>>({});
   const load = () => get<{ mode: string; key_env?: string; hosts: Host[] }>("/admin/api/hosts").then(setData).catch((e) => toast(errMsg(e), true));
   useEffect(() => {
     load();
   }, []);
   const test = (h: Host) => {
-    setTests((t) => ({ ...t, [h.id]: { pending: true } }));
-    post<{ ok: boolean; message: string }>(`/admin/api/hosts/${h.id}/test`)
+    setTests((t) => ({ ...t, [h.id]: { ok: false, pending: true } }));
+    post<HostCheck>(`/admin/api/hosts/${h.id}/test`)
       .then((r) => setTests((t) => ({ ...t, [h.id]: r })))
-      .catch((e) => setTests((t) => ({ ...t, [h.id]: { ok: false, message: errMsg(e) } })));
+      .catch((e) => setTests((t) => ({ ...t, [h.id]: { ok: false, summary: "Check failed", message: errMsg(e) } })));
   };
   const remove = async (h: Host) => {
     if (!(await confirm({ title: "Delete " + h.name + "?", description: "Webhooks from it will be rejected and its stored tokens removed.", action: "Delete host", danger: true }))) return;
@@ -418,9 +419,9 @@ export default function Hosts() {
             <TableBody>
               {data.hosts.map((h) => {
                 const s = h.secrets;
-                const auth = [s.token && "token ✓", h.settings.app_id && `App ${h.settings.app_id}${s.app_private_key ? " ✓" : " (no key)"}`, s.api_token && "API token ✓",
+                const auth = [s.token && "token set", h.settings.app_id && `App ${h.settings.app_id}${s.app_private_key ? ", key set" : " (no key)"}`, s.api_token && "API token set",
                   s.signing_tokens && `${s.signing_tokens} signing token${s.signing_tokens > 1 ? "s" : ""}`, s.webhook_secrets && `${s.webhook_secrets} webhook secret${s.webhook_secrets > 1 ? "s" : ""}`].filter(Boolean) as string[];
-                const t = tests[h.id];
+                const t = tests[h.id] || h.check;
                 return (
                   <TableRow key={h.id}>
                     <TableCell className="pl-4 align-top">
@@ -471,8 +472,8 @@ export default function Hosts() {
                         <Webhook /> {managed ? "Manage webhooks" : "Show URLs"}
                       </Button>
                     </TableCell>
-                    <TableCell className="max-w-56 align-top whitespace-normal">
-                      {t && (t.pending ? <span className="text-sm text-muted-foreground">testing…</span> : <StateBadge kind={t.ok ? "on" : "off"}>{t.message}</StateBadge>)}
+                    <TableCell className="w-56 max-w-56 align-top whitespace-normal">
+                      <CheckResult t={t} />
                     </TableCell>
                     <TableCell className="pr-4 text-right align-top">
                       <div className="flex justify-end gap-1">
@@ -536,4 +537,31 @@ function TokenExpiryNote({ e }: { e?: TokenExpiry }) {
   if (days <= 0) return <div className="mt-1"><StateBadge kind="warn">Token expired {date}</StateBadge></div>;
   if (days <= 14) return <div className="mt-1"><StateBadge kind="warn">Token expires in {days} {days === 1 ? "day" : "days"}</StateBadge></div>;
   return <Sub>Token expires {date}</Sub>;
+}
+
+type HostCheck = { ok: boolean; summary?: string; message?: string; at?: string };
+
+// CheckResult is the last Test of a host: a short status that wraps inside
+// its column, with the full result one click away (and on hover). "Not
+// tested" until Test runs, so a stored token is never mistaken for a
+// working one.
+function CheckResult({ t }: { t?: HostCheck & { pending?: boolean } }) {
+  const [open, setOpen] = useState(false);
+  if (!t) return <Sub>Not tested</Sub>;
+  if (t.pending) return <span className="text-sm text-muted-foreground">testing…</span>;
+  const summary = t.summary || (t.ok ? "OK" : "Check failed");
+  return (
+    <div className="grid min-w-0 gap-1" title={t.message}>
+      <div><StateBadge kind={t.ok ? "on" : "off"}>{summary}</StateBadge></div>
+      {t.at && <Sub>{fmtDateTime(t.at)}</Sub>}
+      {t.message && t.message !== summary && (
+        <>
+          <button type="button" className="w-fit text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => setOpen(!open)}>
+            {open ? "Hide details" : "Details"}
+          </button>
+          {open && <div className="text-xs break-words text-muted-foreground">{t.message}</div>}
+        </>
+      )}
+    </div>
+  );
 }

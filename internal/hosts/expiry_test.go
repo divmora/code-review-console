@@ -2,6 +2,7 @@ package hosts
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,5 +79,26 @@ func TestSecretChanges(t *testing.T) {
 	}
 	if got := EndpointSecretChanges(EndpointSecrets{}, EndpointSecrets{WebhookSecrets: []string{"x"}}); strings.Join(got, " ") != "webhook_secrets:+1" {
 		t.Errorf("endpoint: %v", got)
+	}
+}
+
+func TestSummarize(t *testing.T) {
+	for msg, want := range map[string]string{
+		`gitlab GET /user: Get "https://g.test/api/v4/user": dial tcp: lookup g.test on 127.0.0.11:53: no such host`: "Can't find the host (DNS)",
+		`dial tcp 10.0.0.1:443: connect: connection refused`:                                                         "Can't reach the host",
+		`context deadline exceeded (Client.Timeout exceeded while awaiting headers)`:                                 "The host didn't answer in time",
+		`tls: failed to verify certificate: x509: certificate signed by unknown authority`:                           "TLS certificate problem",
+		`gitlab GET /user: 401 Unauthorized`:                                                                         "Token rejected (401)",
+		`github GET /user: 403 Forbidden`:                                                                            "Token lacks access (403)",
+		`something else`:                                                                                             "Check failed",
+	} {
+		if got := Summarize(errors.New(msg)); got != want {
+			t.Errorf("%q: got %q, want %q", msg, got, want)
+		}
+	}
+	r := &Registry{}
+	r.RecordCheck(4, Check{OK: true, Summary: "OK as @bot"})
+	if c, ok := r.CheckOf(4); !ok || c.Summary != "OK as @bot" {
+		t.Errorf("check remembered: %+v", c)
 	}
 }

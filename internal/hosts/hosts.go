@@ -228,8 +228,10 @@ type Registry struct {
 	endpoints []Endpoint
 	mode      string // "database" or "config"
 	notes     []string
-	// expiry is what is known about each host's token expiry (by ID).
+	// expiry is what is known about each host's token expiry (by ID);
+	// checks the last Test result.
 	expiry map[int64]TokenExpiry
+	checks map[int64]Check
 	// OnChange runs after hosts change (e.g. to refresh bot identities).
 	OnChange func()
 	// Lic gates the Hosts feature: without it only the first host of each

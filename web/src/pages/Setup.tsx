@@ -55,7 +55,7 @@ export default function Setup() {
           <CardDescription>
             {st.complete
               ? "Everything needed for reviews is in place. This page stays here for when you add more."
-              : `${st.done} of ${st.total} steps done. Each step is checked against what is configured right now.`}
+              : `${st.done} of ${st.total} required steps done${st.steps.some((s) => s.optional) ? " (optional steps aren't counted)" : ""}. Each step is checked against what is configured right now.`}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">

@@ -735,6 +735,8 @@ type hostView struct {
 	// TokenExpiry is what the code host says about the token's expiry
 	// (nil until it has been checked).
 	TokenExpiry *hosts.TokenExpiry `json:"token_expiry,omitempty"`
+	// Check is the last Test result (nil until Test runs).
+	Check *hosts.Check `json:"check,omitempty"`
 }
 
 var hookEvents = map[string][]string{
@@ -755,6 +757,9 @@ func (a *Admin) viewHost(h hosts.Host, stats map[string]store.HostHookStats) hos
 	}
 	if e, ok := a.Hosts.TokenExpiryOf(h.ID); ok {
 		v.TokenExpiry = &e
+	}
+	if c, ok := a.Hosts.CheckOf(h.ID); ok {
+		v.Check = &c
 	}
 	return v
 }
@@ -1086,7 +1091,9 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 	switch h.Platform {
 	case hosts.GitHub:
 		if h.Token == "" {
-			writeJSON(w, http.StatusOK, map[string]any{"ok": h.AppID != 0, "message": "GitHub App: credentials are checked when a webhook arrives (an App has no user)"})
+			c := hosts.Check{OK: h.AppID != 0, Summary: "GitHub App", Message: "GitHub App: credentials are checked when a webhook arrives (an App has no user)", At: time.Now()}
+			a.Hosts.RecordCheck(h.ID, c)
+			writeJSON(w, http.StatusOK, c)
 			return
 		}
 		c = vcs.NewGitHub(h.BaseURL, vcs.StaticToken(h.Token))
@@ -1101,7 +1108,9 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 		if h.Platform == hosts.Bitbucket && h.Token != "" {
 			msg += " (access tokens have no user: set the reviewer name for this host)"
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": msg})
+		res := hosts.Check{OK: false, Summary: hosts.Summarize(err), Message: msg, At: time.Now()}
+		a.Hosts.RecordCheck(h.ID, res)
+		writeJSON(w, http.StatusOK, res)
 		return
 	}
 	msg := "connected as @" + user
@@ -1115,7 +1124,9 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 			msg += " (" + strconv.Itoa(d) + " days left: replace it soon)"
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "message": msg, "token_expiry": e})
+	res := hosts.Check{OK: true, Summary: "OK as @" + user, Message: msg, At: time.Now()}
+	a.Hosts.RecordCheck(h.ID, res)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "summary": res.Summary, "message": msg, "at": res.At, "token_expiry": e})
 }
 
 // ---- reviews and metrics ----

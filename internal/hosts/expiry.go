@@ -157,3 +157,54 @@ func (r *Registry) TokenExpiryOf(id int64) (TokenExpiry, bool) {
 	e, ok := r.expiry[id]
 	return e, ok
 }
+
+// Check is the result of the last Test of a host's credentials.
+type Check struct {
+	OK bool `json:"ok"`
+	// Summary is a few words for the table ("Token rejected (401)");
+	// Message the full result or error.
+	Summary string    `json:"summary"`
+	Message string    `json:"message"`
+	At      time.Time `json:"at"`
+}
+
+// RecordCheck remembers a Test result for host id.
+func (r *Registry) RecordCheck(id int64, c Check) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.checks == nil {
+		r.checks = map[int64]Check{}
+	}
+	r.checks[id] = c
+}
+
+// CheckOf returns the last Test result for host id.
+func (r *Registry) CheckOf(id int64) (Check, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.checks[id]
+	return c, ok
+}
+
+// Summarize turns a failed check's error into a few words an admin can act
+// on; the full error stays in the message.
+func Summarize(err error) string {
+	m := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(m, "no such host"):
+		return "Can't find the host (DNS)"
+	case strings.Contains(m, "connection refused"), strings.Contains(m, "no route to host"), strings.Contains(m, "network is unreachable"):
+		return "Can't reach the host"
+	case strings.Contains(m, "timeout"), strings.Contains(m, "deadline exceeded"):
+		return "The host didn't answer in time"
+	case strings.Contains(m, "x509"), strings.Contains(m, "certificate"), strings.Contains(m, "tls"):
+		return "TLS certificate problem"
+	case strings.Contains(m, "401"), strings.Contains(m, "unauthorized"), strings.Contains(m, "bad credentials"):
+		return "Token rejected (401)"
+	case strings.Contains(m, "403"), strings.Contains(m, "forbidden"):
+		return "Token lacks access (403)"
+	case strings.Contains(m, "404"), strings.Contains(m, "not found"):
+		return "Not found (404): check the URL"
+	}
+	return "Check failed"
+}
