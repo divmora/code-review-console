@@ -66,7 +66,7 @@ import Hosts from "./pages/Hosts";
 import Rules from "./pages/Rules";
 import Webhooks from "./pages/Webhooks";
 import Settings from "./pages/Settings";
-import Approvals from "./pages/Approvals";
+import ChangeRequests from "./pages/ChangeRequests";
 import Audit from "./pages/Audit";
 import License from "./pages/License";
 import Models from "./pages/Models";
@@ -87,7 +87,7 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "rules", title: "Rules", icon: ListChecks, el: <Rules />, paid: "rules" },
   { path: "webhooks", title: "Webhooks", icon: Webhook, el: <Webhooks /> },
   { path: "settings", title: "Settings", icon: SlidersHorizontal, el: <Settings /> },
-  { path: "approvals", title: "Approvals", icon: ClipboardCheck, el: <Approvals /> },
+  { path: "change-requests", title: "Change requests", icon: ClipboardCheck, el: <ChangeRequests /> },
   { path: "audit", title: "Audit log", icon: ScrollText, el: <Audit />, paid: "audit" },
   { path: "license", title: "License", icon: KeyRound, el: <License /> },
 ];
@@ -224,7 +224,7 @@ function AppSidebar({ me }: { me: Me }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="side" aria-label="Sections">
-              {sections.filter((s) => s.path !== "approvals" || me.role === "operator" || (me.role === "admin" && (me.license.features.includes("sso_rules") || !!me.pending_approvals))).map((s) => {
+              {sections.filter((s) => s.path !== "change-requests" || me.role === "operator" || (me.role === "admin" && (me.license.features.includes("sso_rules") || !!me.pending_approvals))).map((s) => {
                 const locked = s.paid && !me.license.features.includes(s.paid);
                 const active = current(loc.pathname)?.path === s.path;
                 return (
@@ -240,8 +240,8 @@ function AppSidebar({ me }: { me: Me }) {
                         <span title={`${me.setup.done} of ${me.setup.total} required setup steps done`}>{me.setup.done}/{me.setup.total}</span>
                       </SidebarMenuBadge>
                     )}
-                    {s.path === "approvals" && !!me.pending_approvals && (
-                      <SidebarMenuBadge className="text-[10px]" title={me.pending_approvals + " waiting for approval"}>{me.pending_approvals}</SidebarMenuBadge>
+                    {s.path === "change-requests" && !!me.pending_approvals && (
+                      <SidebarMenuBadge className="text-[10px]" title={me.pending_approvals + " waiting for an admin"}>{me.pending_approvals}</SidebarMenuBadge>
                     )}
                     {locked && (
                       <SidebarMenuBadge className="paid text-[10px] font-normal text-muted-foreground" title="Needs a license">
@@ -367,7 +367,7 @@ export default function App() {
   const [signedOut, setSignedOut] = useState(false);
   useEffect(() => {
     loadMe();
-    // A change sent for approval updates the Approvals count.
+    // A change sent for approval updates the Change requests count.
     const onPending = () => loadMe();
     const onSignedOut = () => setSignedOut(true);
     window.addEventListener("crc-pending", onPending);
@@ -427,6 +427,7 @@ export default function App() {
                       {sections.map((s) => (
                         <Route key={s.path} path={"/" + s.path} element={<Section key={s.path} name={s.title}>{s.el}</Section>} />
                       ))}
+                      <Route path="/approvals" element={<Navigate to="/change-requests" replace />} />
                       <Route path="/logout" element={<SignOutPage />} />
                       <Route path="/signed-in" element={<SignedInPage />} />
                       <Route path="*" element={<NotFoundPage />} />

@@ -257,8 +257,12 @@ const kindClass: Record<Kind, string> = {
   warn: "border-transparent bg-warning-soft text-warning",
 };
 
-export function StateBadge({ kind, children }: { kind: Kind; children: ReactNode }) {
-  return <Badge className={cn("state", kind, kindClass[kind])}>{children}</Badge>;
+export function StateBadge({ kind, children, className, title }: { kind: Kind; children: ReactNode; className?: string; title?: string }) {
+  return (
+    <Badge className={cn("state", kind, kindClass[kind], className)} title={title}>
+      {children}
+    </Badge>
+  );
 }
 
 export function Chips({ items, empty }: { items: string[]; empty?: string }) {

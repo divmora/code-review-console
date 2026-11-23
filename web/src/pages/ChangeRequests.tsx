@@ -14,10 +14,11 @@ type Request = {
 
 const kind = (s: Request["status"]) => (s === "applied" ? "on" : s === "pending" ? "warn" : s === "failed" ? "off" : "idle");
 
-// Approvals lists the changes operators asked for. Admins approve (the
-// change then runs as the operator, approved by them) or reject them;
-// operators see their own and can cancel them.
-export default function Approvals() {
+// ChangeRequests lists the changes operators asked for. Admins approve
+// (the change then runs as the operator, approved by them) or reject them;
+// operators see their own and can cancel them. (The bot approving merge
+// requests is something else: see Settings and Reviews.)
+export default function ChangeRequests() {
   const toast = useToast();
   const me = useMe();
   const refreshMe = useRefreshMe();
@@ -50,7 +51,7 @@ export default function Approvals() {
     <section className="grid gap-4">
       <Note>
         {admin
-          ? "Operators change repositories, rules and learnings and run reviews directly. Their other changes (code hosts, webhooks, settings, models, the executor, the license) wait here. Approving runs the change as the operator, with the same checks, and the audit log names both of you. Requests expire after 7 days."
+          ? "Operators change repositories, rules and learnings and run reviews directly. Their other changes (code hosts, webhooks, settings, models, the executor, the license) wait here for an admin. Approving runs the change as the operator, with the same checks, and the audit log names both of you. Requests expire after 7 days. Merge requests the bot approved are marked on Reviews."
           : "Changes to code hosts, webhooks, settings, models, the executor and the license wait for an admin. Your requests are listed here; they expire after 7 days."}
       </Note>
       {shown && (
@@ -72,7 +73,7 @@ export default function Approvals() {
         {!list ? (
           <Empty>Loading…</Empty>
         ) : !visible.length ? (
-          <Empty>{status === "pending" ? "Nothing waits for approval." : "No requests yet."}</Empty>
+          <Empty>{status === "pending" ? "No change requests wait for an admin." : "No requests yet."}</Empty>
         ) : (
           <ul className="divide-y">
             {visible.map((r) => (

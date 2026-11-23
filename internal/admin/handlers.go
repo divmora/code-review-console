@@ -110,6 +110,10 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	// signed-in is where signing in from another tab lands, after a save
 	// found the session had ended (the first tab keeps its edits).
 	mux.HandleFunc("GET /admin/signed-in", a.handlePage)
+	// Change requests were called Approvals before 0.14 (issue #115).
+	mux.HandleFunc("GET /admin/approvals", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/change-requests", http.StatusPermanentRedirect)
+	})
 	mux.HandleFunc("GET /admin/assets/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", uiCSP)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -178,7 +182,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "impact": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "approvals": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "impact": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "change-requests": true}
 
 // dropSlash redirects to the same URL without the trailing slash, keeping
 // the query string.
@@ -1218,6 +1222,7 @@ func (a *Admin) apiListReviews(w http.ResponseWriter, r *http.Request, s *store.
 	// severity=critical, category=security: reviews with such a finding
 	// (severity=any: with any finding), as counted on the Impact page.
 	f.Severity, f.Category = strings.TrimSpace(q.Get("severity")), strings.TrimSpace(q.Get("category"))
+	f.Approval = q.Get("approval") // approved, withdrawn, ...
 	jobs, err := a.store.ListJobs(r.Context(), f)
 	if err != nil {
 		a.serverError(w, err)

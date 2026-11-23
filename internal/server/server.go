@@ -543,7 +543,7 @@ func (s *Server) persistJob(r Record) {
 		Kind: r.Kind, Platform: r.Platform, Host: r.Host, Repo: r.Repo, Number: r.Number, URL: r.URL, Trigger: r.Trigger,
 		State: string(r.State), Enqueued: r.Enqueued, Started: r.Started, Finished: r.Finished, Merged: r.Merged,
 		Error: r.Error, Note: r.Note, Comments: r.Comments, Files: r.Files, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Model: r.Model,
-		Result: r.Result, RequestedBy: r.RequestedBy, Scores: r.Scores,
+		Result: r.Result, RequestedBy: r.RequestedBy, Scores: r.Scores, Approval: r.Approval,
 	})
 	if err != nil {
 		s.logger.Warn("could not save job history", "error", err)
@@ -564,7 +564,7 @@ func (s *Server) loadHistory() {
 		recs = append(recs, Record{
 			Meta:  Meta{Kind: j.Kind, Platform: j.Platform, Host: j.Host, Repo: j.Repo, Number: j.Number, URL: j.URL, Trigger: j.Trigger},
 			State: State(j.State), Enqueued: j.Enqueued, Started: j.Started, Finished: j.Finished, Merged: j.Merged, Error: j.Error,
-			Report: Report{Note: j.Note, Comments: j.Comments, Files: j.Files, TokensIn: j.TokensIn, TokensOut: j.TokensOut, Model: j.Model, Scores: j.Scores},
+			Report: Report{Note: j.Note, Comments: j.Comments, Files: j.Files, TokensIn: j.TokensIn, TokensOut: j.TokensOut, Model: j.Model, Scores: j.Scores, Approval: j.Approval},
 		})
 	}
 	s.queue.Seed(recs)

@@ -887,6 +887,20 @@ func TestReviewScores(t *testing.T) {
 		t.Errorf("any score below 75: %+v", anyLow)
 	}
 
+	// The approval outcome is read from the result and rolled up (issue #115).
+	for i, a := range []string{"approved", "already_approved", "withdrawn"} {
+		if _, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: "approvals.example.com", Repo: "g/a", Number: 10 + i, State: "done",
+			Enqueued: at, Started: at, Finished: at, Result: json.RawMessage(`{"approval":"` + a + `"}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := p.ListJobs(ctx, JobFilter{Host: "approvals.example.com", Approval: "approved"}); len(got) != 1 || got[0].Approval != "approved" || got[0].Number != 10 {
+		t.Errorf("approval filter: %+v", got)
+	}
+	if im, err := p.Impact(ctx, ImpactFilter{Granularity: Daily, From: at.Add(-48 * time.Hour), To: at.Add(48 * time.Hour)}); err != nil || im.Approvals != 1 {
+		t.Errorf("approvals counted once, not for already_approved: %v %+v", err, im)
+	}
+
 	// Findings filters, as Impact counts them (questions aren't findings).
 	res := json.RawMessage(`{"findings":[{"severity":"Critical","category":" Security "},{"severity":"minor","category":"style","kind":"question"}]}`)
 	if _, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: "findings.example.com", Repo: "g/a", Number: 1, State: "done",

@@ -49,6 +49,9 @@ type Report struct {
 	Result json.RawMessage `json:"-"`
 	// Scores are the review's scores, when the CLI gave them.
 	Scores *store.Scores `json:"scores,omitempty"`
+	// Approval is what the review did with the bot's approval (see
+	// store.Job.Approval).
+	Approval string `json:"approval,omitempty"`
 }
 
 // Record is one job's lifecycle, as shown on the dashboard.

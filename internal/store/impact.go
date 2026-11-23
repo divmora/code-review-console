@@ -117,6 +117,9 @@ type Impact struct {
 	// SecurityFindings are findings in the security category.
 	SecurityFindings int `json:"security_findings"`
 	Comments         int `json:"comments"`
+	// Approvals counts approvals the bot gave on the code host (a review
+	// that approved; one already approved isn't counted again).
+	Approvals int `json:"approvals"`
 	// FirstReviews are merge requests first reviewed in the period, and
 	// MedianFirstReviewMS the median time from the webhook to their first
 	// review's comments (including the wait after a push).
@@ -251,9 +254,9 @@ func (p *Postgres) Impact(ctx context.Context, f ImpactFilter) (*Impact, error) 
 	// starts inside [From, To).
 	if err := p.pool.QueryRow(ctx, `
 		SELECT coalesce(sum(reviews), 0), coalesce(sum(comments), 0), coalesce(sum(scored), 0), coalesce(sum(quality_sum), 0),
-			coalesce(sum(security_sum), 0), coalesce(sum(maintainability_sum), 0)
+			coalesce(sum(security_sum), 0), coalesce(sum(maintainability_sum), 0), coalesce(sum(approvals), 0)
 		FROM job_metrics WHERE granularity = $1 AND bucket >= $2 AND bucket < $3`, f.Granularity, f.From, f.To).
-		Scan(&out.ReviewRuns, &out.Comments, &out.Scored, &out.QualitySum, &out.SecuritySum, &out.MaintainabilitySum); err != nil {
+		Scan(&out.ReviewRuns, &out.Comments, &out.Scored, &out.QualitySum, &out.SecuritySum, &out.MaintainabilitySum, &out.Approvals); err != nil {
 		return nil, err
 	}
 	if err := p.pool.QueryRow(ctx, `
