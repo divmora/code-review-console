@@ -582,17 +582,6 @@ func TestNewValidation(t *testing.T) {
 	}
 }
 
-// randomSigningToken returns a fresh GitLab webhook signing token
-// ("whsec_" + base64 of 32 random bytes), so no fixed token is in the code.
-func randomSigningToken(t *testing.T) string {
-	t.Helper()
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
-	return "whsec_" + base64.StdEncoding.EncodeToString(b)
-}
-
 // The app page carries a fresh CSP nonce on every load, in both the CSP
 // header (styles only) and the page's <meta name="csp-nonce">.
 func TestPageNonce(t *testing.T) {
