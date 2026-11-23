@@ -39,7 +39,16 @@ export type Me = {
   setup?: { complete: boolean; done?: number; total?: number };
   // Why reviews can't run with the current license ("" = they can).
   reviews_paused?: string;
+  // The license or host tokens that expire within two weeks, or have expired.
+  expiry_warnings?: ExpiryWarning[];
 };
+
+export type ExpiryWarning = {
+  kind: "license" | "host"; host_id?: number; name: string; expires: string; days: number;
+  severity: "warn" | "bad"; message: string;
+};
+
+export type TokenExpiry = { expires?: string; known: boolean; checked?: string; error?: string };
 
 export type Access = {
   enabled: boolean;

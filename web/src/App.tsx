@@ -84,6 +84,29 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "license", title: "License", icon: KeyRound, el: <License /> },
 ];
 
+// ExpiryBanner warns from two weeks before the license or a code host
+// token expires (and once a token has expired), with the date and what
+// stops working.
+function ExpiryBanner({ me }: { me: Me }) {
+  const list = me.expiry_warnings || [];
+  if (!list.length) return null;
+  const bad = list.some((w) => w.severity === "bad");
+  return (
+    <Alert role="status" variant={bad ? "destructive" : "default"} className={bad ? "banner bad" : "banner border-warning/40 bg-warning-soft text-warning"}>
+      <AlertDescription className={bad ? "" : "text-warning"}>
+        {list.map((w) => (
+          <p key={w.kind + (w.host_id || "")}>
+            {w.message}{" "}
+            <Link className="font-semibold underline underline-offset-2" to={w.kind === "license" ? "/license" : "/hosts"}>
+              {w.kind === "license" ? "License" : "Code hosts"}
+            </Link>
+          </p>
+        ))}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 // LicenseBanner warns when a license is in its grace period, expired or
 // not valid (a missing license is the normal free core: no banner).
 function LicenseBanner({ me }: { me: Me }) {
@@ -331,6 +354,7 @@ export default function App() {
                   <Header me={me} />
                   <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 md:p-6">
                     <LicenseBanner me={me} />
+                    <ExpiryBanner me={me} />
                     <Routes>
                       <Route path="/" element={<Navigate to={me.setup && !me.setup.complete ? "/setup" : "/repositories"} replace />} />
                       {sections.map((s) => (

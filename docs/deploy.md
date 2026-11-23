@@ -57,6 +57,14 @@ Two other sources exist:
 
 Keys are verified offline against Divmora's public key; nothing is sent anywhere.
 
+**Expiry warnings.** From 14 days before the license or a code host token expires, every admin page
+shows a banner with the date and what stops, the matching Setup step turns amber, and the server
+logs a warning once a day. A host's token expiry is read from the code host when the host is saved
+or tested, a minute after start and then daily: GitLab reports it for personal, group and project
+access tokens (`/api/v4/personal_access_tokens/self`), GitHub for fine-grained and expiring tokens.
+GitHub Apps mint their own short-lived tokens, and Bitbucket doesn't report an expiry. The Code hosts
+page shows each token's expiry.
+
 When a license expires, paid features keep working for its grace period (14 days unless
 the license says otherwise), with a banner in the admin panel. After that the console goes back
 to the free core. It never stops reviewing, and settings for paid features are kept for when the

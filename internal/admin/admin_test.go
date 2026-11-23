@@ -1051,3 +1051,45 @@ func TestSignedInForServerPages(t *testing.T) {
 		t.Errorf("only /admin pages are return targets: %s", got)
 	}
 }
+
+func TestTokenExpiryWarnings(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	soon := time.Now().UTC().Add(5 * 24 * time.Hour).Format("2006-01-02")
+	gl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PRIVATE-TOKEN") != "glpat-soon" {
+			w.WriteHeader(401)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v4/user":
+			_, _ = io.WriteString(w, `{"username":"gitlab-bot"}`)
+		case "/api/v4/personal_access_tokens/self":
+			_, _ = io.WriteString(w, `{"name":"bot","expires_at":"`+soon+`","scopes":["api"]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer gl.Close()
+	code, body := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "name": "Our GitLab", "base_url": gl.URL, "token": "glpat-soon",
+		"signing_tokens": []string{randomSigningToken(t)}})
+	if code != 201 || !bytes.Contains(body, []byte(`"token_expiry":{"expires":"`)) {
+		t.Fatalf("saving a host reads its token's expiry: %d %s", code, body)
+	}
+	var hv struct{ ID int64 }
+	_ = json.Unmarshal(body, &hv)
+	_, body = e.do(t, "GET", "/admin/api/me", "", nil)
+	if !bytes.Contains(body, []byte(`{"kind":"host","host_id":`)) || !bytes.Contains(body, []byte(`Our GitLab expires on`)) || !bytes.Contains(body, []byte(`"days":6`)) {
+		t.Errorf("the banner warns about the token: %s", body)
+	}
+	_, body = e.do(t, "GET", "/admin/api/setup", "", nil)
+	if !bytes.Contains(body, []byte(`"warning":"The token of Our GitLab expires on`)) {
+		t.Errorf("Setup's host step warns: %s", body)
+	}
+	_, body = e.do(t, "POST", fmt.Sprintf("/admin/api/hosts/%d/test", hv.ID), csrf, nil)
+	if !bytes.Contains(body, []byte("the token expires on")) || !bytes.Contains(body, []byte("replace it soon")) {
+		t.Errorf("Test reports the expiry: %s", body)
+	}
+}

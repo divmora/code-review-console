@@ -19,6 +19,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/expiry"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/secrets"
@@ -165,6 +166,7 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		s.stopPrune = make(chan struct{})
 		go s.pruneLoop()
 		go s.tuningLoop()
+		go s.expiryLoop()
 	}
 	return s, nil
 }
@@ -175,6 +177,34 @@ func (s *Server) applyTuning(t tuning.Settings) {
 		s.logger.Info("reviews at once changed", "workers", t.Workers)
 	}
 	s.queue.Resize(t.Workers, t.QueueSize, t.JobTimeoutDuration(), t.History)
+}
+
+// expiryLoop checks the code host tokens' expiry at start and once a day,
+// and logs a warning for the license and each token that expires within
+// two weeks (or has expired).
+func (s *Server) expiryLoop() {
+	// The first check waits a minute, so starting up (and tests) makes no
+	// calls to the code hosts.
+	select {
+	case <-s.stopPrune:
+		return
+	case <-time.After(time.Minute):
+	}
+	tk := time.NewTicker(24 * time.Hour)
+	defer tk.Stop()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		s.hosts.RefreshTokenExpiry(ctx)
+		cancel()
+		for _, w := range expiry.All(s.lic().Status(), s.hosts, time.Now()) {
+			s.logger.Warn(w.Message, "kind", w.Kind, "name", w.Name, "expires", w.Expires.UTC().Format(time.RFC3339), "days_left", w.Days)
+		}
+		select {
+		case <-s.stopPrune:
+			return
+		case <-tk.C:
+		}
+	}
 }
 
 // tuningLoop picks up settings saved on another instance.

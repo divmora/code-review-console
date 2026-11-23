@@ -22,6 +22,7 @@ import (
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
+	"github.com/divmora/code-review-console/internal/expiry"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
@@ -194,7 +195,7 @@ func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"email": s.Email, "name": firstNonEmpty(s.Name, s.Email), "expires": s.Expires, "csrf": s.CSRF, "version": version.Version, "license": a.Lic.Status(), "free_retention_days": license.FreeRetentionDays, "profiles": a.profileNames(r), "allowlist": eff.Allowlist, "require_reviewer": eff.RequireReviewer,
-		"setup": setup, "reviews_paused": a.reviewsPaused(),
+		"setup": setup, "reviews_paused": a.reviewsPaused(), "expiry_warnings": expiry.All(a.Lic.Status(), a.Hosts, time.Now()),
 	})
 }
 
@@ -641,6 +642,9 @@ type hostView struct {
 	// Licensed is false for a host the license does not cover (a second
 	// host on a platform without the hosts feature): it is not used.
 	Licensed bool `json:"licensed"`
+	// TokenExpiry is what the code host says about the token's expiry
+	// (nil until it has been checked).
+	TokenExpiry *hosts.TokenExpiry `json:"token_expiry,omitempty"`
 }
 
 var hookEvents = map[string][]string{
@@ -658,6 +662,9 @@ func (a *Admin) viewHost(h hosts.Host, stats map[string]store.HostHookStats) hos
 	}
 	if h.Enabled {
 		v.CommentWarning = commentWarning(h, stats[h.Platform+":"+h.Host])
+	}
+	if e, ok := a.Hosts.TokenExpiryOf(h.ID); ok {
+		v.TokenExpiry = &e
 	}
 	return v
 }
@@ -885,6 +892,11 @@ func (a *Admin) saveHost(w http.ResponseWriter, r *http.Request, s *store.Sessio
 	if fresh, ok := a.Hosts.Get(saved.ID); ok {
 		saved = fresh
 	}
+	if saved.Enabled {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		a.Hosts.CheckTokenExpiry(ctx, saved)
+		cancel()
+	}
 	writeJSON(w, status, a.viewHost(saved, a.hookStats(r.Context())))
 }
 
@@ -1002,7 +1014,18 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": msg})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "message": "connected as @" + user})
+	msg := "connected as @" + user
+	e := a.Hosts.CheckTokenExpiry(ctx, h)
+	switch {
+	case e.Known && e.Expires.IsZero():
+		msg += "; the token never expires"
+	case e.Known:
+		msg += "; the token expires on " + e.Expires.UTC().Format("2 Jan 2006")
+		if d := expiry.DaysLeft(e.Expires, time.Now()); d <= 14 {
+			msg += " (" + strconv.Itoa(d) + " days left: replace it soon)"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "message": msg, "token_expiry": e})
 }
 
 // ---- reviews and metrics ----

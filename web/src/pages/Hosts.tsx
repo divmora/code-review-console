@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { TokenExpiry } from "../types";
 import { Check, Copy, Plug, Plus, Webhook } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useToast } from "../ui";
@@ -13,7 +14,7 @@ type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
   secrets: { token: boolean; app_private_key: boolean; api_token: boolean; webhook_secrets: number; signing_tokens: number };
-  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string;
+  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string; token_expiry?: TokenExpiry;
 };
 
 type Hook = {
@@ -433,6 +434,7 @@ export default function Hosts() {
                           <StateBadge kind="warn">Inactive: needs a license</StateBadge>
                         )}
                       </div>
+                      {h.enabled && <TokenExpiryNote e={h.token_expiry} />}
                     </TableCell>
                     <TableCell className="align-top whitespace-normal">
                       <div className="flex flex-wrap gap-1">
@@ -518,4 +520,19 @@ export default function Hosts() {
       </SidePanel>
     </section>
   );
+}
+
+// TokenExpiryNote says when the host's token expires, as the code host
+// reports it (looked up on save, Test, and once a day).
+function TokenExpiryNote({ e }: { e?: TokenExpiry }) {
+  if (!e) return null;
+  if (e.error) return <Sub className="text-destructive">Token: {e.error}</Sub>;
+  if (!e.known) return null;
+  if (!e.expires) return <Sub>Token never expires</Sub>;
+  const exp = new Date(e.expires);
+  const days = Math.ceil((exp.getTime() - Date.now()) / 86400000);
+  const date = exp.toLocaleDateString(undefined, { dateStyle: "medium" });
+  if (days <= 0) return <div className="mt-1"><StateBadge kind="warn">Token expired {date}</StateBadge></div>;
+  if (days <= 14) return <div className="mt-1"><StateBadge kind="warn">Token expires in {days} {days === 1 ? "day" : "days"}</StateBadge></div>;
+  return <Sub>Token expires {date}</Sub>;
 }

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-type Step = { id: string; title: string; help: string; done: boolean; optional?: boolean; detail?: string; link?: string };
+type Step = { id: string; title: string; help: string; done: boolean; optional?: boolean; detail?: string; warning?: string; link?: string };
 type Status = { steps: Step[]; done: number; total: number; complete: boolean };
 
 const linkLabel: Record<string, string> = {
@@ -77,7 +77,7 @@ export default function Setup() {
             <li key={s.id}>
               <Card className={cn("gap-3 py-4", isNext && "border-primary ring-1 ring-primary/40")}>
                 <CardContent className="flex gap-3 px-4">
-                  <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", s.done ? "border-success bg-success-soft text-success" : isNext ? "border-primary text-primary" : "text-muted-foreground")} aria-hidden>
+                  <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", s.done && s.warning ? "border-warning bg-warning-soft text-warning" : s.done ? "border-success bg-success-soft text-success" : isNext ? "border-primary text-primary" : "text-muted-foreground")} aria-hidden>
                     {s.done ? <Check className="size-4" /> : isNext ? i + 1 : <Circle className="size-3" />}
                   </div>
                   <div className="grid min-w-0 flex-1 gap-1.5">
@@ -87,7 +87,8 @@ export default function Setup() {
                       {isNext && <Badge>next</Badge>}
                       <span className="sr-only">{s.done ? "done" : "not done"}</span>
                     </div>
-                    {s.detail && <div className={cn("text-sm", s.done ? "text-success" : /rejected|failed|expired|not valid|won't work|not set/.test(s.detail) ? "text-destructive" : "text-muted-foreground")}>{s.detail}</div>}
+                    {s.warning && <div className="text-sm text-warning">{s.warning}</div>}
+                    {s.detail && <div className={cn("text-sm", s.done && !s.warning ? "text-success" : s.done ? "text-muted-foreground" : /rejected|failed|expired|not valid|won't work|not set/.test(s.detail) ? "text-destructive" : "text-muted-foreground")}>{s.detail}</div>}
                     {(!s.done || isNext) && <p className="text-sm leading-relaxed text-muted-foreground">{s.help}</p>}
                     {s.link && !s.done && (
                       <div>
