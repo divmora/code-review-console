@@ -233,7 +233,7 @@ func (m *Memory) PutHost(_ context.Context, in store.HostRow, actor string) (*st
 	if len(h.Config) == 0 {
 		h.Config = json.RawMessage("{}")
 	}
-	m.addAudit(actor, "host.put", h.Platform+":"+h.Host, map[string]any{"secrets_set": h.Secrets != ""})
+	m.addAudit(actor, "host.put", h.Platform+":"+h.Host, map[string]any{"after": map[string]any{"name": h.Name, "enabled": h.Enabled}, "secrets_changed": nonNilList(h.SecretsChanged)})
 	c := *h
 	return &c, nil
 }
@@ -287,7 +287,7 @@ func (m *Memory) PutWebhookEndpoint(_ context.Context, in store.WebhookEndpoint,
 		m.hooksEP[in.ID] = e
 	}
 	e.Name, e.Enabled, e.Secrets, e.UpdatedAt, e.UpdatedBy = in.Name, in.Enabled, in.Secrets, now, actor
-	m.addAudit(actor, "webhook.put", e.ID, map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "secrets_set": e.Secrets != ""})
+	m.addAudit(actor, "webhook.put", e.ID, map[string]any{"after": map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled}, "secrets_changed": nonNilList(e.SecretsChanged)})
 	c := *e
 	return &c, nil
 }
@@ -775,6 +775,40 @@ func (m *Memory) TouchSession(_ context.Context, idHash []byte, ip string) error
 	}
 	m.sessions[string(idHash)] = s
 	return nil
+}
+
+func nonNilList(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
+}
+
+func (m *Memory) SearchAudit(_ context.Context, f store.AuditFilter) ([]store.AuditEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 100
+	}
+	has := func(s, sub string) bool { return strings.Contains(strings.ToLower(s), strings.ToLower(sub)) }
+	out := []store.AuditEntry{}
+	for i := len(m.audit) - 1; i >= 0 && len(out) < f.Limit; i-- {
+		e := m.audit[i]
+		a, prefix := f.Prefix()
+		switch {
+		case f.BeforeID > 0 && e.ID >= f.BeforeID,
+			f.Actor != "" && !has(e.Actor, f.Actor),
+			a != "" && prefix && !strings.HasPrefix(e.Action, a),
+			a != "" && !prefix && e.Action != a,
+			f.Target != "" && !has(e.Target, f.Target),
+			f.Query != "" && !has(e.Target, f.Query) && !has(string(e.Detail), f.Query) && !has(e.Actor, f.Query),
+			!f.From.IsZero() && e.At.Before(f.From),
+			!f.To.IsZero() && !e.At.Before(f.To):
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 func (m *Memory) ListAudit(_ context.Context, limit int) ([]store.AuditEntry, error) {

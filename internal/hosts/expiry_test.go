@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,5 +59,24 @@ func TestLookupTokenExpiry(t *testing.T) {
 	}
 	if e := LookupTokenExpiry(ctx, Host{Platform: Bitbucket, Secrets: Secrets{Token: "x"}}); e.Known {
 		t.Errorf("Bitbucket doesn't report expiry: %+v", e)
+	}
+}
+
+func TestSecretChanges(t *testing.T) {
+	old := Secrets{Token: "a", WebhookSecrets: []string{"s1"}, SigningTokens: []string{"t1"}}
+	got := SecretChanges(old, Secrets{Token: "b", AppPrivateKey: "k", WebhookSecrets: []string{"s1"}, SigningTokens: []string{"t1", "t2"}})
+	want := "token:changed app_private_key:set signing_tokens:+1"
+	if j := strings.Join(got, " "); j != want {
+		t.Errorf("got %q, want %q", j, want)
+	}
+	got = SecretChanges(old, Secrets{WebhookSecrets: []string{"s2"}})
+	if j := strings.Join(got, " "); j != "token:removed webhook_secrets:replaced signing_tokens:-1" {
+		t.Errorf("got %q", j)
+	}
+	if got := SecretChanges(old, old); len(got) != 0 {
+		t.Errorf("nothing changed: %v", got)
+	}
+	if got := EndpointSecretChanges(EndpointSecrets{}, EndpointSecrets{WebhookSecrets: []string{"x"}}); strings.Join(got, " ") != "webhook_secrets:+1" {
+		t.Errorf("endpoint: %v", got)
 	}
 }

@@ -693,3 +693,73 @@ func TestClientRecorded(t *testing.T) {
 		t.Errorf("webhook source: %+v %v", ev, err)
 	}
 }
+
+func TestAuditBeforeAfterAndSearch(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	if _, err := p.pool.Exec(ctx, `TRUNCATE hosts, webhook_endpoints CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	h, err := p.PutHost(ctx, HostRow{Platform: "gitlab", Host: "g.example", BaseURL: "https://g.example", Name: "Old", Enabled: true, Secrets: "x", SecretsChanged: []string{"token:set"}}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.PutHost(ctx, HostRow{Platform: "gitlab", Host: "g.example", BaseURL: "https://g.example", Name: "New", Enabled: true, Secrets: "y", SecretsChanged: []string{"signing_tokens:+1"}}, "b@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutSetting(ctx, "console", map[string]any{"allowlist": true}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutSetting(ctx, "console", map[string]any{"allowlist": false}, "b@x"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		_ = p.Audit(ctx, "c@x", "login", "admin", map[string]any{"n": i})
+	}
+	hostPuts, err := p.SearchAudit(ctx, AuditFilter{Action: "host.*"})
+	if err != nil || len(hostPuts) != 2 {
+		t.Fatalf("host.*: %v %v", hostPuts, err)
+	}
+	var d struct {
+		Before  map[string]any `json:"before"`
+		After   map[string]any `json:"after"`
+		Secrets []string       `json:"secrets_changed"`
+	}
+	_ = json.Unmarshal(hostPuts[0].Detail, &d)
+	if d.Before["name"] != "Old" || d.After["name"] != "New" || len(d.Secrets) != 1 || d.Secrets[0] != "signing_tokens:+1" {
+		t.Errorf("host.put before/after: %s", hostPuts[0].Detail)
+	}
+	if strings.Contains(string(hostPuts[0].Detail), `"y"`) {
+		t.Error("never the secrets")
+	}
+	_ = json.Unmarshal(hostPuts[1].Detail, &d)
+	if d.Before != nil {
+		t.Errorf("a new host has no before: %s", hostPuts[1].Detail)
+	}
+	sets, _ := p.SearchAudit(ctx, AuditFilter{Action: "setting.put", Target: "console"})
+	var sd struct{ Before, After map[string]any }
+	if len(sets) == 2 {
+		_ = json.Unmarshal(sets[0].Detail, &sd)
+	}
+	if len(sets) != 2 || sd.Before["allowlist"] != true || sd.After["allowlist"] != false {
+		t.Errorf("setting.put before/after: %s", sets[0].Detail)
+	}
+	if got, _ := p.SearchAudit(ctx, AuditFilter{Actor: "B@X"}); len(got) != 2 {
+		t.Errorf("actor, case-insensitive: %d", len(got))
+	}
+	if got, _ := p.SearchAudit(ctx, AuditFilter{Query: "signing_tokens"}); len(got) != 1 {
+		t.Errorf("search in details: %d", len(got))
+	}
+	if got, _ := p.SearchAudit(ctx, AuditFilter{Query: "100%_"}); len(got) != 0 {
+		t.Errorf("LIKE wildcards are literal: %d", len(got))
+	}
+	page1, _ := p.SearchAudit(ctx, AuditFilter{Action: "login", Limit: 3})
+	page2, _ := p.SearchAudit(ctx, AuditFilter{Action: "login", Limit: 3, BeforeID: page1[2].ID})
+	if len(page1) != 3 || len(page2) != 2 || page2[0].ID >= page1[2].ID {
+		t.Errorf("paging: %d then %d", len(page1), len(page2))
+	}
+	if got, _ := p.SearchAudit(ctx, AuditFilter{To: time.Now().Add(-time.Hour)}); len(got) != 0 {
+		t.Errorf("date range: %d", len(got))
+	}
+	_ = h
+}

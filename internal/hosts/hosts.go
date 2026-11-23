@@ -480,8 +480,14 @@ func (r *Registry) save(ctx context.Context, h Host, actor string) (Host, error)
 			return Host{}, err
 		}
 	}
+	var old Secrets
+	for _, x := range r.All() {
+		if x.Platform == h.Platform && x.Host == h.Host {
+			old = x.Secrets
+		}
+	}
 	row, err := r.st.PutHost(ctx, store.HostRow{Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name,
-		Enabled: h.Enabled, Config: cfgJSON, Secrets: sealed}, actor)
+		Enabled: h.Enabled, Config: cfgJSON, Secrets: sealed, SecretsChanged: SecretChanges(old, h.Secrets)}, actor)
 	if err != nil {
 		return Host{}, err
 	}

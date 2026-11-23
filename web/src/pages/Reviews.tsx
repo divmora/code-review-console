@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink, Play, Search } from "lucide-react";
 import { get, post, qs } from "../api";
 import JobsChart, { Point, series } from "../Chart";
-import { ago, fmtDur, fmtNum } from "../format";
+import { ago, fmtDur, fmtNum, fmtDateTime, utcTitle } from "../format";
 import { Empty, errMsg, Locked, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useFeature, useMe, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -328,7 +328,7 @@ export default function Reviews() {
                 const dur = j.started && !j.started.startsWith("0001-") ? new Date(j.finished).getTime() - new Date(j.started).getTime() : 0;
                 return (
                   <TableRow key={j.id} className="cursor-pointer" onClick={() => setOpen(j.id)}>
-                    <TableCell className="pl-4 text-muted-foreground" title={new Date(j.finished).toLocaleString()}>
+                    <TableCell className="pl-4 text-muted-foreground" title={fmtDateTime(j.finished, true) + " · " + utcTitle(j.finished)}>
                       {ago(j.finished)}
                     </TableCell>
                     <TableCell>

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Tuning from "./Tuning";
+import { fmtDateTime } from "../format";
 
 type Eff = {
   allowlist: boolean; require_reviewer: boolean; skip_branch_sync: boolean; sync_source_branches: string[];
@@ -18,7 +19,7 @@ type Eff = {
 
 type SessionRow = { id: number; email: string; name: string; created: string; expires: string; current: boolean; ip?: string; user_agent?: string; last_seen?: string };
 
-const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const when = (iso: string) => fmtDateTime(iso);
 
 // Sessions lists who is signed in to the admin panel and signs sessions
 // out. Sessions are also ended on their own when an admin no longer

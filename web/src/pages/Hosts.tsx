@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fmtDate } from "../format";
 import type { TokenExpiry } from "../types";
 import { Check, Copy, Plug, Plus, Webhook } from "lucide-react";
 import { del, get, post, put } from "../api";
@@ -142,7 +143,7 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
         </Field>
       )}
       <Sub>
-        Added {new Date(hook.created_at).toLocaleDateString()}
+        Added {fmtDate(hook.created_at)}
         {hook.created_by ? " by " + hook.created_by : ""}
       </Sub>
     </div>
@@ -531,7 +532,7 @@ function TokenExpiryNote({ e }: { e?: TokenExpiry }) {
   if (!e.expires) return <Sub>Token never expires</Sub>;
   const exp = new Date(e.expires);
   const days = Math.ceil((exp.getTime() - Date.now()) / 86400000);
-  const date = exp.toLocaleDateString(undefined, { dateStyle: "medium" });
+  const date = fmtDate(exp);
   if (days <= 0) return <div className="mt-1"><StateBadge kind="warn">Token expired {date}</StateBadge></div>;
   if (days <= 14) return <div className="mt-1"><StateBadge kind="warn">Token expires in {days} {days === 1 ? "day" : "days"}</StateBadge></div>;
   return <Sub>Token expires {date}</Sub>;

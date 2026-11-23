@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { get, post, setCSRF } from "./api";
 import type { Feature, Me } from "./types";
+import { fmtDate } from "./format";
 import { ConfirmProvider, MeCtx, RefreshMeCtx, ToastProvider } from "./ui";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -129,7 +130,7 @@ function LicenseBanner({ me }: { me: Me }) {
       <Alert role="status" className="banner border-warning/40 bg-warning-soft text-warning">
         <AlertDescription className="text-warning">
           <p>
-            The Divmora license expired on {new Date(l.expires_at!).toLocaleDateString()}. Paid features stop on {new Date(l.grace_until!).toLocaleDateString()}.{" "}
+            The Divmora license expired on {fmtDate(l.expires_at!)}. Paid features stop on {fmtDate(l.grace_until!)}.{" "}
             <Link className="font-semibold underline underline-offset-2" to="/license">
               Renew
             </Link>

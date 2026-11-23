@@ -1121,3 +1121,82 @@ func TestSignInsRecordWhereFrom(t *testing.T) {
 		t.Errorf("denied sign-ins too: %+v", entries[0])
 	}
 }
+
+func TestAuditSearchAndExport(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.adm.Lic = licensetest.Full(t)
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	ctx := context.Background()
+	for i := 0; i < 7; i++ {
+		_ = e.st.Audit(ctx, "bob@example.com", "rule.update", fmt.Sprintf("gitlab:g/team-%d", i), map[string]any{"n": i})
+	}
+	_ = e.st.Audit(ctx, "eve@example.com", "host.put", "gitlab:g", map[string]any{"after": map[string]any{"name": "=HYPERLINK(1)"}})
+	var page struct {
+		Entries []store.AuditEntry
+		Next    int64
+	}
+	_, body := e.do(t, "GET", "/admin/api/audit?action=rule.*&limit=5", "", nil)
+	_ = json.Unmarshal(body, &page)
+	if len(page.Entries) != 5 || page.Next == 0 || page.Entries[0].Target != "gitlab:g/team-6" {
+		t.Fatalf("first page: %s", body)
+	}
+	_, body = e.do(t, "GET", fmt.Sprintf("/admin/api/audit?action=rule.*&limit=5&before=%d", page.Next), "", nil)
+	_ = json.Unmarshal(body, &page)
+	if len(page.Entries) != 2 || page.Next != 0 {
+		t.Errorf("second page: %s", body)
+	}
+	_, body = e.do(t, "GET", "/admin/api/audit?actor=EVE&q=hyperlink", "", nil)
+	_ = json.Unmarshal(body, &page)
+	if len(page.Entries) != 1 || page.Entries[0].Action != "host.put" {
+		t.Errorf("actor and search: %s", body)
+	}
+
+	code, csvBody := e.do(t, "GET", "/admin/api/audit/export?format=csv&actor=eve", "", nil)
+	if code != 200 || !bytes.HasPrefix(csvBody, []byte("id,at,actor,action,target,ip,user_agent,detail\n")) || !bytes.Contains(csvBody, []byte("eve@example.com")) || bytes.Contains(csvBody, []byte("bob@")) {
+		t.Errorf("csv: %d %s", code, csvBody)
+	}
+	code, jl := e.do(t, "GET", "/admin/api/audit/export?format=jsonl&action=rule.update", "", nil)
+	if lines := bytes.Count(jl, []byte("\n")); code != 200 || lines != 7 {
+		t.Errorf("jsonl: %d lines %d", code, lines)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/audit/export?format=xml", "", nil); code != 400 {
+		t.Errorf("unknown format: %d", code)
+	}
+	entries, _ := e.st.SearchAudit(ctx, store.AuditFilter{Action: "audit.export"})
+	if len(entries) != 2 {
+		t.Errorf("exports are audited: %d", len(entries))
+	}
+	if got := csvSafe("=HYPERLINK(1)"); got != "'=HYPERLINK(1)" {
+		t.Errorf("formula guard: %s", got)
+	}
+}
+
+func TestHostSaveNamesChangedSecrets(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	code, body := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://gitlab.audit.example", "token": "glpat-first",
+		"signing_tokens": []string{randomSigningToken(t)}})
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	var hv struct{ ID int64 }
+	_ = json.Unmarshal(body, &hv)
+	if code, body := e.do(t, "PUT", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, map[string]any{"token": "glpat-second", "enabled": true}); code != 200 {
+		t.Fatalf("update: %d %s", code, body)
+	}
+	puts, _ := e.st.SearchAudit(context.Background(), store.AuditFilter{Action: "host.put"})
+	if len(puts) != 2 {
+		t.Fatalf("host.put entries: %d", len(puts))
+	}
+	if !bytes.Contains(puts[0].Detail, []byte(`"secrets_changed":["token:changed"]`)) || !bytes.Contains(puts[1].Detail, []byte(`"token:set","signing_tokens:+1"`)) {
+		t.Errorf("secret changes are named: %s / %s", puts[0].Detail, puts[1].Detail)
+	}
+	for _, p := range puts {
+		if bytes.Contains(p.Detail, []byte("glpat-")) || bytes.Contains(p.Detail, []byte("whsec_")) {
+			t.Errorf("never the values: %s", p.Detail)
+		}
+	}
+}

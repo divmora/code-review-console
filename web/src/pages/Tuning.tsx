@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
+import { fmtDate } from "../format";
 import { get, put } from "../api";
 import { Empty, errMsg, Field, FormGrid, NativeSelect, Note, StateBadge, Sub, useMe, useToast } from "../ui";
 import { Button } from "@/components/ui/button";
@@ -76,7 +77,7 @@ function TokenState({ v, clearing, replacing }: { v: View; clearing: boolean; re
   if (v.dashboard_token_expired) return <StateBadge kind="warn">Expired: generate a new token</StateBadge>;
   if (!v.dashboard_token_expires) return <StateBadge kind="on">Set, never expires</StateBadge>;
   const exp = new Date(v.dashboard_token_expires);
-  const when = exp.toLocaleDateString(undefined, { dateStyle: "medium" });
+  const when = fmtDate(exp);
   return exp.getTime() - Date.now() < 7 * day
     ? <StateBadge kind="warn">Expires soon: {when}</StateBadge>
     : <StateBadge kind="on">Set, expires {when}</StateBadge>;
