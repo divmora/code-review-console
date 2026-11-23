@@ -423,12 +423,12 @@ func TestTokenBudgets(t *testing.T) {
 // (the executor only passes config file key names through on its own).
 func TestConsoleModelKeyReachesJob(t *testing.T) {
 	t.Setenv("CODEREVIEW_CONFIG", "")
-	t.Setenv("TEAM_CLAUDE_KEY", "sk-ant-test")
+	t.Setenv("CODEREVIEW_MODEL_KEY_TEAM_CLAUDE", "sk-ant-test")
 	cfg, _ := config.Load("")
 	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
 	st := storetest.New()
 	ctx := context.Background()
-	_ = st.PutModelProfile(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "c", "api_key_env": "TEAM_CLAUDE_KEY"}, "a@x")
+	_ = st.PutModelProfile(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "c", "api_key_env": "CODEREVIEW_MODEL_KEY_TEAM_CLAUDE"}, "a@x")
 	_ = st.PutSetting(ctx, models.SettingKey, models.Choice{Default: "claude"}, "a@x")
 	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
@@ -439,7 +439,7 @@ func TestConsoleModelKeyReachesJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Env["TEAM_CLAUDE_KEY"] != "sk-ant-test" || !bytes.Contains(task.ConfigYAML, []byte("model: claude")) || bytes.Contains(task.ConfigYAML, []byte("sk-ant-test")) {
+	if task.Env["CODEREVIEW_MODEL_KEY_TEAM_CLAUDE"] != "sk-ant-test" || !bytes.Contains(task.ConfigYAML, []byte("model: claude")) || bytes.Contains(task.ConfigYAML, []byte("sk-ant-test")) {
 		t.Errorf("env %v\n%s", task.Env, task.ConfigYAML)
 	}
 }

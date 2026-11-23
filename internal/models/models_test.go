@@ -17,7 +17,7 @@ func svc(t *testing.T) (*Service, *storetest.Memory) {
 		"file":   {"provider": "openai", "model": "gpt-x", "api_key": "sk-literal"},
 		"shared": {"provider": "ollama", "model": "qwen"},
 	}}, st)
-	env := map[string]string{"TEAM_CLAUDE_KEY": "sk-ant", "OPENAI_API_KEY": "", "CODEREVIEW_CONSOLE_SECRET_KEY": "top secret"}
+	env := map[string]string{"CODEREVIEW_MODEL_KEY_TEAM_CLAUDE": "sk-ant", "OPENAI_API_KEY": "", "CODEREVIEW_CONSOLE_SECRET_KEY": "top secret"}
 	s.Getenv = func(k string) string { return env[k] }
 	return s, st
 }
@@ -25,7 +25,7 @@ func svc(t *testing.T) (*Service, *storetest.Memory) {
 func TestPutListAndEffective(t *testing.T) {
 	ctx := context.Background()
 	s, _ := svc(t)
-	if err := s.Put(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "TEAM_CLAUDE_KEY", "base_url": " "}, "a@x"); err != nil {
+	if err := s.Put(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "CODEREVIEW_MODEL_KEY_TEAM_CLAUDE", "base_url": " "}, "a@x"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Put(ctx, "shared", config.ModelProfile{"provider": "openai", "model": "gpt-y"}, "a@x"); err != nil {
@@ -43,7 +43,7 @@ func TestPutListAndEffective(t *testing.T) {
 	if len(v.Profiles) != 2 || v.Default != "" || v.ChoiceSource != "" {
 		t.Fatalf("view: %+v", v)
 	}
-	if c := by["claude"]; c.Source != "console" || c.KeyEnv != "TEAM_CLAUDE_KEY" || !c.KeySet || c.Config["base_url"] != nil {
+	if c := by["claude"]; c.Source != "console" || c.KeyEnv != "CODEREVIEW_MODEL_KEY_TEAM_CLAUDE" || !c.KeySet || c.Config["base_url"] != nil {
 		t.Errorf("claude: %+v", c)
 	}
 	if sh := by["shared"]; sh.Source != "console" || sh.KeyEnv != "OPENAI_API_KEY" || sh.KeySet {
@@ -58,7 +58,7 @@ func TestPutListAndEffective(t *testing.T) {
 		t.Fatalf("effective: %v %s %v %v", models, def, fb, err)
 	}
 	keys, _ := s.KeyEnvs(ctx)
-	if len(keys) != 1 || keys["TEAM_CLAUDE_KEY"] != "sk-ant" {
+	if len(keys) != 1 || keys["CODEREVIEW_MODEL_KEY_TEAM_CLAUDE"] != "sk-ant" {
 		t.Errorf("only set key envs of console profiles go to jobs: %v", keys)
 	}
 }
@@ -82,7 +82,7 @@ func TestImport(t *testing.T) {
 	st := storetest.New()
 	cfg := &config.Config{Model: "fast", Fallback: []string{"smart"}, Models: map[string]config.ModelProfile{
 		"fast":    {"provider": "ollama", "model": "qwen"},
-		"smart":   {"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "TEAM_KEY"},
+		"smart":   {"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "CODEREVIEW_MODEL_KEY_TEAM"},
 		"literal": {"provider": "openai", "model": "gpt-x", "api_key": "sk-literal"},
 		"kept":    {"provider": "openai", "model": "from-file"},
 	}}
@@ -133,11 +133,16 @@ func TestValidate(t *testing.T) {
 		"model":         {"x", config.ModelProfile{"provider": "openai"}, "model is required"},
 		"literal key":   {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key": "sk"}, "not stored"},
 		"env name":      {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "lower"}, "environment variable"},
-		"console's own": {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "CODEREVIEW_CONSOLE_SECRET_KEY"}, "console's own"},
-		"host token":    {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "GITLAB_TOKEN"}, "console's own"},
-		"headers":       {"x", config.ModelProfile{"provider": "openai", "model": "m", "headers": map[string]any{"a": "b"}}, "headers"},
-		"base url":      {"x", config.ModelProfile{"provider": "openai", "model": "m", "base_url": "ftp://x"}, "base_url"},
-		"azure no url":  {"x", config.ModelProfile{"provider": "azure", "model": "m"}, "needs base_url"},
+		"console's own": {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "CODEREVIEW_CONSOLE_SECRET_KEY"}, "no other secret"},
+		"host token":    {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "GITLAB_TOKEN"}, "no other secret"},
+		// Issue #123: names the old list let through.
+		"oidc secret":  {"x", config.ModelProfile{"provider": "openai-compatible", "model": "m", "base_url": "https://evil.example", "api_key_env": "OIDC_CLIENT_SECRET"}, "no other secret"},
+		"aws":          {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "AWS_SECRET_ACCESS_KEY"}, "no other secret"},
+		"postgres":     {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "PGPASSWORD"}, "no other secret"},
+		"bare prefix":  {"x", config.ModelProfile{"provider": "openai", "model": "m", "api_key_env": "CODEREVIEW_MODEL_KEY_"}, "no other secret"},
+		"headers":      {"x", config.ModelProfile{"provider": "openai", "model": "m", "headers": map[string]any{"a": "b"}}, "headers"},
+		"base url":     {"x", config.ModelProfile{"provider": "openai", "model": "m", "base_url": "ftp://x"}, "base_url"},
+		"azure no url": {"x", config.ModelProfile{"provider": "azure", "model": "m"}, "needs base_url"},
 	} {
 		err := s.Put(ctx, c.name, c.m, "a@x")
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -179,5 +184,67 @@ func TestDeleteInUse(t *testing.T) {
 	}
 	if err := s.Delete(ctx, "file", "a@x"); err == nil {
 		t.Error("a config file profile isn't in the database")
+	}
+}
+
+func TestCheckKeyEnvAllowlist(t *testing.T) {
+	for _, ok := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AZURE_OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "CODEREVIEW_MODEL_KEY_KIMI"} {
+		if err := CheckKeyEnv(ok); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"OIDC_CLIENT_SECRET", "GITLAB_WEBHOOK_SIGNING_TOKEN", "DASHBOARD_TOKEN", "DATABASE_URL", "AWS_SECRET_ACCESS_KEY", "CODEREVIEW_KEY_X", "CODEREVIEW_CONSOLE_SECRET_KEY", "MY_KEY"} {
+		if CheckKeyEnv(bad) == nil {
+			t.Errorf("%s allowed", bad)
+		}
+	}
+}
+
+func TestKeyTarget(t *testing.T) {
+	for _, c := range []struct {
+		m       config.ModelProfile
+		env     string
+		host    string
+		unusual bool
+	}{
+		{config.ModelProfile{"provider": "openai", "model": "m"}, "OPENAI_API_KEY", "", false},
+		{config.ModelProfile{"provider": "openai", "model": "m", "base_url": "https://api.openai.com/v1"}, "OPENAI_API_KEY", "api.openai.com", false},
+		{config.ModelProfile{"provider": "azure", "model": "m", "base_url": "https://team.openai.azure.com"}, "AZURE_OPENAI_API_KEY", "team.openai.azure.com", false},
+		{config.ModelProfile{"provider": "openai-compatible", "model": "m", "base_url": "https://evil.example/v1", "api_key_env": "OPENAI_API_KEY"}, "OPENAI_API_KEY", "evil.example", true},
+		{config.ModelProfile{"provider": "anthropic", "model": "m", "base_url": "https://proxy.internal"}, "ANTHROPIC_API_KEY", "proxy.internal", true},
+		{config.ModelProfile{"provider": "ollama", "model": "m", "base_url": "http://ollama:11434"}, "", "", false},
+	} {
+		env, host, unusual := KeyTarget(c.m)
+		if env != c.env || host != c.host || unusual != c.unusual {
+			t.Errorf("%v: %q %q %v", c.m, env, host, unusual)
+		}
+	}
+}
+
+// A console profile stored before the allowlist with another name gets no
+// key, and the Models page and start-up say so (issue #123).
+func TestBlockedKeyEnvs(t *testing.T) {
+	st := storetest.New()
+	ctx := context.Background()
+	// Written straight to the store, as an older console could have.
+	if err := st.PutModelProfile(ctx, "old", config.ModelProfile{"provider": "openai-compatible", "model": "m", "base_url": "https://evil.example", "api_key_env": "OIDC_CLIENT_SECRET"}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.Config{}, st)
+	s.Getenv = func(string) string { return "secret" }
+	if keys, _ := s.KeyEnvs(ctx); len(keys) != 0 {
+		t.Errorf("the key isn't passed on: %v", keys)
+	}
+	if b, _ := s.BlockedKeyEnvs(ctx); len(b) != 1 || b[0] != "old: OIDC_CLIENT_SECRET" {
+		t.Errorf("blocked: %v", b)
+	}
+	v, err := s.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range v.Profiles {
+		if p.Name == "old" && (p.KeyEnvError == "" || p.KeySet || p.KeyHost != "evil.example") {
+			t.Errorf("profile view: %+v", p)
+		}
 	}
 }

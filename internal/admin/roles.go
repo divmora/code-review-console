@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/store"
 )
 
@@ -147,6 +148,20 @@ func mask(v any) any {
 	return v
 }
 
+// modelKeyNote says where a model profile change would send its key
+// when that isn't the provider's own host, for the admin who approves it
+// (the preview shows only the variable's name).
+func modelKeyNote(body []byte) string {
+	var req modelReq
+	if json.Unmarshal(body, &req) != nil {
+		return ""
+	}
+	if env, host, unusual := models.KeyTarget(req.Config); unusual {
+		return " (sends " + env + " to " + host + ")"
+	}
+	return ""
+}
+
 // summarize says in a few words what a request changes.
 func (a *Admin) summarize(r *http.Request) string {
 	host := func() string {
@@ -217,7 +232,11 @@ func (a *Admin) queueChange(w http.ResponseWriter, r *http.Request, s *store.Ses
 			return
 		}
 	}
-	c, err := a.store.CreateChangeRequest(r.Context(), store.ChangeRequest{Method: r.Method, Path: r.URL.RequestURI(), Summary: a.summarize(r),
+	summary := a.summarize(r)
+	if r.Pattern == "PUT /admin/api/models/{name}" {
+		summary += modelKeyNote(body)
+	}
+	c, err := a.store.CreateChangeRequest(r.Context(), store.ChangeRequest{Method: r.Method, Path: r.URL.RequestURI(), Summary: summary,
 		Preview: preview, Body: sealed, RequestedBy: s.Email})
 	if err != nil {
 		a.serverError(w, err)

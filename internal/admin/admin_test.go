@@ -794,7 +794,7 @@ func TestModelsAPI(t *testing.T) {
 	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
 	_ = e.login(t).Body.Close()
 	csrf := e.csrf(t)
-	t.Setenv("TEAM_CLAUDE_KEY", "sk-ant")
+	t.Setenv("CODEREVIEW_MODEL_KEY_TEAM_CLAUDE", "sk-ant")
 
 	if code, body := e.do(t, "PUT", "/admin/api/models/claude", csrf, map[string]any{"config": map[string]any{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key": "sk-ant"}}); code != 400 || !bytes.Contains(body, []byte("not stored")) {
 		t.Errorf("literal keys are refused: %d %s", code, body)
@@ -802,7 +802,7 @@ func TestModelsAPI(t *testing.T) {
 	if code, _ := e.do(t, "PUT", "/admin/api/models/claude", "", map[string]any{"config": map[string]any{}}); code != 403 {
 		t.Errorf("writes need the CSRF token: %d", code)
 	}
-	code, body := e.do(t, "PUT", "/admin/api/models/claude", csrf, map[string]any{"config": map[string]any{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "TEAM_CLAUDE_KEY"}})
+	code, body := e.do(t, "PUT", "/admin/api/models/claude", csrf, map[string]any{"config": map[string]any{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "CODEREVIEW_MODEL_KEY_TEAM_CLAUDE"}})
 	if code != 200 || !bytes.Contains(body, []byte(`"name":"claude"`)) || !bytes.Contains(body, []byte(`"key_set":true`)) {
 		t.Fatalf("put: %d %s", code, body)
 	}

@@ -137,10 +137,36 @@ func (s *Service) KeyEnvs(ctx context.Context) (map[string]string, error) {
 	return out, nil
 }
 
+// BlockedKeyEnvs lists the console profiles whose api_key_env isn't a
+// model key variable (their keys aren't passed to review jobs), as
+// "profile: VAR", for a warning at start-up.
+func (s *Service) BlockedKeyEnvs(ctx context.Context) ([]string, error) {
+	if s.st == nil {
+		return nil, nil
+	}
+	profiles, err := s.st.ListModelProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, p := range profiles {
+		if env := p.Config.String("api_key_env"); env != "" && CheckKeyEnv(env) != nil {
+			out = append(out, p.Name+": "+env)
+		}
+	}
+	return out, nil
+}
+
 // Profile is one profile as the admin panel shows it.
 type Profile struct {
-	Name   string              `json:"name"`
-	Config config.ModelProfile `json:"config"`
+	Name string `json:"name"`
+	// KeyEnvError says why a console profile's api_key_env isn't used
+	// (not a model key variable, issue #123); its key isn't passed on.
+	KeyEnvError string `json:"key_env_error,omitempty"`
+	// KeyHost is where the key is sent when it isn't the provider's own
+	// host (an openai-compatible endpoint, a proxy), so it can be checked.
+	KeyHost string              `json:"key_host,omitempty"`
+	Config  config.ModelProfile `json:"config"`
 	// Source is "console" (editable) or "config" (the config file).
 	Source string `json:"source"`
 	// KeyEnv is the env var the key is read from ("" = the provider needs
@@ -218,6 +244,14 @@ func (s *Service) profile(name string, m config.ModelProfile, source, at, by str
 	} else {
 		p.KeySet = s.Getenv(p.KeyEnv) != ""
 	}
+	if env := m.String("api_key_env"); source == "console" && env != "" {
+		if err := CheckKeyEnv(env); err != nil {
+			p.KeyEnvError, p.KeySet = err.Error(), false
+		}
+	}
+	if _, host, unusual := KeyTarget(m); unusual {
+		p.KeyHost = host
+	}
 	return p
 }
 
@@ -226,24 +260,83 @@ var (
 	envNameRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`)
 )
 
-// reservedEnv are the console's own secrets: a profile can't name them as
-// its key, or the key would leave the console with the review job.
-var reservedEnv = map[string]bool{
-	"DATABASE_URL": true, "GITHUB_TOKEN": true, "GITHUB_WEBHOOK_SECRET": true, "GITHUB_APP_PRIVATE_KEY": true,
-	"GITLAB_TOKEN": true, "GITLAB_WEBHOOK_SECRET": true, "BITBUCKET_TOKEN": true, "BITBUCKET_API_TOKEN": true,
-	"BITBUCKET_WEBHOOK_SECRET": true,
-}
+// ModelKeyPrefix is the prefix for model key variables that aren't a
+// provider's own key name: CODEREVIEW_MODEL_KEY_KIMI, say.
+const ModelKeyPrefix = "CODEREVIEW_MODEL_KEY_"
 
-// CheckKeyEnv rejects env var names that aren't valid or that hold the
-// console's own secrets.
+// CheckKeyEnv allows only variables meant for model keys as a profile's
+// api_key_env: a provider's own key name (OPENAI_API_KEY, ...) or
+// CODEREVIEW_MODEL_KEY_<NAME>. The named variable is copied into every
+// review job and sent to the profile's endpoint, so any other name (the
+// OIDC client secret, AWS or database settings) could leave the console
+// (issue #123). Profiles in the config file aren't checked: whoever
+// deploys the console writes that file.
 func CheckKeyEnv(name string) error {
 	if !envNameRe.MatchString(name) {
 		return fmt.Errorf("api_key_env %q: use an environment variable name such as OPENAI_API_KEY", name)
 	}
-	if reservedEnv[name] || strings.HasPrefix(name, "CODEREVIEW_CONSOLE_") || strings.HasPrefix(name, "CODEREVIEW_KEY_") {
-		return fmt.Errorf("api_key_env %q holds one of the console's own secrets: use a separate variable for the model key", name)
+	if knownKeyEnv[name] || strings.HasPrefix(name, ModelKeyPrefix) && len(name) > len(ModelKeyPrefix) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("api_key_env %q: use a provider's key variable (such as OPENAI_API_KEY or ANTHROPIC_API_KEY) or one named %s<NAME>, so no other secret of the console can be sent as a model key", name, ModelKeyPrefix)
+}
+
+// knownKeyEnv are the providers' own key variables.
+var knownKeyEnv = func() map[string]bool {
+	m := map[string]bool{"GOOGLE_API_KEY": true}
+	for _, env := range Providers {
+		if env != "" {
+			m[env] = true
+		}
+	}
+	return m
+}()
+
+// providerHosts are the hosts each provider's API is served from, for
+// telling an admin when a profile sends its key somewhere else. A leading
+// "." matches any subdomain.
+var providerHosts = map[string][]string{
+	"openai":     {"api.openai.com"},
+	"anthropic":  {"api.anthropic.com"},
+	"gemini":     {"generativelanguage.googleapis.com"},
+	"azure":      {".openai.azure.com", ".cognitiveservices.azure.com", ".services.ai.azure.com"},
+	"openrouter": {"openrouter.ai"},
+	"groq":       {"api.groq.com"},
+	"deepseek":   {"api.deepseek.com"},
+	"mistral":    {"api.mistral.ai"},
+	"xai":        {"api.x.ai"},
+	"together":   {"api.together.xyz", "api.together.ai"},
+}
+
+// KeyTarget is where a profile's key goes: the variable and the host of
+// base_url ("" when the provider's default endpoint is used, or the
+// profile needs no key). Unusual is set when a key is sent to a host that
+// isn't the provider's own (or to any host, for providers without one,
+// such as openai-compatible), so an admin can check it.
+func KeyTarget(m config.ModelProfile) (env, host string, unusual bool) {
+	provider := m.String("provider")
+	env = m.String("api_key_env")
+	if env == "" {
+		env = Providers[provider]
+	}
+	if env == "" || m.String("api_key") != "" && m.String("api_key_env") == "" {
+		return env, "", false
+	}
+	b := m.String("base_url")
+	if b == "" {
+		return env, "", false
+	}
+	u, err := url.Parse(b)
+	if err != nil {
+		return env, "", false
+	}
+	host = strings.ToLower(u.Hostname())
+	for _, h := range providerHosts[provider] {
+		if host == h || strings.HasPrefix(h, ".") && strings.HasSuffix(host, h) {
+			return env, host, false
+		}
+	}
+	return env, host, true
 }
 
 // ErrInUse is returned when deleting a profile something still uses.
