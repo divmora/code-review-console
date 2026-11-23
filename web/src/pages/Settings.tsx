@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Tuning from "./Tuning";
+import { diffCount, UnsavedBadge, useUnsaved } from "../unsaved";
 import { fmtDateTime } from "../format";
 
 type Eff = {
@@ -146,11 +147,14 @@ function Num({ label, value, onChange, note, ...rest }: { label: string; value: 
   );
 }
 
-function Group({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+function Group({ title, description, children, unsaved = false }: { title: string; description?: ReactNode; children: ReactNode; unsaved?: boolean }) {
   return (
-    <Card>
+    <Card className={unsaved ? "border-warning/60" : undefined}>
       <CardHeader>
-        <CardTitle className="h2">{title}</CardTitle>
+        <CardTitle className="h2">
+          {title}
+          <UnsavedBadge show={unsaved} />
+        </CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
       <CardContent>{children}</CardContent>
@@ -175,12 +179,23 @@ export default function Settings() {
   useEffect(() => {
     get<Eff>("/admin/api/settings").then(take).catch((e) => toast(errMsg(e), true));
   }, []);
-  if (!eff || !v) return <Empty>Loading…</Empty>;
-  const set = <K extends keyof Eff>(k: K) => (x: Eff[K]) => setV({ ...v, [k]: x });
-  const save = (defaults: Overrides) => {
-    const { source: _s, ...body } = { ...v, review_defaults: defaults, dashboard_title: v.dashboard_title.trim(),
+  // What the form changed, by field, against what was loaded or saved.
+  const edited = (): Partial<Record<keyof Eff, boolean>> => {
+    if (!eff || !v) return {};
+    const out: Partial<Record<keyof Eff, boolean>> = {};
+    for (const k of Object.keys(v) as (keyof Eff)[]) {
+      if (k !== "source" && k !== "review_defaults" && k !== "sync_source_branches" && diffCount(v, eff, [k])) out[k] = true;
+    }
+    if (branches.split(",").map((x) => x.trim()).filter(Boolean).join(",") !== (eff.sync_source_branches || []).join(",")) out.sync_source_branches = true;
+    return out;
+  };
+  const changed = edited();
+  const any = (...ks: (keyof Eff)[]) => ks.some((k) => changed[k]);
+  const save = (defaults?: Overrides) => {
+    if (!eff || !v) return;
+    const { source: _s, ...body } = { ...v, review_defaults: defaults ?? eff.review_defaults, dashboard_title: v.dashboard_title.trim(),
       sync_source_branches: branches.split(",").map((x) => x.trim()).filter(Boolean) };
-    put<Eff>("/admin/api/settings", body)
+    return put<Eff>("/admin/api/settings", body)
       .then((e) => {
         take(e);
         setEdGen((n) => n + 1);
@@ -189,10 +204,13 @@ export default function Settings() {
       })
       .catch((e) => toast(errMsg(e), true));
   };
+  useUnsaved("settings", { label: "Settings", count: Object.keys(changed).length, save: () => save(), discard: () => eff && take(eff) });
+  if (!eff || !v) return <Empty>Loading…</Empty>;
+  const set = <K extends keyof Eff>(k: K) => (x: Eff[K]) => setV({ ...v, [k]: x });
   const fromFile = Object.keys(eff.source || {}).filter((k) => eff.source![k] === "config").map((k) => settingLabel[k] || k.replace(/_/g, " "));
   return (
     <section className="grid gap-4">
-      <Group title="Repository access" description="Which repositories are reviewed, and when.">
+      <Group title="Repository access" unsaved={any("allowlist", "require_reviewer", "skip_branch_sync", "sync_source_branches", "score_labels", "commit_status", "command_access")} description="Which repositories are reviewed, and when.">
         <FormGrid>
           <Bool label="Repositories no rule matches" value={v.allowlist} onChange={set("allowlist")} yes="Not reviewed (allowlist on)" no="Reviewed (allowlist off)" />
           <Bool label="Who asks for a review" value={v.require_reviewer} onChange={set("require_reviewer")} yes="Only when the bot is a reviewer" no="Any opened MR or push" />
@@ -211,7 +229,7 @@ export default function Settings() {
         </FormGrid>
       </Group>
       <div className="grid gap-4 lg:grid-cols-2">
-        <Group title="Approve merge requests" description="The bot approves a merge request whose review passes, as its token's user (or the GitHub App). Rules can turn this on or off for groups and repositories. Needs code-review-bot 0.5 or later on the Executor page.">
+        <Group title="Approve merge requests" unsaved={any("approve", "approve_block", "approve_min_score", "approve_withdraw")} description="The bot approves a merge request whose review passes, as its token's user (or the GitHub App). Rules can turn this on or off for groups and repositories. Needs code-review-bot 0.5 or later on the Executor page.">
           <FormGrid>
             <Bool label="Approve when the review passes" value={v.approve} onChange={set("approve")} yes="On" no="Off" />
             <Field label="Findings that block approval" hint={<Note className="text-xs">New findings, ones beyond the comment limit and ones still open from an earlier review all count; questions don't.</Note>}>
@@ -228,14 +246,14 @@ export default function Settings() {
           </FormGrid>
           <Note className="text-xs">With withdrawing on, a review that can't judge a new commit (partial, too large) also withdraws the approval (CLI 0.6 or later). GitLab: the bot's user must be allowed to approve. GitHub: withdrawing dismisses the bot's review, which branch protection may restrict.</Note>
         </Group>
-        <Group title="Learnings">
+        <Group title="Learnings" unsaved={any("learnings_enabled", "learnings_auto_activate")}>
           <FormGrid>
             <Bool label="Learn from replies to the bot" value={v.learnings_enabled} onChange={set("learnings_enabled")} yes="On" no="Off" disabled={!has.learnings} note={<LockNote feature="learnings" />} />
             <Bool label="New learnings" value={v.learnings_auto_activate} onChange={set("learnings_auto_activate")} yes="Apply at once" no="Wait for an admin's approval" disabled={!has.learnings}
               note={<Note className="text-xs">Even when set to apply at once, a learning only applies right away if its author can push to the repository (GitLab Developer or higher, GitHub write or above). Anyone else's waits for approval, and so does every learning from Bitbucket.</Note>} />
           </FormGrid>
         </Group>
-        <Group title="Budgets" description={'Input plus output tokens of finished jobs in the current UTC day. When a budget is used up, automatic reviews and chat commands wait until the next day; "Review now" and re-runs from this panel still run.'}>
+        <Group title="Budgets" unsaved={any("daily_token_budget", "repo_daily_token_budget")} description={'Input plus output tokens of finished jobs in the current UTC day. When a budget is used up, automatic reviews and chat commands wait until the next day; "Review now" and re-runs from this panel still run.'}>
           <FormGrid className="lg:grid-cols-2">
             <Num label="Daily tokens, all repositories" min={0} step={10000} placeholder="0 = no limit" value={v.daily_token_budget} onChange={set("daily_token_budget")} disabled={!has.budgets} note={<LockNote feature="budgets" />} />
             <Num label="Daily tokens per repository" min={0} step={10000} placeholder="0 = no limit" value={v.repo_daily_token_budget} onChange={set("repo_daily_token_budget")} disabled={!has.budgets} />
@@ -244,7 +262,7 @@ export default function Settings() {
             <Note className="text-warning">No daily limit is set: reviews and commands spend tokens without a cap. Set a budget to bound what a busy day, or misuse, can cost.</Note>
           )}
         </Group>
-        <Group title="History">
+        <Group title="History" unsaved={any("review_retention_days", "webhook_retention_days")}>
           <FormGrid className="lg:grid-cols-2">
             <Num
               label="Keep reviews (days)"
@@ -257,13 +275,13 @@ export default function Settings() {
             <Num label="Keep webhook deliveries (days)" min={1} max={3650} value={v.webhook_retention_days} onChange={set("webhook_retention_days")} />
           </FormGrid>
         </Group>
-        <Group title="Admin sessions" description="Every admin session also ends after session_ttl (12 hours by default), whatever happens.">
+        <Group title="Admin sessions" unsaved={any("session_idle_minutes")} description="Every admin session also ends after session_ttl (12 hours by default), whatever happens.">
           <FormGrid>
             <Num label="Sign out after inactivity (minutes)" min={0} max={1440} placeholder="0 = never" value={v.session_idle_minutes} onChange={set("session_idle_minutes")}
               note={<Note className="text-xs">A session that makes no request for this long is signed out, so a browser left open on a shared machine doesn't keep admin rights. The panel's own refreshes (Setup, the dashboard) don't count as activity. 5 to 1440, or 0 for never.</Note>} />
           </FormGrid>
         </Group>
-        <Group title="Status dashboard" description="Who can open it is set under Status dashboard access, further down.">
+        <Group title="Status dashboard" unsaved={any("dashboard_enabled", "hide_repos", "dashboard_title")} description="Who can open it is set under Status dashboard access, further down.">
           <FormGrid className="lg:grid-cols-2">
             <Bool label="Dashboard" value={v.dashboard_enabled} onChange={set("dashboard_enabled")} yes="On" no="Off" />
             <Bool label="Repository names" value={!v.hide_repos} onChange={(x) => set("hide_repos")(!x)} yes="Shown" no="Hidden" />
@@ -275,12 +293,15 @@ export default function Settings() {
       </div>
       <Card className="py-4">
         <CardFooter className="flex flex-wrap items-center gap-3">
-          <Button onClick={() => save(eff.review_defaults)}>Save settings</Button>
-          <span className="text-sm text-muted-foreground">{fromFile.length ? "Showing defaults for: " + fromFile.join("; ") + ". Save to keep them." : ""}</span>
+          <Button onClick={() => save()}>Save settings</Button>
+          <span className="text-sm text-muted-foreground">
+            {Object.keys(changed).length ? "The cards marked Unsaved have changes; the bar at the bottom of the window saves them too. " : ""}
+            {fromFile.length ? "Showing defaults for: " + fromFile.join("; ") + ". Save to keep them." : ""}
+          </span>
         </CardFooter>
       </Card>
       <Group title="Default review settings" description="Apply to every repository. Group and pattern rules, then repository settings, override them.">
-        <SettingsEditor key={edGen} value={eff.review_defaults} onSave={save} saveLabel="Save default review settings" />
+        <SettingsEditor key={edGen} value={eff.review_defaults} onSave={save} saveLabel="Save default review settings" unsaved="Default review settings" />
       </Group>
       <Section name="Queue, review engine and access settings"><Tuning /></Section>
       <Section name="Sign-in sessions"><Sessions /></Section>

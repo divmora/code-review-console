@@ -25,6 +25,7 @@ import { get, post, setCSRF } from "./api";
 import type { Feature, Me } from "./types";
 import { fmtDate } from "./format";
 import { ConfirmProvider, MeCtx, RefreshMeCtx, Section, ToastProvider } from "./ui";
+import { UnsavedBar } from "./unsaved";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -317,10 +318,23 @@ function SignOutPage() {
   );
 }
 
+// SignedInPage is where signing in from another tab lands after a save
+// found the session had ended.
+function SignedInPage() {
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="h2">You're signed in again</CardTitle>
+        <CardDescription>Close this tab and go back to the page with your changes, then save them.</CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
 function Header({ me }: { me: Me }) {
   const loc = useLocation();
   const s = current(loc.pathname);
-  const title = s?.title ?? (loc.pathname === "/logout" ? "Sign out" : "Page not found");
+  const title = s?.title ?? (loc.pathname === "/logout" ? "Sign out" : loc.pathname === "/signed-in" ? "Signed in" : "Page not found");
   useEffect(() => {
     document.title = title + " · Code review admin";
   }, [title]);
@@ -348,13 +362,35 @@ export default function App() {
         setMe(m);
       })
       .catch((e) => setErr(String(e.message || e)));
+  // signedOut: a save found the session ended; the page keeps its edits
+  // until the admin signs in again in another tab and comes back.
+  const [signedOut, setSignedOut] = useState(false);
   useEffect(() => {
     loadMe();
     // A change sent for approval updates the Change requests count.
     const onPending = () => loadMe();
+    const onSignedOut = () => setSignedOut(true);
     window.addEventListener("crc-pending", onPending);
-    return () => window.removeEventListener("crc-pending", onPending);
+    window.addEventListener("crc-signed-out", onSignedOut);
+    return () => {
+      window.removeEventListener("crc-pending", onPending);
+      window.removeEventListener("crc-signed-out", onSignedOut);
+    };
   }, []);
+  useEffect(() => {
+    if (!signedOut) return;
+    // Back from signing in: take the new session (and its CSRF token).
+    const onFocus = () =>
+      get<Me>("/admin/api/me")
+        .then((m) => {
+          setCSRF(m.csrf);
+          setMe(m);
+          setSignedOut(false);
+        })
+        .catch(() => {});
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [signedOut]);
   if (!me) return <div className="grid min-h-svh place-items-center text-sm text-muted-foreground">{err || "Loading…"}</div>;
   return (
     <MeCtx.Provider value={me}>
@@ -367,6 +403,18 @@ export default function App() {
                 <SidebarInset className="min-w-0">
                   <Header me={me} />
                   <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 md:p-6">
+                    {signedOut && (
+                      <Alert role="alert" className="banner border-warning/60">
+                        <AlertDescription className="flex flex-wrap items-center gap-3">
+                          <span>Your session ended. Sign in again in a new tab, then come back here and save: your changes are kept on this page.</span>
+                          <Button size="sm" variant="outline" asChild>
+                            <a href={"/admin/login?next=" + encodeURIComponent("/admin/signed-in")} target="_blank" rel="noopener">
+                              Sign in in a new tab
+                            </a>
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    )}
                     <LicenseBanner me={me} />
                     <ExpiryBanner me={me} />
                     {me.role === "viewer" && (
@@ -381,9 +429,11 @@ export default function App() {
                       ))}
                       <Route path="/approvals" element={<Navigate to="/change-requests" replace />} />
                       <Route path="/logout" element={<SignOutPage />} />
+                      <Route path="/signed-in" element={<SignedInPage />} />
                       <Route path="*" element={<NotFoundPage />} />
                     </Routes>
                   </div>
+                  <UnsavedBar />
                 </SidebarInset>
               </SidebarProvider>
             </ConfirmProvider>
