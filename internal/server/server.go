@@ -316,9 +316,11 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /webhooks/"+platform, s.recordHooks(platform, h))
 		mux.HandleFunc("POST /webhooks/"+platform+"/{id}", s.recordHooks(platform, h))
 	}
+	// Probes need only the status. The version and queue are for signed-in
+	// admins (the panel) and monitoring (/metrics), not for anyone who can
+	// reach the console.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		p, run := s.queue.Stats()
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": version.Version, "pending": p, "running": run})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	// The dashboard can be switched on and off from the admin console, so
 	// its routes always exist and check the setting per request.

@@ -43,9 +43,25 @@ var (
 		if err != nil {
 			panic(err)
 		}
-		return http.StripPrefix("/admin/", http.FileServerFS(sub))
+		return http.StripPrefix("/admin/", http.FileServerFS(filesOnly{sub}))
 	}()
 )
+
+// filesOnly serves files and never lists a directory: opening one fails,
+// so the file server answers 404 instead of an index of the bundle.
+type filesOnly struct{ fs.FS }
+
+func (f filesOnly) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := file.Stat(); err != nil || st.IsDir() {
+		_ = file.Close()
+		return nil, fs.ErrNotExist
+	}
+	return file, nil
+}
 
 func mustRead(name string) []byte {
 	b, err := uiFS.ReadFile(name)

@@ -1307,3 +1307,19 @@ func TestOperatorsNeedTheLicense(t *testing.T) {
 		t.Errorf("without sso_rules, operators can't sign in: %d", code)
 	}
 }
+
+func TestAssetsNeverListDirectories(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	for _, p := range []string{"/admin/assets/", "/admin/assets", "/admin/assets/../"} {
+		code, body := e.do(t, "GET", p, "", nil)
+		if bytes.Contains(body, []byte("index-")) && bytes.Contains(body, []byte("<a href")) {
+			t.Errorf("%s lists the bundle: %d %s", p, code, body)
+		}
+	}
+	if code, _ := e.do(t, "GET", "/admin/assets/", "", nil); code != 404 {
+		t.Errorf("the assets folder: %d", code)
+	}
+	if code, body := e.do(t, "GET", "/admin/assets/theme.js", "", nil); code != 200 || !bytes.Contains(body, []byte("crc-theme")) {
+		t.Errorf("files are still served: %d", code)
+	}
+}

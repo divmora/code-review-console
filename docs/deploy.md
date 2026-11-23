@@ -108,7 +108,10 @@ Secrets and credentials:
 | `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
 | Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names under **Settings → Bot and review jobs** (the console's own secrets can't be added) |
 
-`GET /healthz` returns `{"status":"ok","version":...,"pending":N,"running":N}` for probes.
+`GET /healthz` returns `{"status":"ok"}` for probes. It no longer shows the version or the queue to
+anyone who can reach the console: admins see both in the panel, and monitoring reads them from
+[`/metrics`](#prometheus-metrics) (`codereview_build_info`, `codereview_queue_pending`,
+`codereview_queue_running`).
 
 ## Docker Compose
 
