@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.0](https://github.com/divmora/code-review-console/compare/v0.13.0...v0.14.0) (2026-11-23)
+
+
+### Features
+
+* **executor:** give review jobs a per-host state key ([#139](https://github.com/divmora/code-review-console/issues/139)) ([083ffd3](https://github.com/divmora/code-review-console/commit/083ffd30a8a0cc64d81e330583f2172137817bc4))
+* **impact:** link the numbers to the reviews behind them ([#120](https://github.com/divmora/code-review-console/issues/120)) ([9284bc1](https://github.com/divmora/code-review-console/commit/9284bc1d5d9a8957190fbef84478d88f63aeac00))
+* rename Approvals to Change requests and show the bot's MR approvals ([#121](https://github.com/divmora/code-review-console/issues/121)) ([358e503](https://github.com/divmora/code-review-console/commit/358e50316ca3558d7556df082f0b6f05cae3e63c))
+* **settings:** mark unsaved changes and keep them when the session ends ([#122](https://github.com/divmora/code-review-console/issues/122)) ([fafd37e](https://github.com/divmora/code-review-console/commit/fafd37e279feccb7228c5fa7d34f3a02b243deef))
+* **ui:** keep Reviews, Webhooks and Audit filters in the URL ([#118](https://github.com/divmora/code-review-console/issues/118)) ([8261f34](https://github.com/divmora/code-review-console/commit/8261f34c568e27744b25d09f07abc4d62adbbf23)), closes [#113](https://github.com/divmora/code-review-console/issues/113)
+
+
+### Bug Fixes
+
+* **approval:** always tell the CLI whether to withdraw approvals ([#138](https://github.com/divmora/code-review-console/issues/138)) ([48e6cc8](https://github.com/divmora/code-review-console/commit/48e6cc85b1b23d3517a2d1aad4d87fe85d533a92))
+* **dashboard:** show the mention handle each code host really answers to ([#117](https://github.com/divmora/code-review-console/issues/117)) ([5f61d09](https://github.com/divmora/code-review-console/commit/5f61d0946f9844336073ce518c6339a11b364261)), closes [#111](https://github.com/divmora/code-review-console/issues/111)
+* **executor:** tell the CLI the PR's host when the API URL implies another ([#141](https://github.com/divmora/code-review-console/issues/141)) ([ee19984](https://github.com/divmora/code-review-console/commit/ee199840c0c2d5f2006be5dfb52f2554901d713c))
+* **impact:** end the period label on the last day included ([#116](https://github.com/divmora/code-review-console/issues/116)) ([31c53e4](https://github.com/divmora/code-review-console/commit/31c53e418bab727665a7bb61a2c1404951a2e4f4)), closes [#112](https://github.com/divmora/code-review-console/issues/112)
+
 ## [0.13.0](https://github.com/divmora/code-review-console/compare/v0.12.0...v0.13.0) (2026-11-23)
 
 
