@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { get } from "../api";
 import JobsChart, { fillBuckets, Point, Series } from "../Chart";
 import { fmtDayUTC, fmtDur, fmtMonthUTC, fmtNum } from "../format";
@@ -35,14 +36,34 @@ const ranges: [string, string][] = [
   ["all", "All history"],
 ];
 
-function Tile({ value, label, sub }: { value: string; label: string; sub?: string }) {
+// reviewsLink opens Reviews filtered to what a number on this page
+// counts, over the same period (the Reviews "to" date is inclusive).
+function reviewsLink(d: Impact, filters: Record<string, string>): string {
+  const q = new URLSearchParams(filters);
+  if (d.range !== "all") {
+    q.set("from", d.from.slice(0, 10));
+    q.set("to", new Date(new Date(d.to).getTime() - 864e5).toISOString().slice(0, 10));
+  }
+  return "/reviews?" + q.toString();
+}
+
+function Tile({ value, label, sub, to }: { value: string; label: string; sub?: string; to?: string }) {
+  const body = (
+    <CardContent className="px-4">
+      <div className="text-xl font-semibold tabular-nums">{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
+    </CardContent>
+  );
   return (
-    <Card className="tile gap-1 py-4">
-      <CardContent className="px-4">
-        <div className="text-xl font-semibold tabular-nums">{value}</div>
-        <div className="text-xs text-muted-foreground">{label}</div>
-        {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
-      </CardContent>
+    <Card className={"tile gap-1 py-4" + (to ? " transition-colors hover:border-primary/50 hover:bg-accent/40" : "")}>
+      {to ? (
+        <Link to={to} className="rounded-xl focus-visible:outline-2 focus-visible:outline-ring" aria-label={`${label}: ${value} (open in Reviews)`}>
+          {body}
+        </Link>
+      ) : (
+        body
+      )}
     </Card>
   );
 }
@@ -72,7 +93,7 @@ function Legend({ items }: { items: [string, string, string][] }) {
   );
 }
 
-function RepoTable({ rows, unit }: { rows: Count[]; unit: string }) {
+function RepoTable({ rows, unit, link }: { rows: Count[]; unit: string; link: (r: Count) => string }) {
   if (!rows.length) return <Sub>Nothing in this period.</Sub>;
   return (
     <Panel>
@@ -87,7 +108,9 @@ function RepoTable({ rows, unit }: { rows: Count[]; unit: string }) {
           {rows.map((r) => (
             <TableRow key={`${r.platform}|${r.host}|${r.repo}`}>
               <TableCell className="pl-4">
-                <div className="font-medium">{r.repo}</div>
+                <Link to={link(r)} className="font-medium underline-offset-2 hover:underline">
+                  {r.repo}
+                </Link>
                 <Sub>
                   {r.platform} · {r.host}
                 </Sub>
@@ -101,15 +124,22 @@ function RepoTable({ rows, unit }: { rows: Count[]; unit: string }) {
   );
 }
 
-// Bars shows counts as horizontal bars, largest first.
-function Bars({ rows }: { rows: [string, number, string?][] }) {
+// Bars shows counts as horizontal bars, largest first; a row with a link
+// opens the reviews behind it.
+function Bars({ rows }: { rows: [string, number, string?, string?][] }) {
   const max = Math.max(1, ...rows.map(([, n]) => n));
   if (!rows.some(([, n]) => n > 0)) return <Sub>No findings in this period.</Sub>;
   return (
     <div className="grid gap-1.5">
-      {rows.map(([label, v, c]) => (
+      {rows.map(([label, v, c, to]) => (
         <div key={label} className="grid grid-cols-[8rem_1fr_3.5rem] items-center gap-2 text-sm">
-          <span className="truncate capitalize">{label}</span>
+          {to && v > 0 ? (
+            <Link to={to} className="truncate capitalize underline-offset-2 hover:underline">
+              {label}
+            </Link>
+          ) : (
+            <span className="truncate capitalize">{label}</span>
+          )}
           <span className="h-2 rounded-sm bg-muted">
             <span className="block h-2 rounded-sm" ref={(el) => el && (el.style.width = (100 * v) / max + "%", el.style.background = `var(${c || "--primary"})`)} />
           </span>
@@ -176,9 +206,9 @@ export default function ImpactPage() {
       ) : (
         <>
           <div className="tiles grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile value={fmtNum(d.prs_reviewed)} label="Merge requests reviewed" sub={fmtNum(d.review_runs) + " review runs"} />
-            <Tile value={fmtNum(d.findings)} label="Findings raised" sub={sevSplit || undefined} />
-            <Tile value={fmtNum(d.security_findings)} label="Security findings caught" sub="before merge, in review" />
+            <Tile value={fmtNum(d.prs_reviewed)} label="Merge requests reviewed" sub={fmtNum(d.review_runs) + " review runs"} to={reviewsLink(d, { state: "done" })} />
+            <Tile value={fmtNum(d.findings)} label="Findings raised" sub={sevSplit || undefined} to={d.findings ? reviewsLink(d, { severity: "any" }) : undefined} />
+            <Tile value={fmtNum(d.security_findings)} label="Security findings caught" sub="before merge, in review" to={d.security_findings ? reviewsLink(d, { category: "security" }) : undefined} />
             <Tile value={d.first_reviews ? fmtDur(d.median_first_review_ms) : "–"} label="Median time to first review" sub={d.first_reviews ? "from the webhook, " + fmtNum(d.first_reviews) + " merge requests" : undefined} />
             <Tile value={fmtNum(d.active_repos)} label="Active repositories" />
             <Tile value={fmtNum(d.comments)} label="Comments posted" />
@@ -204,16 +234,16 @@ export default function ImpactPage() {
               )}
               <div className="grid gap-4 lg:grid-cols-2">
                 <Section title="Findings by severity">
-                  <Bars rows={severities.map(([k, label, c]) => [label, d.by_severity[k] || 0, c] as [string, number, string])} />
+                  <Bars rows={severities.map(([k, label, c]) => [label, d.by_severity[k] || 0, c, k === "other" ? undefined : reviewsLink(d, { severity: k })] as [string, number, string, string?])} />
                 </Section>
                 <Section title="Findings by category">
-                  <Bars rows={d.by_category.map((c) => [c.category || "other", c.count] as [string, number])} />
+                  <Bars rows={d.by_category.map((c) => [c.category || "other", c.count, undefined, c.category && c.category !== "other" ? reviewsLink(d, { category: c.category }) : undefined] as [string, number, string?, string?])} />
                 </Section>
                 <Section title="Top repositories by reviews">
-                  <RepoTable rows={d.top_by_reviews} unit="Review runs" />
+                  <RepoTable rows={d.top_by_reviews} unit="Review runs" link={(r) => reviewsLink(d, { host: r.host || "", repo: r.repo || "", state: "done" })} />
                 </Section>
                 <Section title="Top repositories by findings">
-                  <RepoTable rows={d.top_by_findings} unit="Findings" />
+                  <RepoTable rows={d.top_by_findings} unit="Findings" link={(r) => reviewsLink(d, { host: r.host || "", repo: r.repo || "", severity: "any" })} />
                 </Section>
               </div>
             </>

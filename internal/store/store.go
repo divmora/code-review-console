@@ -300,6 +300,11 @@ type JobFilter struct {
 	// is below ScoreBelow ("any" means any of the three).
 	ScoreKind  string
 	ScoreBelow int
+	// Severity and Category keep reviews with at least one finding (not a
+	// question) of that severity and category, as Impact counts them.
+	// Severity "any" means any finding.
+	Severity string
+	Category string
 }
 
 // Metric granularities.
@@ -2044,6 +2049,19 @@ func (p *Postgres) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 		default: // any
 			add("least(score_quality, score_security, score_maintainability) < $%d", f.ScoreBelow)
 		}
+	}
+	if f.Severity != "" || f.Category != "" {
+		cond := `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(result->'findings') = 'array' THEN result->'findings' ELSE '[]'::jsonb END) AS fd
+			WHERE coalesce(fd->>'kind', '') <> 'question'`
+		if f.Severity != "" && f.Severity != "any" {
+			args = append(args, strings.ToLower(f.Severity))
+			cond += fmt.Sprintf(" AND lower(fd->>'severity') = $%d", len(args))
+		}
+		if f.Category != "" {
+			args = append(args, strings.ToLower(strings.TrimSpace(f.Category)))
+			cond += fmt.Sprintf(" AND lower(trim(fd->>'category')) = $%d", len(args))
+		}
+		where = append(where, cond+")")
 	}
 	q := `SELECT ` + jobCols + ` FROM jobs`
 	if len(where) > 0 {

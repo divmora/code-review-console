@@ -887,6 +887,25 @@ func TestReviewScores(t *testing.T) {
 		t.Errorf("any score below 75: %+v", anyLow)
 	}
 
+	// Findings filters, as Impact counts them (questions aren't findings).
+	res := json.RawMessage(`{"findings":[{"severity":"Critical","category":" Security "},{"severity":"minor","category":"style","kind":"question"}]}`)
+	if _, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: "findings.example.com", Repo: "g/a", Number: 1, State: "done",
+		Enqueued: at, Started: at, Finished: at, Result: res}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		f    JobFilter
+		want int
+	}{
+		{JobFilter{Severity: "critical"}, 1}, {JobFilter{Category: "security"}, 1}, {JobFilter{Severity: "critical", Category: "security"}, 1},
+		{JobFilter{Severity: "any"}, 1}, {JobFilter{Severity: "minor"}, 0}, {JobFilter{Category: "style"}, 0}, {JobFilter{Severity: "major"}, 0},
+	} {
+		c.f.Host = "findings.example.com"
+		if got, err := p.ListJobs(ctx, c.f); err != nil || len(got) != c.want {
+			t.Errorf("%+v: %d jobs (%v), want %d", c.f, len(got), err, c.want)
+		}
+	}
+
 	pts, err := p.Metrics(ctx, MetricsFilter{Granularity: Monthly, From: at.AddDate(0, -2, 0), To: at.Add(time.Hour), Host: "scores.example.com"})
 	var scored int
 	var q int64

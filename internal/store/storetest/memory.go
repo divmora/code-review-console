@@ -528,7 +528,20 @@ func jobMatches(j store.Job, f store.JobFilter) bool {
 		(f.RepoLike == "" || strings.Contains(strings.ToLower(j.Repo), strings.ToLower(f.RepoLike))) &&
 		(f.State == "" || j.State == f.State) && (f.Kind == "" || j.Kind == f.Kind) && (f.Trigger == "" || j.Trigger == f.Trigger) &&
 		(f.From.IsZero() || !j.Finished.Before(f.From)) && (f.To.IsZero() || j.Finished.Before(f.To)) &&
-		(f.BeforeID == 0 || j.ID < f.BeforeID) && scoreMatches(j, f)
+		(f.BeforeID == 0 || j.ID < f.BeforeID) && scoreMatches(j, f) && findingMatches(j, f)
+}
+
+func findingMatches(j store.Job, f store.JobFilter) bool {
+	if f.Severity == "" && f.Category == "" {
+		return true
+	}
+	for _, c := range store.CountFindings(j.Result) {
+		if (f.Severity == "" || f.Severity == "any" || strings.EqualFold(c.Severity, f.Severity)) &&
+			(f.Category == "" || strings.EqualFold(c.Category, strings.TrimSpace(f.Category))) {
+			return true
+		}
+	}
+	return false
 }
 
 func scoreMatches(j store.Job, f store.JobFilter) bool {
