@@ -19,9 +19,10 @@ internal/settings/    runtime settings: config file seeds the database, admin pa
 internal/server/      webhooks (GitHub, GitLab, Bitbucket), command parsing, queue + history, jobs.go
                       (targets, per-job config/secrets), status dashboard
 internal/admin/       OIDC sign-in (code flow + PKCE + nonce), DB sessions, CSRF, admin JSON API;
-                      embeds ui/ (the built admin app, committed so `go build` needs no Node)
+                      embeds ui/ (the built admin app; not committed: only ui/.keep is, and a
+                      build without it serves a "UI not built" page)
 web/                  admin app source: React + TypeScript + Vite. `make web` builds it into
-                      internal/admin/ui; CI fails if the committed build is stale
+                      internal/admin/ui; the Dockerfile, GoReleaser (before hook) and CI build it
 internal/store/       PostgreSQL: repos, overrides, jobs + results, sessions, audit, model
                       profiles, settings; migrations under an advisory lock. storetest/ = fake
 ```
@@ -97,7 +98,8 @@ Changing this contract means changing the bot's CLI too; keep them in step.
 ## Admin UI
 
 React + TypeScript + Vite, styled with **Tailwind CSS v4 and shadcn/ui** (Radix primitives, Lucide
-icons). Change `web/src`, run `make web`, commit both `web/` and `internal/admin/ui`.
+icons). Change `web/src` and run `make web` to see it in a local build; commit only `web/`
+(`internal/admin/ui` is ignored, except `.keep`, which `web/public/.keep` restores on each build).
 
 - `web/src/components/ui/` holds shadcn components (`npx shadcn@<pinned> add <name>`). After adding
   one, check its imports: utilities come from `@/lib/utils`. The CLI has written `from "cn"` and

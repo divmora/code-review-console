@@ -125,10 +125,10 @@ Provider keys and cloud credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEM
 ## Development
 
 ```bash
-make build      # bin/code-review-console
-make web        # rebuild the admin UI (web/ → internal/admin/ui, commit the result)
+make build      # bin/code-review-console (builds the admin UI first if it's missing; needs Node.js)
+make web        # rebuild the admin UI (web/ → internal/admin/ui, embedded; not committed)
 make web-dev    # admin UI dev server on :5173, proxying to a console on :8080
-make test       # unit tests
+make test       # unit tests (the admin tests need the built UI; make builds it)
 make test-db    # + PostgreSQL integration tests (Docker)
 make test-e2e   # + end-to-end with the real codereview CLI (local + docker executors)
 ```

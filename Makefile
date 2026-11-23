@@ -7,25 +7,31 @@ LDFLAGS := -s -w -X github.com/divmora/code-review-console/internal/version.Vers
 BOT_DIR ?= ../code-review-bot
 
 # Admin UI: web/ (React + Vite) builds into internal/admin/ui, which the
-# binary embeds. The build output is committed so `go build` alone works.
+# binary embeds. The build output isn't committed: build, test and lint
+# build it first when it's missing (`make web` rebuilds it after changes).
+UI_INDEX := internal/admin/ui/index.html
+
 web:
 	@cd web && npm ci --no-audit --no-fund && npm run build
+
+$(UI_INDEX):
+	@$(MAKE) --no-print-directory web
 
 # Vite dev server on :5173, proxying the API to a console on :8080.
 web-dev:
 	@cd web && npm run dev
 
-build:
+build: $(UI_INDEX)
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/console
 
 clean:
 	@rm -rf bin/ dist/ coverage.out coverage.html
 
-test:
+test: $(UI_INDEX)
 	@go test -race ./...
 
 # PostgreSQL integration tests against a throwaway container.
-test-db:
+test-db: $(UI_INDEX)
 	@docker run -d --rm --name crc-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=console -p 127.0.0.1:55434:5432 postgres:17 >/dev/null
 	@until docker exec crc-test-pg pg_isready -U postgres -q; do sleep 1; done
 	@CODEREVIEW_TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:55434/console go test -race -count=1 ./... ; s=$$?; docker stop crc-test-pg >/dev/null; exit $$s
@@ -39,7 +45,7 @@ test-e2e:
 fmt:
 	@gofmt -w .
 
-lint:
+lint: $(UI_INDEX)
 	@golangci-lint run ./... || go vet ./...
 
 docker-build:

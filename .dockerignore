@@ -7,3 +7,5 @@ dist/
 *.pem
 console.yaml
 web/node_modules/
+internal/admin/ui/assets/
+internal/admin/ui/index.html
