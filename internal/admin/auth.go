@@ -23,6 +23,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/execsettings"
@@ -259,9 +260,10 @@ func (a *Admin) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := randToken(32)
 	sum := sha256.Sum256([]byte(sid))
+	client := clientip.From(r.Context())
 	err = a.store.CreateSession(ctx, sum[:], store.Session{
 		Subject: id.Subject, Email: id.Email, Name: id.Name, Groups: id.Groups, Verified: id.Verified,
-		CSRF: randToken(24), Expires: time.Now().Add(a.cfg.SessionTTL),
+		CSRF: randToken(24), Expires: time.Now().Add(a.cfg.SessionTTL), IP: client.IP, UserAgent: client.UserAgent,
 	})
 	if err != nil {
 		fail(http.StatusInternalServerError, "could not create session", "error", err)
@@ -272,7 +274,7 @@ func (a *Admin) handleCallback(w http.ResponseWriter, r *http.Request) {
 		Name: sessionCookie, Value: sid, Path: "/admin", MaxAge: int(a.cfg.SessionTTL.Seconds()),
 		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteLaxMode,
 	})
-	a.logger.Info("admin signed in", "email", id.Email)
+	a.logger.Info("admin signed in", "email", id.Email, "ip", client.IP)
 	http.Redirect(w, r, safeNext(fs.Next), http.StatusFound)
 }
 
@@ -379,6 +381,9 @@ func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 			map[string]any{"reason": "no longer allowed by the sign-in rules: " + reason})
 		a.logger.Warn("admin session ended: no longer allowed by the sign-in rules", "email", s.Email, "why", reason)
 		return nil, false
+	}
+	if time.Since(s.LastSeen) > time.Minute {
+		_ = a.store.TouchSession(r.Context(), sum[:], clientip.From(r.Context()).IP)
 	}
 	return s, true
 }

@@ -24,6 +24,10 @@ type EnvVar struct {
 var EnvVars = []EnvVar{
 	{"DATABASE_URL", "database.url", "PostgreSQL connection string (required)", func(c *Config, v string) error { c.Database.URL = v; return nil }},
 	{"CODEREVIEW_CONSOLE_ADDR", "server.addr", "listen address, default :8080", func(c *Config, v string) error { c.Server.Addr = v; return nil }},
+	{"CODEREVIEW_CONSOLE_TRUSTED_PROXIES", "server.trusted_proxies", "comma-separated IPs or CIDRs of the load balancer in front (for client IPs)", func(c *Config, v string) error {
+		c.Server.TrustedProxies = list(v)
+		return nil
+	}},
 	{"CODEREVIEW_CONSOLE_BASE_URL", "admin.base_url", "public URL of the console (sign-in redirect, webhook URLs)", func(c *Config, v string) error { c.Admin.BaseURL = v; return nil }},
 	{"CODEREVIEW_CONSOLE_ADMIN_ENABLED", "admin.enabled", "true or false; default true when an OIDC issuer is set", func(c *Config, v string) error { return setBool(&c.Admin.Enabled, v) }},
 	{"CODEREVIEW_CONSOLE_SESSION_TTL", "admin.session_ttl", "admin session length, default 12h", func(c *Config, v string) error { return setDuration(&c.Admin.SessionTTL, v) }},

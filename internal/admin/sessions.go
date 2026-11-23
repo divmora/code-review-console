@@ -17,6 +17,11 @@ type sessionView struct {
 	Created time.Time `json:"created"`
 	Expires time.Time `json:"expires"`
 	Current bool      `json:"current"`
+	// IP is the latest request's address; UserAgent the browser it signed
+	// in with; LastSeen the latest request (to the minute).
+	IP        string    `json:"ip"`
+	UserAgent string    `json:"user_agent"`
+	LastSeen  time.Time `json:"last_seen,omitzero"`
 }
 
 func (a *Admin) apiListSessions(w http.ResponseWriter, r *http.Request, s *store.Session) {
@@ -27,7 +32,8 @@ func (a *Admin) apiListSessions(w http.ResponseWriter, r *http.Request, s *store
 	}
 	out := make([]sessionView, 0, len(list))
 	for _, x := range list {
-		out = append(out, sessionView{ID: x.ID, Email: x.Email, Name: x.Name, Created: x.Created, Expires: x.Expires, Current: x.ID == s.ID})
+		out = append(out, sessionView{ID: x.ID, Email: x.Email, Name: x.Name, Created: x.Created, Expires: x.Expires, Current: x.ID == s.ID,
+			IP: x.IP, UserAgent: x.UserAgent, LastSeen: x.LastSeen})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

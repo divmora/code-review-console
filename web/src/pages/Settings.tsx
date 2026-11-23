@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { del, get, post, put } from "../api";
 import type { Overrides } from "../types";
-import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, SettingsEditor, Sub, useConfirm, useFeature, useMe, useRefreshMe, useToast } from "../ui";
+import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, SettingsEditor, shortAgent, Sub, useConfirm, useFeature, useMe, useRefreshMe, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ type Eff = {
   dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; command_access: "write" | "anyone"; review_defaults: Overrides; source?: Record<string, string>;
 };
 
-type SessionRow = { id: number; email: string; name: string; created: string; expires: string; current: boolean };
+type SessionRow = { id: number; email: string; name: string; created: string; expires: string; current: boolean; ip?: string; user_agent?: string; last_seen?: string };
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -74,7 +74,9 @@ function Sessions() {
           <TableHeader>
             <TableRow>
               <TableHead className="pl-6">Admin</TableHead>
+              <TableHead>From</TableHead>
               <TableHead>Signed in</TableHead>
+              <TableHead>Last active</TableHead>
               <TableHead>Expires</TableHead>
               <TableHead />
             </TableRow>
@@ -89,7 +91,12 @@ function Sessions() {
                   </div>
                   {s.name && <Sub>{s.email}</Sub>}
                 </TableCell>
+                <TableCell>
+                  <div className="font-mono text-xs">{s.ip || "—"}</div>
+                  {s.user_agent && <Sub title={s.user_agent}>{shortAgent(s.user_agent)}</Sub>}
+                </TableCell>
                 <TableCell>{when(s.created)}</TableCell>
+                <TableCell>{s.last_seen ? when(s.last_seen) : "—"}</TableCell>
                 <TableCell>{when(s.expires)}</TableCell>
                 <TableCell className="pr-6 text-right">
                   <Button size="sm" variant="ghost" className={s.current ? "" : "text-destructive"} onClick={() => revoke(s)}>

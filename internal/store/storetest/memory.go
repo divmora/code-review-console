@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/store"
 )
@@ -660,7 +661,7 @@ func (m *Memory) PutSetting(ctx context.Context, key string, value any, actor st
 	return m.PutSettingAudited(ctx, key, value, value, actor)
 }
 
-func (m *Memory) PutSettingAudited(_ context.Context, key string, value, detail any, actor string) error {
+func (m *Memory) PutSettingAudited(ctx context.Context, key string, value, detail any, actor string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	js, err := json.Marshal(value)
@@ -669,6 +670,7 @@ func (m *Memory) PutSettingAudited(_ context.Context, key string, value, detail 
 	}
 	m.settings[key] = js
 	m.addAudit(actor, "setting.put", key, detail)
+	m.stampAudit(ctx)
 	return nil
 }
 
@@ -676,7 +678,7 @@ func (m *Memory) CreateSession(_ context.Context, idHash []byte, s store.Session
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessionID++
-	s.ID, s.Created = m.sessionID, time.Now()
+	s.ID, s.Created, s.LastSeen = m.sessionID, time.Now(), time.Now()
 	if s.Groups == nil {
 		s.Groups = []string{}
 	}
@@ -744,10 +746,34 @@ func (m *Memory) addAudit(actor, action, target string, detail any) {
 	m.audit = append(m.audit, store.AuditEntry{ID: int64(len(m.audit) + 1), At: time.Now(), Actor: actor, Action: action, Target: target, Detail: js})
 }
 
-func (m *Memory) Audit(_ context.Context, actor, action, target string, detail any) error {
+func (m *Memory) Audit(ctx context.Context, actor, action, target string, detail any) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.addAudit(actor, action, target, detail)
+	m.stampAudit(ctx)
+	return nil
+}
+
+// stampAudit adds the request's client to the newest audit entry.
+func (m *Memory) stampAudit(ctx context.Context) {
+	if len(m.audit) > 0 {
+		c := clientip.From(ctx)
+		m.audit[len(m.audit)-1].IP, m.audit[len(m.audit)-1].UserAgent = c.IP, c.UserAgent
+	}
+}
+
+func (m *Memory) TouchSession(_ context.Context, idHash []byte, ip string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[string(idHash)]
+	if !ok || time.Since(s.LastSeen) < time.Minute {
+		return nil
+	}
+	s.LastSeen = time.Now()
+	if ip != "" {
+		s.IP = ip
+	}
+	m.sessions[string(idHash)] = s
 	return nil
 }
 

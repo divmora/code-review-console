@@ -88,6 +88,9 @@ func TestWebhookHistoryAndRepoRecording(t *testing.T) {
 	if rej.Outcome != store.HookRejected || rej.Auth != "failed" || !strings.HasPrefix(rej.Reason, "no X-Gitlab-Token or Webhook-Signature header") {
 		t.Errorf("rejected delivery should keep the exact reason: %+v", rej)
 	}
+	if rej.SourceIP != "192.0.2.1" || ign1.SourceIP != "192.0.2.1" {
+		t.Errorf("deliveries record where they came from: %q %q", rej.SourceIP, ign1.SourceIP)
+	}
 	// Nothing from an unverified body is recorded (issue #33).
 	if rej.Project != "" || rej.Number != 0 || rej.Kind != "" || rej.Action != "" || rej.Sender != "" {
 		t.Errorf("rejected delivery must not carry payload fields: %+v", rej)

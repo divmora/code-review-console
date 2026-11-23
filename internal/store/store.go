@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/divmora/code-review-console/internal/config"
@@ -158,6 +160,8 @@ type WebhookEvent struct {
 	Reason     string `json:"reason"`
 	Status     int    `json:"status"`
 	DurationMS int    `json:"duration_ms"`
+	// SourceIP is the address the delivery came from (see clientip).
+	SourceIP string `json:"source_ip"`
 }
 
 // HostHookStats summarises a host's verified webhook deliveries in the
@@ -211,6 +215,12 @@ type Session struct {
 	CSRF     string
 	Created  time.Time
 	Expires  time.Time
+	// IP and UserAgent are where the session signed in from; IP follows
+	// the latest request. LastSeen is the latest request (updated at most
+	// once a minute; zero before the first).
+	IP        string
+	UserAgent string
+	LastSeen  time.Time
 }
 
 // JobFilter narrows ListJobs. Zero values match everything.
@@ -276,6 +286,10 @@ type AuditEntry struct {
 	Action string          `json:"action"`
 	Target string          `json:"target"`
 	Detail json.RawMessage `json:"detail"`
+	// IP and UserAgent are where the request came from ("" for changes
+	// the console made itself, such as the copy from the config file).
+	IP        string `json:"ip"`
+	UserAgent string `json:"user_agent"`
 }
 
 // Store is the persistence API used by the server.
@@ -363,6 +377,9 @@ type Store interface {
 
 	CreateSession(ctx context.Context, idHash []byte, s Session) error
 	GetSession(ctx context.Context, idHash []byte) (*Session, error)
+	// TouchSession records a request on the session: its time and IP
+	// (at most once a minute per session, to keep writes down).
+	TouchSession(ctx context.Context, idHash []byte, ip string) error
 	DeleteSession(ctx context.Context, idHash []byte) error
 	// ListSessions returns the sessions that haven't expired, newest first.
 	ListSessions(ctx context.Context) ([]Session, error)
@@ -618,6 +635,10 @@ var migrations = []string{
 		seen_at timestamptz NOT NULL DEFAULT now()
 	);
 	CREATE INDEX webhook_seen_at_idx ON webhook_seen (seen_at);`,
+	// 13: where sign-ins, changes and webhook deliveries come from (issue #66).
+	`ALTER TABLE audit_log ADD COLUMN ip text NOT NULL DEFAULT '', ADD COLUMN user_agent text NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN ip text NOT NULL DEFAULT '', ADD COLUMN user_agent text NOT NULL DEFAULT '', ADD COLUMN last_seen timestamptz;
+	ALTER TABLE webhook_events ADD COLUMN source_ip text NOT NULL DEFAULT '';`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -1146,7 +1167,7 @@ func (p *Postgres) DeleteWebhookEndpoint(ctx context.Context, id string, actor s
 	return tx.Commit(ctx)
 }
 
-const hookCols = `id, received_at, platform, host, project, number, event, kind, action, sender, delivery, endpoint, auth, outcome, reason, status, duration_ms`
+const hookCols = `id, received_at, platform, host, project, number, event, kind, action, sender, delivery, endpoint, auth, outcome, reason, status, duration_ms, source_ip`
 
 func (p *Postgres) InsertWebhookEvents(ctx context.Context, events []WebhookEvent) error {
 	if len(events) == 0 {
@@ -1158,10 +1179,10 @@ func (p *Postgres) InsertWebhookEvents(ctx context.Context, events []WebhookEven
 			e.ReceivedAt = time.Now()
 		}
 		rows = append(rows, []any{e.ReceivedAt, e.Platform, e.Host, e.Project, e.Number, e.Event, e.Kind, e.Action,
-			e.Sender, e.Delivery, e.Endpoint, e.Auth, e.Outcome, e.Reason, e.Status, e.DurationMS})
+			e.Sender, e.Delivery, e.Endpoint, e.Auth, e.Outcome, e.Reason, e.Status, e.DurationMS, e.SourceIP})
 	}
 	_, err := p.pool.CopyFrom(ctx, pgx.Identifier{"webhook_events"},
-		[]string{"received_at", "platform", "host", "project", "number", "event", "kind", "action", "sender", "delivery", "endpoint", "auth", "outcome", "reason", "status", "duration_ms"},
+		[]string{"received_at", "platform", "host", "project", "number", "event", "kind", "action", "sender", "delivery", "endpoint", "auth", "outcome", "reason", "status", "duration_ms", "source_ip"},
 		pgx.CopyFromRows(rows))
 	return err
 }
@@ -1199,7 +1220,7 @@ func (p *Postgres) ListWebhookEvents(ctx context.Context, f WebhookFilter) ([]We
 	for rows.Next() {
 		var e WebhookEvent
 		if err := rows.Scan(&e.ID, &e.ReceivedAt, &e.Platform, &e.Host, &e.Project, &e.Number, &e.Event, &e.Kind, &e.Action,
-			&e.Sender, &e.Delivery, &e.Endpoint, &e.Auth, &e.Outcome, &e.Reason, &e.Status, &e.DurationMS); err != nil {
+			&e.Sender, &e.Delivery, &e.Endpoint, &e.Auth, &e.Outcome, &e.Reason, &e.Status, &e.DurationMS, &e.SourceIP); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -1260,12 +1281,16 @@ func (p *Postgres) PruneWebhookEvents(ctx context.Context, before time.Time, kee
 
 func repoTarget(r *Repo) string { return r.Platform + ":" + r.Host + "/" + r.Path }
 
+// auditInsert records an audit entry with the request's client (from ctx).
+const auditInsert = `INSERT INTO audit_log (actor, action, target, detail, ip, user_agent) VALUES ($1, $2, $3, $4, $5, $6)`
+
 func audit(ctx context.Context, tx pgx.Tx, actor, action, target string, detail any) error {
 	js, err := json.Marshal(detail)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO audit_log (actor, action, target, detail) VALUES ($1, $2, $3, $4)`, actor, action, target, js)
+	c := clientip.From(ctx)
+	_, err = tx.Exec(ctx, auditInsert, actor, action, target, js, c.IP, c.UserAgent)
 	return err
 }
 
@@ -1274,12 +1299,13 @@ func (p *Postgres) Audit(ctx context.Context, actor, action, target string, deta
 	if err != nil {
 		return err
 	}
-	_, err = p.pool.Exec(ctx, `INSERT INTO audit_log (actor, action, target, detail) VALUES ($1, $2, $3, $4)`, actor, action, target, js)
+	c := clientip.From(ctx)
+	_, err = p.pool.Exec(ctx, auditInsert, actor, action, target, js, c.IP, c.UserAgent)
 	return err
 }
 
 func (p *Postgres) ListAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id, at, actor, action, target, detail FROM audit_log ORDER BY at DESC, id DESC LIMIT $1`, limit)
+	rows, err := p.pool.Query(ctx, `SELECT id, at, actor, action, target, detail, ip, user_agent FROM audit_log ORDER BY at DESC, id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1287,7 +1313,7 @@ func (p *Postgres) ListAudit(ctx context.Context, limit int) ([]AuditEntry, erro
 	out := []AuditEntry{}
 	for rows.Next() {
 		var a AuditEntry
-		if err := rows.Scan(&a.ID, &a.At, &a.Actor, &a.Action, &a.Target, &a.Detail); err != nil {
+		if err := rows.Scan(&a.ID, &a.At, &a.Actor, &a.Action, &a.Target, &a.Detail, &a.IP, &a.UserAgent); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -1634,18 +1660,30 @@ func (p *Postgres) CreateSession(ctx context.Context, idHash []byte, s Session) 
 	if err != nil {
 		return err
 	}
-	_, err = p.pool.Exec(ctx, `INSERT INTO sessions (id_hash, subject, email, name, csrf, expires, groups, verified) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		idHash, s.Subject, s.Email, s.Name, s.CSRF, s.Expires, groups, s.Verified)
+	_, err = p.pool.Exec(ctx, `INSERT INTO sessions (id_hash, subject, email, name, csrf, expires, groups, verified, ip, user_agent, last_seen)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,
+		idHash, s.Subject, s.Email, s.Name, s.CSRF, s.Expires, groups, s.Verified, s.IP, s.UserAgent)
 	return err
 }
 
-const sessionCols = `id, subject, email, name, csrf, created, expires, groups, verified`
+// TouchSession records a request on a session, at most once a minute.
+func (p *Postgres) TouchSession(ctx context.Context, idHash []byte, ip string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE sessions SET last_seen = now(), ip = CASE WHEN $2 = '' THEN ip ELSE $2 END
+		WHERE id_hash = $1 AND (last_seen IS NULL OR last_seen < now() - interval '1 minute')`, idHash, ip)
+	return err
+}
+
+const sessionCols = `id, subject, email, name, csrf, created, expires, groups, verified, ip, user_agent, last_seen`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
 	var groups []byte
-	if err := row.Scan(&s.ID, &s.Subject, &s.Email, &s.Name, &s.CSRF, &s.Created, &s.Expires, &groups, &s.Verified); err != nil {
+	var seen *time.Time
+	if err := row.Scan(&s.ID, &s.Subject, &s.Email, &s.Name, &s.CSRF, &s.Created, &s.Expires, &groups, &s.Verified, &s.IP, &s.UserAgent, &seen); err != nil {
 		return nil, err
+	}
+	if seen != nil {
+		s.LastSeen = *seen
 	}
 	if groups != nil {
 		if err := json.Unmarshal(groups, &s.Groups); err != nil {

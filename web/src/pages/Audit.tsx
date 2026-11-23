@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { get } from "../api";
-import { Empty, errMsg, Locked, Panel, useFeature, useToast } from "../ui";
+import { Empty, errMsg, Locked, Panel, shortAgent, Sub, useFeature, useToast } from "../ui";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Entry = { id: number; at: string; actor: string; action: string; target: string; detail: unknown };
+type Entry = { id: number; at: string; actor: string; action: string; target: string; detail: unknown; ip?: string; user_agent?: string };
 
 export default function Audit() {
   const toast = useToast();
@@ -40,7 +40,10 @@ export default function Audit() {
               {list.map((e, i) => (
                 <TableRow key={e.id ?? i}>
                   <TableCell className="pl-4 align-top text-muted-foreground">{new Date(e.at).toLocaleString()}</TableCell>
-                  <TableCell className="align-top">{e.actor}</TableCell>
+                  <TableCell className="align-top">
+                    {e.actor}
+                    {e.ip && <Sub title={e.user_agent}>{e.ip}{e.user_agent ? " · " + shortAgent(e.user_agent) : ""}</Sub>}
+                  </TableCell>
                   <TableCell className="align-top">
                     <code>{e.action}</code>
                   </TableCell>

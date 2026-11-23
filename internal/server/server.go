@@ -16,6 +16,7 @@ import (
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/admin"
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
@@ -302,6 +303,9 @@ func (s *Server) ghApp(hostID int64) *vcs.GitHubApp {
 
 // Handler returns the HTTP routes.
 func (s *Server) Handler() http.Handler {
+	// Every request carries its client (IP, user agent) for the audit log,
+	// sessions and webhook history. The config was validated at load.
+	resolver, _ := clientip.NewResolver(s.cfg.Server.TrustedProxies)
 	mux := http.NewServeMux()
 	// The shared URL per platform matches the host from the delivery; a
 	// webhook added in the admin panel has its own URL (/<platform>/<id>)
@@ -333,7 +337,7 @@ func (s *Server) Handler() http.Handler {
 	if s.admin != nil {
 		s.admin.Register(mux)
 	}
-	return mux
+	return resolver.Middleware(mux)
 }
 
 // ListenAndServe runs until ctx is cancelled, then drains jobs.
