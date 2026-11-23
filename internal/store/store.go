@@ -862,6 +862,8 @@ var migrations = []string{
 	// 19: Impact page rollups: findings by severity and category, review
 	// runs, reviewed merge requests (issue #102).
 	impactSQL,
+	// 20: rules can turn the bot's approval on or off.
+	`ALTER TABLE repo_rules ADD COLUMN approve boolean;`,
 }
 
 // backfillScores fills in the scores of jobs whose stored result has them
@@ -1065,12 +1067,12 @@ func (p *Postgres) DeleteRepo(ctx context.Context, id int64, actor string) error
 	return tx.Commit(ctx)
 }
 
-const ruleCols = `id, platform, host, pattern, enabled, require_reviewer, skip_branch_sync, score_labels, commit_status, settings, updated_at, updated_by`
+const ruleCols = `id, platform, host, pattern, enabled, require_reviewer, skip_branch_sync, score_labels, commit_status, approve, settings, updated_at, updated_by`
 
 func scanRule(row pgx.Row) (*Rule, error) {
 	var r Rule
 	var settings []byte
-	err := row.Scan(&r.ID, &r.Platform, &r.Host, &r.Pattern, &r.Enabled, &r.RequireReviewer, &r.SkipBranchSync, &r.ScoreLabels, &r.CommitStatus, &settings, &r.UpdatedAt, &r.UpdatedBy)
+	err := row.Scan(&r.ID, &r.Platform, &r.Host, &r.Pattern, &r.Enabled, &r.RequireReviewer, &r.SkipBranchSync, &r.ScoreLabels, &r.CommitStatus, &r.Approve, &settings, &r.UpdatedAt, &r.UpdatedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1089,7 +1091,7 @@ func ruleTarget(r *Rule) string { return r.Platform + ":" + r.Host + "/" + r.Pat
 
 func ruleDetail(r *Rule) map[string]any {
 	return map[string]any{"enabled": r.Enabled, "require_reviewer": r.RequireReviewer, "skip_branch_sync": r.SkipBranchSync,
-		"score_labels": r.ScoreLabels, "commit_status": r.CommitStatus, "settings": r.Settings}
+		"score_labels": r.ScoreLabels, "commit_status": r.CommitStatus, "approve": r.Approve, "settings": r.Settings}
 }
 
 func (p *Postgres) ListRules(ctx context.Context) ([]Rule, error) {
@@ -1125,12 +1127,12 @@ func (p *Postgres) CreateRule(ctx context.Context, in Rule, actor string) (*Rule
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	r, err := scanRule(tx.QueryRow(ctx, `
-		INSERT INTO repo_rules (platform, host, pattern, enabled, require_reviewer, skip_branch_sync, score_labels, commit_status, settings, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO repo_rules (platform, host, pattern, enabled, require_reviewer, skip_branch_sync, score_labels, commit_status, approve, settings, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (platform, host, pattern) DO UPDATE SET enabled = EXCLUDED.enabled, require_reviewer = EXCLUDED.require_reviewer,
 			skip_branch_sync = EXCLUDED.skip_branch_sync, score_labels = EXCLUDED.score_labels, commit_status = EXCLUDED.commit_status,
-			settings = EXCLUDED.settings, updated_by = EXCLUDED.updated_by, updated_at = now()
-		RETURNING `+ruleCols, platform, host, pattern, in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus, js, actor))
+			approve = EXCLUDED.approve, settings = EXCLUDED.settings, updated_by = EXCLUDED.updated_by, updated_at = now()
+		RETURNING `+ruleCols, platform, host, pattern, in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus, in.Approve, js, actor))
 	if err != nil {
 		return nil, err
 	}
@@ -1155,9 +1157,9 @@ func (p *Postgres) UpdateRule(ctx context.Context, id int64, in Rule, actor stri
 		return nil, err
 	}
 	after, err := scanRule(tx.QueryRow(ctx, `
-		UPDATE repo_rules SET enabled=$2, require_reviewer=$3, skip_branch_sync=$4, score_labels=$5, commit_status=$6, settings=$7,
-			updated_at=now(), updated_by=$8 WHERE id=$1
-		RETURNING `+ruleCols, id, in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus, js, actor))
+		UPDATE repo_rules SET enabled=$2, require_reviewer=$3, skip_branch_sync=$4, score_labels=$5, commit_status=$6, approve=$7, settings=$8,
+			updated_at=now(), updated_by=$9 WHERE id=$1
+		RETURNING `+ruleCols, id, in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus, in.Approve, js, actor))
 	if err != nil {
 		return nil, err
 	}

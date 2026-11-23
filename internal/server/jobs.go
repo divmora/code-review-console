@@ -312,6 +312,10 @@ func (s *Server) enqueueReviewWith(tgt target, ref vcs.Ref, opts reviewOpts, del
 		// the admin panel applies to reviews still waiting.
 		acc := s.access(ctx, ref)
 		t.ScoreLabels, t.CommitStatus = acc.ScoreLabels, acc.CommitStatus
+		if acc.Approve {
+			e := s.settings.Runtime(ctx)
+			t.Approval = &executor.Approval{Block: e.ApproveBlock, MinScore: e.ApproveMinScore, Withdraw: e.ApproveWithdraw}
+		}
 		res, err := s.exec.Run(ctx, t)
 		if err != nil {
 			var re *executor.RunError
@@ -345,9 +349,11 @@ func (s *Server) enqueueReviewWith(tgt target, ref vcs.Ref, opts reviewOpts, del
 			rep.Note = "too many files for an automatic review"
 		case res.Partial:
 			rep.Note = "partial review"
+		case res.Approval == "failed":
+			rep.Note = "could not approve: " + truncate(res.ApprovalReason, 200)
 		}
 		s.logger.Info("review posted", "pr", ref.String(), "executor", s.exec.Name(), "comments", res.Posted, "files", res.Files,
-			"tokens_in", res.TokensIn, "tokens_out", res.TokensOut)
+			"tokens_in", res.TokensIn, "tokens_out", res.TokensOut, "approval", res.Approval)
 		return nil
 	}
 	saved := func() queuedPayload {

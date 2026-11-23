@@ -43,6 +43,7 @@ type Rule struct {
 	SkipBranchSync  *bool            `json:"skip_branch_sync"`
 	ScoreLabels     *bool            `json:"score_labels"`
 	CommitStatus    *bool            `json:"commit_status"`
+	Approve         *bool            `json:"approve"`
 	Settings        config.Overrides `json:"settings"`
 	UpdatedAt       time.Time        `json:"updated_at"`
 	UpdatedBy       string           `json:"updated_by"`
@@ -130,6 +131,7 @@ type Base struct {
 	SkipBranchSync  bool
 	ScoreLabels     bool
 	CommitStatus    bool
+	Approve         bool
 	ReviewDefaults  config.Overrides
 }
 
@@ -151,6 +153,10 @@ type Access struct {
 	ScoreLabelsSource  string `json:"score_labels_source"`
 	CommitStatus       bool   `json:"commit_status"`
 	CommitStatusSource string `json:"commit_status_source"`
+	// Approve has the bot approve merge requests whose review passes the
+	// rule in the settings.
+	Approve       bool   `json:"approve"`
+	ApproveSource string `json:"approve_source"`
 	// Rules are the matching rules' labels, most specific first.
 	Rules []string `json:"rules,omitempty"`
 	// Settings merge the review defaults, the matching rules (least
@@ -176,7 +182,8 @@ func Resolve(repo Repo, rules []Rule, b Base) Access {
 		RequireReviewer: b.RequireReviewer, RequireReviewerSource: "settings",
 		SkipBranchSync: b.SkipBranchSync, SkipBranchSyncSource: "settings",
 		ScoreLabels: b.ScoreLabels, ScoreLabelsSource: "settings",
-		CommitStatus: b.CommitStatus, CommitStatusSource: "settings"}
+		CommitStatus: b.CommitStatus, CommitStatusSource: "settings",
+		Approve: b.Approve, ApproveSource: "settings"}
 	if b.Allowlist {
 		a.Source = "allowlist"
 	}
@@ -193,6 +200,7 @@ func Resolve(repo Repo, rules []Rule, b Base) Access {
 		{get: func(r Rule) *bool { return r.SkipBranchSync }, dst: &a.SkipBranchSync, src: &a.SkipBranchSyncSource},
 		{get: func(r Rule) *bool { return r.ScoreLabels }, dst: &a.ScoreLabels, src: &a.ScoreLabelsSource},
 		{get: func(r Rule) *bool { return r.CommitStatus }, dst: &a.CommitStatus, src: &a.CommitStatusSource},
+		{get: func(r Rule) *bool { return r.Approve }, dst: &a.Approve, src: &a.ApproveSource},
 	}
 	for _, r := range matched {
 		for _, f := range flags {

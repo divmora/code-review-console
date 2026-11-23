@@ -65,6 +65,8 @@ export type Access = {
   score_labels_source: string;
   commit_status: boolean;
   commit_status_source: string;
+  approve: boolean;
+  approve_source: string;
   rules?: string[];
   settings: Overrides;
 };
@@ -92,6 +94,7 @@ export type Rule = {
   skip_branch_sync: boolean | null;
   score_labels: boolean | null;
   commit_status: boolean | null;
+  approve: boolean | null;
   settings: Overrides;
   updated_at: string;
   updated_by: string;

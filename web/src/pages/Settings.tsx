@@ -12,7 +12,7 @@ import { fmtDateTime } from "../format";
 
 type Eff = {
   allowlist: boolean; require_reviewer: boolean; skip_branch_sync: boolean; sync_source_branches: string[];
-  score_labels: boolean; commit_status: boolean; review_retention_days: number; webhook_retention_days: number;
+  score_labels: boolean; commit_status: boolean; approve: boolean; approve_block: string; approve_min_score: number; approve_withdraw: boolean; review_retention_days: number; webhook_retention_days: number;
   learnings_enabled: boolean; learnings_auto_activate: boolean; daily_token_budget: number; repo_daily_token_budget: number;
   dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; command_access: "write" | "anyone"; session_idle_minutes: number; review_defaults: Overrides; source?: Record<string, string>;
 };
@@ -24,7 +24,8 @@ const when = (iso: string) => fmtDateTime(iso);
 // settingLabel names settings the way the page does.
 const settingLabel: Record<string, string> = {
   allowlist: "Repositories no rule matches", require_reviewer: "Who asks for a review", skip_branch_sync: "Branch syncs",
-  sync_source_branches: "Also treat these source branches as syncs", score_labels: "Score labels", commit_status: "Commit status",
+  sync_source_branches: "Also treat these source branches as syncs", score_labels: "Score labels", commit_status: "Commit status", approve: "Approve merge requests",
+  approve_block: "Findings that block approval", approve_min_score: "Lowest score to approve", approve_withdraw: "When a later review doesn't pass",
   command_access: "Who can run review and question commands", learnings_enabled: "Learn from replies to the bot",
   learnings_auto_activate: "New learnings", daily_token_budget: "Daily tokens, all repositories",
   repo_daily_token_budget: "Daily tokens, per repository", review_retention_days: "Keep reviews",
@@ -210,6 +211,23 @@ export default function Settings() {
         </FormGrid>
       </Group>
       <div className="grid gap-4 lg:grid-cols-2">
+        <Group title="Approve merge requests" description="The bot approves a merge request whose review passes, as its token's user (or the GitHub App). Rules can turn this on or off for groups and repositories. Needs code-review-bot 0.5 or later on the Executor page.">
+          <FormGrid>
+            <Bool label="Approve when the review passes" value={v.approve} onChange={set("approve")} yes="On" no="Off" />
+            <Field label="Findings that block approval" hint={<Note className="text-xs">New findings, ones beyond the comment limit and ones still open from an earlier review all count; questions don't.</Note>}>
+              <NativeSelect value={v.approve_block || "major"} onChange={(e) => set("approve_block")(e.target.value)}>
+                <option value="critical">Critical</option>
+                <option value="major">Major or critical</option>
+                <option value="minor">Minor or above</option>
+                <option value="nitpick">Any finding (nitpicks too)</option>
+                <option value="none">None: approve whatever it found</option>
+              </NativeSelect>
+            </Field>
+            <Num label="Lowest score to approve" value={v.approve_min_score} onChange={set("approve_min_score")} min={0} max={100} placeholder="0" note={<Note className="text-xs">Every score (quality, security, maintainability) must be at least this. 0 ignores the scores.</Note>} />
+            <Bool label="When a later review doesn't pass" value={v.approve_withdraw} onChange={set("approve_withdraw")} yes="Withdraw the bot's approval" no="Leave it" />
+          </FormGrid>
+          <Note className="text-xs">A partial or too-large review leaves the approval as it is. GitLab: the bot's user must be allowed to approve. GitHub: withdrawing dismisses the bot's review, which branch protection may restrict.</Note>
+        </Group>
         <Group title="Learnings">
           <FormGrid>
             <Bool label="Learn from replies to the bot" value={v.learnings_enabled} onChange={set("learnings_enabled")} yes="On" no="Off" disabled={!has.learnings} note={<LockNote feature="learnings" />} />

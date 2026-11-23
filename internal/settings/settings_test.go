@@ -112,3 +112,27 @@ func TestLicensedSwitchesOffPaidSettings(t *testing.T) {
 		t.Errorf("a retention under the free cap stays: %d", got)
 	}
 }
+
+func TestApprovalSettings(t *testing.T) {
+	st := storetest.New()
+	s := New(&config.Config{}, st)
+	e := s.Get(context.Background())
+	if e.Approve || e.ApproveBlock != "major" || e.ApproveMinScore != 0 || !e.ApproveWithdraw || e.Base().Approve {
+		t.Errorf("defaults: off, blocked by major, withdraw on: %+v", e)
+	}
+	on, off, score := true, false, 80
+	if _, err := s.Put(context.Background(), Stored{Approve: &on, ApproveBlock: "none", ApproveMinScore: &score, ApproveWithdraw: &off}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	e = s.Get(context.Background())
+	if !e.Approve || e.ApproveBlock != "none" || e.ApproveMinScore != 80 || e.ApproveWithdraw || !e.Base().Approve {
+		t.Errorf("saved: %+v", e)
+	}
+	for _, bad := range []Stored{{ApproveBlock: "high"}, {ApproveMinScore: ptr(101)}, {ApproveMinScore: ptr(-1)}} {
+		if err := bad.Validate(nil, true); err == nil {
+			t.Errorf("must be rejected: %+v", bad)
+		}
+	}
+}
+
+func ptr(v int) *int { return &v }
