@@ -59,9 +59,16 @@ export function bucketLabel(iso: string, g: string, long = false): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-const n = (p: Point, k: keyof Point) => (typeof p[k] === "number" ? (p[k] as number) : 0);
+// A chart series: the point's field, its label and its colour token.
+export type Series = [string, string, string][];
 
-export default function JobsChart({ points, granularity }: { points: Point[]; granularity: string }) {
+const n = (p: Point, k: string) => (typeof (p as any)[k] === "number" ? ((p as any)[k] as number) : 0);
+
+// JobsChart stacks series (by default reviewed / skipped / failed) per
+// bucket. With custom series, the tooltip shows just those.
+export default function JobsChart({ points, granularity, series: ss, label }: { points: Point[]; granularity: string; series?: Series; label?: string }) {
+  const custom = !!ss;
+  const use: Series = ss ?? (series as Series);
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
   const [hover, setHover] = useState<number | null>(null);
@@ -74,7 +81,7 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
   }, []);
   const W = width, H = 200, L = 34, R = 8, T = 8, B = 24;
   let max = 0;
-  points.forEach((p) => (max = Math.max(max, n(p, "done") + n(p, "skipped") + n(p, "failed"))));
+  points.forEach((p) => (max = Math.max(max, use.reduce((a, [k]) => a + n(p, k), 0))));
   const nice = max <= 4 ? 4 : Math.pow(10, Math.floor(Math.log10(max)));
   const top = Math.ceil(max / nice) * nice || 4;
   const band = (W - L - R) / Math.max(1, points.length);
@@ -85,7 +92,7 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
   const tipLeft = hover !== null ? Math.min(W - 170, Math.max(0, L + band * hover + band / 2 + 12)) : 0;
   return (
     <div className="chart relative w-full" ref={box}>
-      <svg className="block h-auto w-full" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Jobs per ${granularity}: reviewed, skipped and failed`}>
+      <svg className="block h-auto w-full" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label ?? `Jobs per ${granularity}: reviewed, skipped and failed`}>
         {points.map((_, i) => (
           <rect key={"h" + i} x={L + band * i} y={T} width={band} height={H - T - B} fill={hover === i ? "var(--muted)" : "transparent"} fillOpacity={0.5}
             tabIndex={0} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(i)} onBlur={() => setHover(null)} />
@@ -100,7 +107,7 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
         ))}
         {points.map((p, i) => {
           const x = L + band * i + (band - bw) / 2;
-          const segs = series.map(([k, , c]) => [n(p, k), c] as [number, string]).filter(([v]) => v > 0);
+          const segs = use.map(([k, , c]) => [n(p, k), c] as [number, string]).filter(([v]) => v > 0);
           let acc = 0;
           return (
             <g key={"b" + i} pointerEvents="none">
@@ -129,20 +136,24 @@ export default function JobsChart({ points, granularity }: { points: Point[]; gr
         {hp && (
           <>
             <b className="mb-1 block font-semibold">{bucketLabel(hp.bucket, granularity, true)}</b>
-            {series.map(([k, label]) => (
+            {use.map(([k, name]) => (
               <div key={k}>
-                <span>{label}</span>
+                <span>{name}</span>
                 <span>{n(hp, k)}</span>
               </div>
             ))}
-            <div>
-              <span>Comments</span>
-              <span>{n(hp, "comments")}</span>
-            </div>
-            <div>
-              <span>Tokens</span>
-              <span>{fmtNum(n(hp, "tokens_in") + n(hp, "tokens_out"))}</span>
-            </div>
+            {!custom && (
+              <>
+                <div>
+                  <span>Comments</span>
+                  <span>{n(hp, "comments")}</span>
+                </div>
+                <div>
+                  <span>Tokens</span>
+                  <span>{fmtNum(n(hp, "tokens_in") + n(hp, "tokens_out"))}</span>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

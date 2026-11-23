@@ -972,3 +972,78 @@ func TestHostsVersion(t *testing.T) {
 		t.Errorf("a delete bumps the version: %d -> %d", v2, v3)
 	}
 }
+
+func TestImpact(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	// A year of its own, so other tests' jobs don't count.
+	day := time.Date(2031, 3, 10, 9, 0, 0, 0, time.UTC)
+	result := func(findings ...string) json.RawMessage {
+		return json.RawMessage(`{"findings":[` + strings.Join(findings, ",") + `]}`)
+	}
+	add := func(kind, state, repo string, n int, at time.Time, wait time.Duration, res json.RawMessage, sc *Scores) {
+		t.Helper()
+		if _, err := p.InsertJob(ctx, Job{Kind: kind, Platform: "gitlab", Host: "impact.example.com", Repo: repo, Number: n, State: state,
+			Enqueued: at.Add(-wait), Started: at.Add(-time.Second), Finished: at, Comments: 2, Result: res, Scores: sc}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sec := `{"severity":"critical","category":"security"}`
+	bug := `{"severity":"major","category":"bug"}`
+	q := `{"severity":"minor","category":"bug","kind":"question"}`
+	add("review", "done", "Team/App", 1, day, 40*time.Second, result(sec, bug, q), &Scores{Quality: 70, Security: 40, Maintainability: 80})
+	add("full review", "done", "Team/App", 1, day.Add(2*time.Hour), time.Second, result(bug), nil) // same MR again
+	add("review", "done", "team/lib", 2, day.AddDate(0, 0, 1), 20*time.Second, result(`{"severity":"weird","category":"Style!"}`), nil)
+	add("review", "skipped", "team/lib", 3, day, 0, nil, nil)                                  // not a review run
+	add("answer", "done", "team/lib", 2, day, 0, nil, nil)                                     // not a review run
+	add("review", "done", "team/old", 9, day.AddDate(0, -2, 0), time.Minute, result(bug), nil) // before the period
+
+	from, to := time.Date(2031, 3, 1, 0, 0, 0, 0, time.UTC), time.Date(2031, 4, 1, 0, 0, 0, 0, time.UTC)
+	im, err := p.Impact(ctx, ImpactFilter{From: from, To: to, Granularity: Daily, Top: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if im.ReviewRuns != 3 || im.PRsReviewed != 2 || im.ActiveRepos != 2 {
+		t.Errorf("runs %d, merge requests %d, repos %d", im.ReviewRuns, im.PRsReviewed, im.ActiveRepos)
+	}
+	if im.Findings != 4 || im.BySeverity["critical"] != 1 || im.BySeverity["major"] != 2 || im.BySeverity["other"] != 1 || im.SecurityFindings != 1 {
+		t.Errorf("findings (questions left out, odd values as other): %d %+v security %d", im.Findings, im.BySeverity, im.SecurityFindings)
+	}
+	if len(im.ByCategory) != 3 || im.ByCategory[0] != (FindingCount{Category: "bug", Count: 2}) {
+		t.Errorf("by category: %+v", im.ByCategory)
+	}
+	if im.FirstReviews != 2 || im.MedianFirstReviewMS != 30000 {
+		t.Errorf("first reviews: %d, median %dms (want 2, 30000)", im.FirstReviews, im.MedianFirstReviewMS)
+	}
+	if im.Scored != 1 || im.SecuritySum != 40 {
+		t.Errorf("scores: %d %d", im.Scored, im.SecuritySum)
+	}
+	if len(im.Trend) != 2 || im.Trend[0].Reviews != 2 || im.Trend[0].Findings["major"] != 2 || im.Trend[1].Findings["other"] != 1 {
+		t.Errorf("daily trend: %+v", im.Trend)
+	}
+	if len(im.TopByReviews) != 2 || im.TopByReviews[0].Repo != "team/app" || im.TopByReviews[0].Count != 2 ||
+		len(im.TopByFindings) != 2 || im.TopByFindings[0].Count != 3 {
+		t.Errorf("top repositories: %+v / %+v", im.TopByReviews, im.TopByFindings)
+	}
+	monthly, err := p.Impact(ctx, ImpactFilter{From: from, To: to, Granularity: Monthly})
+	if err != nil || monthly.ReviewRuns != 3 || monthly.Findings != 4 || len(monthly.Trend) != 1 || len(monthly.TopByReviews) != 0 {
+		t.Errorf("monthly: %v %+v", err, monthly)
+	}
+
+	// Reviews stored before migration 19 are filled in by the backfill.
+	bf := time.Date(2032, 6, 5, 12, 0, 0, 0, time.UTC)
+	if _, err := p.pool.Exec(ctx, `INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, finished, result)
+		VALUES ('review', 'gitlab', 'impact.example.com', 'Old/Repo', 4, '', 'push', 'done', $1, $2, $3)`,
+		bf.Add(-10*time.Second), bf, []byte(`{"findings":[{"severity":"minor","category":"tests"},{"severity":"major","category":"bug","kind":"question"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // twice: it only adds what is missing
+		if _, err := p.pool.Exec(ctx, impactBackfill); err != nil {
+			t.Fatal(err)
+		}
+	}
+	im, err = p.Impact(ctx, ImpactFilter{From: time.Date(2032, 6, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2032, 7, 1, 0, 0, 0, 0, time.UTC), Granularity: Daily})
+	if err != nil || im.PRsReviewed != 1 || im.Findings != 1 || im.BySeverity["minor"] != 1 || im.FirstReviews != 1 || im.MedianFirstReviewMS != 10000 {
+		t.Errorf("backfilled: %v %+v", err, im)
+	}
+}

@@ -136,6 +136,8 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/reviews/{id}/rerun", a.requireAPI(a.apiRerun))
 	mux.HandleFunc("GET /admin/api/metrics", a.requireAPI(a.apiMetrics))
 	mux.HandleFunc("GET /admin/api/repos/scores", a.requireAPI(a.apiRepoScores))
+	mux.HandleFunc("GET /admin/api/impact", a.requireAPI(a.apiImpact))
+	mux.HandleFunc("GET /admin/api/impact/export", a.requireAPI(a.apiImpactExport))
 	mux.HandleFunc("GET /admin/api/learnings", a.requireAPI(a.apiListLearnings))
 	mux.HandleFunc("POST /admin/api/learnings", a.requireAPI(a.apiCreateLearning))
 	mux.HandleFunc("PUT /admin/api/learnings/{id}", a.requireAPI(a.apiUpdateLearning))
@@ -173,7 +175,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "approvals": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "impact": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "approvals": true}
 
 // dropSlash redirects to the same URL without the trailing slash, keeping
 // the query string.
