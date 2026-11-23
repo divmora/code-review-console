@@ -2,4 +2,4 @@
 package version
 
 // Version is set at build time.
-var Version = "0.9.0" // x-release-please-version
+var Version = "0.10.0" // x-release-please-version
