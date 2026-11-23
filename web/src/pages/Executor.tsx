@@ -89,11 +89,11 @@ function VersionHint({ v, version, custom }: { v: View; version: string; custom:
     <Sub>
       {v.tags.length > 0
         ? custom
-          ? "A tag, a sha256: digest, or both to pin it (0.5.0@sha256:…). "
+          ? "A tag, a sha256: digest, or both to pin it (0.6.1@sha256:…). "
           : "Versions found in the image repository. "
         : v.tags_error
-          ? "Couldn't list the versions in the image repository (" + v.tags_error + "), so type one: a tag, a sha256: digest, or both (0.5.0@sha256:…). "
-          : "A tag, a sha256: digest, or both to pin it (0.5.0@sha256:…). "}
+          ? "Couldn't list the versions in the image repository (" + v.tags_error + "), so type one: a tag, a sha256: digest, or both (0.6.1@sha256:…). "
+          : "A tag, a sha256: digest, or both to pin it (0.6.1@sha256:…). "}
       The console needs code-review-bot {v.min_cli_version} or later. Now running <code className="break-all">{v.image}</code>.
       {release && (
         <>
@@ -213,7 +213,7 @@ export default function Executor() {
                     </NativeSelect>
                   )}
                   {(custom || v.tags.length === 0) && (
-                    <Input value={f.version} onChange={set("version")} placeholder="0.5.0" spellCheck={false} aria-label={v.tags.length ? "Other version" : "Version"} className="sm:max-w-64" />
+                    <Input value={f.version} onChange={set("version")} placeholder="0.6.1" spellCheck={false} aria-label={v.tags.length ? "Other version" : "Version"} className="sm:max-w-64" />
                   )}
                 </div>
               </Field>
