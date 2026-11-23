@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQueryState } from "../urlstate";
 import { RefreshCw, Search } from "lucide-react";
 import { get, qs } from "../api";
 import { ago, fmtDateTime, utcTitle } from "../format";
@@ -19,8 +20,10 @@ export default function Webhooks() {
   const [hooks, setHooks] = useState<Hook[] | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [more, setMore] = useState(false);
-  const [project, setProject] = useState("");
-  const [outcome, setOutcome] = useState("");
+  const [q, setQ] = useQueryState({ project: "", outcome: "" });
+  const [project, setProject] = useState(q.project);
+  const outcome = q.outcome;
+  const setOutcome = (v: string) => setQ({ outcome: v });
   // Webhook names by ID, to show which URL a delivery came in on.
   const [hookNames, setHookNames] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -39,9 +42,12 @@ export default function Webhooks() {
       .catch((e) => toast(errMsg(e), true));
   };
   useEffect(() => {
-    const t = window.setTimeout(() => load(), project ? 250 : 0);
+    const t = window.setTimeout(() => (load(), setQ({ project: project.trim() })), project ? 250 : 0);
     return () => window.clearTimeout(t);
   }, [project, outcome]);
+  useEffect(() => {
+    if (q.project !== project.trim()) setProject(q.project); // the URL changed (a link, Back)
+  }, [q.project]);
   return (
     <section className="grid gap-4">
       <Toolbar>

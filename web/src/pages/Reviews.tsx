@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, Play, Search } from "lucide-react";
 import { get, post, qs } from "../api";
 import JobsChart, { fillBuckets, Metrics, series } from "../Chart";
 import { avg, ScoreChart, ScoreChips, ScoreKind, ScoreLegend, Scores, ScoreSums, scoreKinds } from "../scores";
+import { useQueryState } from "../urlstate";
 import { ago, fmtDur, fmtNum, fmtDateTime, utcTitle } from "../format";
 import { Empty, errMsg, Locked, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useFeature, useMe, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
@@ -123,17 +124,34 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
   );
 }
 
+// The query-string names match /admin/api/reviews.
+const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below"] as const;
+const reviewView = {
+  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "",
+  sort: "", granularity: "day", review: "",
+};
+
 export default function Reviews() {
   const toast = useToast();
-  const [gran, setGran] = useState("day");
+  // Filters, sort, chart period and the open review live in the URL
+  // (/admin/reviews?score_kind=security&score_below=60&sort=security).
+  const [q, setQ] = useQueryState(reviewView);
+  const gran = q.granularity;
+  const setGran = (v: string) => setQ({ granularity: v });
+  const f = useMemo(() => Object.fromEntries(filterKeys.map((k) => [k, q[k]])) as Record<(typeof filterKeys)[number], string>,
+    filterKeys.map((k) => q[k]));
+  const setF = (next: Partial<typeof f>) => setQ(next);
+  const sort = q.sort as "" | ScoreKind | "lowest";
+  const setSort = (v: typeof sort) => setQ({ sort: v });
+  const open = q.review ? Number(q.review) : null;
+  const setOpen = (id: number | null) => setQ({ review: id ? String(id) : "" });
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [hosts, setHosts] = useState<{ host: string; name: string }[]>([]);
-  const [f, setF] = useState({ host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "" });
-  const [sort, setSort] = useState<"" | ScoreKind | "lowest">("");
-  const [repoQ, setRepoQ] = useState("");
+  const [repoQ, setRepoQ] = useState(q.repo);
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [more, setMore] = useState(false);
-  const [open, setOpen] = useState<number | null>(null);
+  // A review opened from a link may not be on the first page of the list.
+  const [linked, setLinked] = useState<Job | null>(null);
   const [url, setURL] = useState("");
   const [full, setFull] = useState(false);
 
@@ -146,9 +164,16 @@ export default function Reviews() {
     if (hasMetrics) get<Metrics>("/admin/api/metrics" + qs({ granularity: gran, host: f.host })).then(setMetrics).catch((e) => toast(errMsg(e), true));
   }, [gran, f.host, hasMetrics]);
   useEffect(() => {
-    const t = window.setTimeout(() => setF((x) => ({ ...x, repo: repoQ.trim() })), 300);
+    const t = window.setTimeout(() => setF({ repo: repoQ.trim() }), 300);
     return () => window.clearTimeout(t);
   }, [repoQ]);
+  useEffect(() => {
+    if (q.repo !== repoQ.trim()) setRepoQ(q.repo); // the URL changed (a link, Back)
+  }, [q.repo]);
+  useEffect(() => {
+    if (!open || !jobs || jobs.some((j) => j.id === open) || linked?.id === open) return;
+    get<Job>("/admin/api/reviews/" + open).then(setLinked).catch((e) => toast(errMsg(e), true));
+  }, [open, jobs]);
   const loadJobs = (before?: number) =>
     get<{ reviews: Job[] }>("/admin/api/reviews" + qs({ limit: 100, ...f, before }))
       .then((d) => {
@@ -194,8 +219,8 @@ export default function Reviews() {
     tiles.push(["Avg scores (Q / S / M)", scoreKinds.map(([k]) => Math.round(periodAvg[k] || 0)).join(" / ")], ["Scored reviews", fmtNum(tot.scored)]);
   const lowest = (j: Job) => (j.scores ? Math.min(j.scores.quality, j.scores.security, j.scores.maintainability) : 101);
   const shown = !jobs || !sort ? jobs : [...jobs].sort((a, b) => (sort === "lowest" ? lowest(a) - lowest(b) : (a.scores?.[sort] ?? 101) - (b.scores?.[sort] ?? 101)));
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
-  const openJob = jobs?.find((j) => j.id === open) ?? null;
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ [k]: e.target.value });
+  const openJob = jobs?.find((j) => j.id === open) ?? (linked?.id === open ? linked : null);
 
   return (
     <section className="grid gap-4">
