@@ -211,6 +211,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
 
   function tick() {
     var headers = token ? { Authorization: "Bearer " + token } : {};
+    headers["X-Background"] = "1"; // refreshes don't keep an admin session alive
     fetch({{.StatusURL}}, { headers: headers, cache: "no-store", credentials: "same-origin" })
       .then(function (r) {
         if (r.status === 401) return r.json().then(function (b) { throw new Error((b && b.error) || "token required: open /dashboard?token=…"); });

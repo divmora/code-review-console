@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, Check, Circle, RefreshCw } from "lucide-react";
-import { get } from "../api";
+import { get, getBackground } from "../api";
 import { Empty, errMsg, Note, useRefreshMe, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,8 +28,9 @@ export default function Setup() {
   const refreshMe = useRefreshMe();
   const [st, setSt] = useState<Status | null>(null);
   const last = useRef("");
-  const load = () =>
-    get<Status>("/admin/api/setup")
+  // background: the periodic refresh, which doesn't count as activity.
+  const load = (background = false) =>
+    (background ? getBackground<Status> : get<Status>)("/admin/api/setup")
       .then((s) => {
         setSt(s);
         const key = s.done + "/" + s.complete;
@@ -41,7 +42,7 @@ export default function Setup() {
       .catch((e) => toast(errMsg(e), true));
   useEffect(() => {
     load();
-    const t = window.setInterval(load, 15000); // pick up deliveries and reviews as they happen
+    const t = window.setInterval(() => load(true), 15000); // pick up deliveries and reviews as they happen
     return () => window.clearInterval(t);
   }, []);
   if (!st) return <Empty>Loading…</Empty>;
@@ -63,7 +64,7 @@ export default function Setup() {
             <div className="h-full rounded-full bg-primary transition-all" style={{ width: pct + "%" }} />
           </div>
           <div>
-            <Button variant="outline" size="sm" onClick={load}>
+            <Button variant="outline" size="sm" onClick={() => load()}>
               <RefreshCw /> Check again
             </Button>
           </div>

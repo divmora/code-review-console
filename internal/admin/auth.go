@@ -426,7 +426,18 @@ func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 		a.logger.Warn("admin session ended: no longer allowed by the sign-in rules", "email", s.Email, "why", reason)
 		return nil, false
 	}
-	if time.Since(s.LastSeen) > time.Minute {
+	// Signed out after a while without activity (issue #87): the last
+	// request the person made, not the panel's background refreshes.
+	if idle := a.settings().Get(r.Context()).SessionIdleMinutes; idle > 0 && !s.LastSeen.IsZero() {
+		if quiet := time.Since(s.LastSeen); quiet > time.Duration(idle)*time.Minute {
+			_ = a.store.DeleteSession(r.Context(), sum[:])
+			_ = a.store.Audit(r.Context(), firstNonEmpty(s.Email, s.Subject), "session.ended", "admin",
+				map[string]any{"reason": "idle", "idle_minutes": idle, "last_seen": s.LastSeen})
+			a.logger.Info("admin session ended after inactivity", "email", s.Email, "idle", quiet.Round(time.Minute).String())
+			return nil, false
+		}
+	}
+	if time.Since(s.LastSeen) > time.Minute && !isBackground(r) {
 		_ = a.store.TouchSession(r.Context(), sum[:], clientip.From(r.Context()).IP)
 	}
 	return s, true
@@ -438,6 +449,10 @@ func (a *Admin) SignedIn(r *http.Request) bool {
 	_, ok := a.session(r)
 	return ok
 }
+
+// isBackground reports a request the panel makes on its own (a periodic
+// refresh), which doesn't count as the person being active.
+func isBackground(r *http.Request) bool { return r.Header.Get("X-Background") == "1" }
 
 // sessionHash is the stored hash of the request's session cookie.
 func sessionHash(r *http.Request) []byte {
