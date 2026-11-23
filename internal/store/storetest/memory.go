@@ -521,7 +521,65 @@ func jobMatches(j store.Job, f store.JobFilter) bool {
 		(f.RepoLike == "" || strings.Contains(strings.ToLower(j.Repo), strings.ToLower(f.RepoLike))) &&
 		(f.State == "" || j.State == f.State) && (f.Kind == "" || j.Kind == f.Kind) && (f.Trigger == "" || j.Trigger == f.Trigger) &&
 		(f.From.IsZero() || !j.Finished.Before(f.From)) && (f.To.IsZero() || j.Finished.Before(f.To)) &&
-		(f.BeforeID == 0 || j.ID < f.BeforeID)
+		(f.BeforeID == 0 || j.ID < f.BeforeID) && scoreMatches(j, f)
+}
+
+func scoreMatches(j store.Job, f store.JobFilter) bool {
+	if f.ScoreBelow <= 0 {
+		return true
+	}
+	if j.Scores == nil {
+		return false
+	}
+	if f.ScoreKind == "quality" || f.ScoreKind == "security" || f.ScoreKind == "maintainability" {
+		return j.Scores.Get(f.ScoreKind) < f.ScoreBelow
+	}
+	return min(j.Scores.Quality, j.Scores.Security, j.Scores.Maintainability) < f.ScoreBelow
+}
+
+func addScores(p *store.MetricPoint, s *store.Scores) {
+	if s == nil {
+		return
+	}
+	p.Scored++
+	p.QualitySum += int64(s.Quality)
+	p.SecuritySum += int64(s.Security)
+	p.MaintainabilitySum += int64(s.Maintainability)
+}
+
+func (m *Memory) RepoScores(_ context.Context, since time.Time) ([]store.RepoScore, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.RepoScore{}
+	idx := map[string]int{}
+	for i := len(m.jobs) - 1; i >= 0; i-- { // newest first: the first seen is the latest
+		j := m.jobs[i]
+		if j.Scores == nil {
+			continue
+		}
+		key := j.Platform + "|" + strings.ToLower(j.Host) + "|" + strings.ToLower(j.Repo)
+		k, ok := idx[key]
+		if !ok {
+			k = len(out)
+			idx[key] = k
+			out = append(out, store.RepoScore{Platform: j.Platform, Host: strings.ToLower(j.Host), Repo: strings.ToLower(j.Repo),
+				Number: j.Number, At: j.Finished, Latest: *j.Scores, Trend: []store.MetricPoint{}})
+		}
+		if j.Finished.Before(since) {
+			continue
+		}
+		f := j.Finished.UTC()
+		day := time.Date(f.Year(), f.Month(), f.Day(), 0, 0, 0, 0, time.UTC)
+		r := &out[k]
+		if n := len(r.Trend); n == 0 || !r.Trend[0].Bucket.Equal(day) {
+			r.Trend = append([]store.MetricPoint{{Bucket: day}}, r.Trend...)
+		}
+		addScores(&r.Trend[0], j.Scores)
+	}
+	sort.Slice(out, func(a, b int) bool {
+		return out[a].Platform+out[a].Host+out[a].Repo < out[b].Platform+out[b].Host+out[b].Repo
+	})
+	return out, nil
 }
 
 func (m *Memory) GetJob(_ context.Context, id int64) (*store.Job, error) {
@@ -578,6 +636,7 @@ func (m *Memory) Metrics(_ context.Context, f store.MetricsFilter) ([]store.Metr
 		if !j.Started.IsZero() {
 			p.DurationMS += j.Finished.Sub(j.Started).Milliseconds()
 		}
+		addScores(p, j.Scores)
 	}
 	out := []store.MetricPoint{}
 	for _, p := range by {

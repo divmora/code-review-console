@@ -1366,3 +1366,36 @@ func TestSessionIdleTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewScoresAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	ctx := context.Background()
+	now := time.Now()
+	for i, sc := range []*store.Scores{{Quality: 90, Security: 55, Maintainability: 80}, {Quality: 92, Security: 95, Maintainability: 91}, nil} {
+		if _, err := e.st.InsertJob(ctx, store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.com", Repo: "g/api", Number: i + 1,
+			State: "done", Enqueued: now, Started: now, Finished: now, Scores: sc}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var list struct {
+		Reviews []store.Job `json:"reviews"`
+	}
+	code, body := e.do(t, "GET", "/admin/api/reviews", "", nil)
+	if _ = json.Unmarshal(body, &list); code != 200 || len(list.Reviews) != 3 || !bytes.Contains(body, []byte(`"scores":{"quality":90,"security":55,"maintainability":80}`)) {
+		t.Fatalf("reviews carry their scores: %d %s", code, body)
+	}
+	code, body = e.do(t, "GET", "/admin/api/reviews?score_kind=security&score_below=60", "", nil)
+	if _ = json.Unmarshal(body, &list); code != 200 || len(list.Reviews) != 1 || list.Reviews[0].Number != 1 {
+		t.Errorf("security below 60: %d %s", code, body)
+	}
+	code, body = e.do(t, "GET", "/admin/api/repos/scores?days=7", "", nil)
+	var rs struct {
+		Days  int               `json:"days"`
+		Repos []store.RepoScore `json:"repos"`
+	}
+	if _ = json.Unmarshal(body, &rs); code != 200 || rs.Days != 7 || len(rs.Repos) != 1 || rs.Repos[0].Latest.Quality != 92 || len(rs.Repos[0].Trend) != 1 || rs.Repos[0].Trend[0].Scored != 2 {
+		t.Errorf("latest scores and trend per repository: %d %s", code, body)
+	}
+}

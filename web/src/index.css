@@ -43,6 +43,10 @@
   --st-done: #0ca30c;
   --st-skip: #9a9aa6;
   --st-fail: #d03b3b;
+  /* Score trend lines: quality / security / maintainability. */
+  --sc-quality: #4f5bd5;
+  --sc-security: #0e8a8a;
+  --sc-maintainability: #b5621b;
   --grid: oklch(0.91 0.006 286);
 }
 
@@ -80,6 +84,9 @@
   --sidebar-border: oklch(0.3 0.01 286);
   --sidebar-ring: oklch(0.7 0.15 283);
   --st-skip: #6b6b76;
+  --sc-quality: #9aa2ff;
+  --sc-security: #45c9c9;
+  --sc-maintainability: #e9a25e;
   --grid: oklch(0.3 0.01 286);
 }
 

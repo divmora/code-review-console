@@ -44,6 +44,7 @@ func TestLicenseGates(t *testing.T) {
 	paid := []struct{ method, path string }{
 		{"GET", "/admin/api/audit"},
 		{"GET", "/admin/api/metrics"},
+		{"GET", "/admin/api/repos/scores"},
 		{"POST", "/admin/api/rules"},
 		{"POST", "/admin/api/learnings"},
 	}

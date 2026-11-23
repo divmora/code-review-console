@@ -3,7 +3,25 @@ import { Plus, Search, Settings2 } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
 import type { Access, Overrides, Repo } from "../types";
-import { Chips, Empty, errMsg, Field, FormGrid, NativeSelect, Note, Panel, SettingsEditor, settingsChips, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useMe, useToast } from "../ui";
+import { Chips, Empty, errMsg, Field, FormGrid, NativeSelect, Note, Panel, SettingsEditor, settingsChips, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useMe, useToast } from "../ui";
+import { avg, ScoreChart, ScoreChips, ScoreLegend, Scores, ScoreSums, scoreKinds, Sparkline } from "../scores";
+import { fillBuckets, Metrics } from "../Chart";
+
+type RepoScore = { platform: string; host: string; repo: string; number: number; at: string; latest: Scores; trend: ScoreSums[] };
+
+// dailyTrend fills the days without a scored review, so the sparkline's
+// x axis is time.
+function dailyTrend(since: string, days: number, trend: ScoreSums[]): ScoreSums[] {
+  const by: Record<string, ScoreSums> = {};
+  trend.forEach((p) => (by[new Date(p.bucket).toISOString().slice(0, 10)] = p));
+  const out: ScoreSums[] = [];
+  const start = new Date(since).getTime();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start + i * 86400e3).toISOString();
+    out.push(by[d.slice(0, 10)] || { bucket: d });
+  }
+  return out;
+}
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -14,6 +32,46 @@ function whyText(e: Access): string {
   if (e.source === "allowlist") return "no rule matches · allowlist default";
   if (e.source === "default") return "no rule matches · reviewed by default";
   return "by " + e.source;
+}
+
+// RepoScoreTrend charts one repository's average scores over 30 days, 12
+// months or all of its history (the daily and monthly rollups).
+function RepoScoreTrend({ repo }: { repo: Repo }) {
+  const [period, setPeriod] = useState("30d");
+  const [m, setM] = useState<Metrics | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams({ platform: repo.platform, host: repo.host, repo: repo.path, granularity: period === "30d" ? "day" : "month" });
+    if (period === "all") q.set("from", "2000-01-01");
+    get<Metrics>("/admin/api/metrics?" + q.toString()).then(setM).catch(() => setM(null));
+  }, [repo.id, period]);
+  let pts = m ? (fillBuckets(m) as ScoreSums[]) : [];
+  if (period === "all") pts = pts.slice(Math.max(0, pts.findIndex((p) => p.scored)));
+  const tot = pts.reduce((a, p) => ({ bucket: "", scored: (a.scored || 0) + (p.scored || 0), quality_sum: (a.quality_sum || 0) + (p.quality_sum || 0),
+    security_sum: (a.security_sum || 0) + (p.security_sum || 0), maintainability_sum: (a.maintainability_sum || 0) + (p.maintainability_sum || 0) }), { bucket: "" } as ScoreSums);
+  return (
+    <div className="mb-6 grid gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Review scores</h3>
+        <span className="flex-1" />
+        <NativeSelect className="w-auto" aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
+          <option value="30d">Last 30 days</option>
+          <option value="12m">Last 12 months</option>
+          <option value="all">All history</option>
+        </NativeSelect>
+      </div>
+      {!m ? (
+        <Sub>Loading…</Sub>
+      ) : !tot.scored ? (
+        <Sub>No scored reviews in this period.</Sub>
+      ) : (
+        <>
+          <ScoreLegend values={Object.fromEntries(scoreKinds.map(([k]) => [k, avg(tot, k)]))} />
+          <ScoreChart points={pts} granularity={m.granularity} />
+          <Sub>{tot.scored} scored reviews; the numbers above are the period's averages.</Sub>
+        </>
+      )}
+    </div>
+  );
 }
 
 export default function Repositories() {
@@ -31,6 +89,15 @@ export default function Repositories() {
   useEffect(() => {
     load();
   }, []);
+  const hasMetrics = useFeature("metrics");
+  const [scores, setScores] = useState<{ since: string; days: number; by: Record<string, RepoScore> } | null>(null);
+  useEffect(() => {
+    if (!hasMetrics) return;
+    get<{ since: string; days: number; repos: RepoScore[] }>("/admin/api/repos/scores?days=30")
+      .then((d) => setScores({ since: d.since, days: d.days, by: Object.fromEntries(d.repos.map((r) => [r.platform + "|" + r.host + "|" + r.repo, r])) }))
+      .catch(() => {});
+  }, [hasMetrics]);
+  const scoreOf = (r: Repo) => scores?.by[r.platform + "|" + r.host.toLowerCase() + "|" + r.path.toLowerCase()];
 
   const save = (r: Repo, mode: string, settings: Overrides) =>
     put<Repo>("/admin/api/repos/" + r.id, { mode, settings }).then((x) => {
@@ -97,6 +164,7 @@ export default function Repositories() {
                 <TableHead className="pl-4">Reviews</TableHead>
                 <TableHead>Repository</TableHead>
                 <TableHead>Last webhook</TableHead>
+                {hasMetrics && <TableHead>Scores · 30 days</TableHead>}
                 <TableHead>Effective settings</TableHead>
                 <TableHead>Last changed</TableHead>
                 <TableHead />
@@ -127,6 +195,23 @@ export default function Repositories() {
                       </Sub>
                     </TableCell>
                     <TableCell className="align-top text-muted-foreground">{ago(r.last_seen)}</TableCell>
+                    {hasMetrics && (
+                      <TableCell className="align-top">
+                        {(() => {
+                          const sc = scoreOf(r);
+                          if (!sc) return <Sub>No scored review yet</Sub>;
+                          return (
+                            <div className="grid gap-1">
+                              <ScoreChips s={sc.latest} />
+                              <Sparkline points={dailyTrend(scores!.since, scores!.days, sc.trend)} label={"Daily average scores of " + r.path + ", last 30 days"} />
+                              <Sub>
+                                latest: #{sc.number} · {ago(sc.at)}
+                              </Sub>
+                            </div>
+                          );
+                        })()}
+                      </TableCell>
+                    )}
                     <TableCell className="align-top whitespace-normal">
                       <Chips items={settingsChips(e.settings)} />
                       {(e.rules || []).length > 0 && JSON.stringify(e.settings) !== JSON.stringify(r.settings || {}) && <Sub>includes rule settings</Sub>}
@@ -156,6 +241,7 @@ export default function Repositories() {
       )}
 
       <SidePanel open={!!edited} onClose={() => setEditing(null)} title={edited?.path ?? ""} description={edited ? `${edited.platform} · ${edited.host} · review settings for this repository` : undefined}>
+        {edited && hasMetrics && <RepoScoreTrend key={edited.id} repo={edited} />}
         {edited && (
           <SettingsEditor
             key={edited.id}

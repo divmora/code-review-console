@@ -65,6 +65,56 @@ type Job struct {
 	TokensIn  int             `json:"tokens_in"`
 	TokensOut int             `json:"tokens_out"`
 	Model     string          `json:"model"`
+	// Scores are the review's scores (nil for other jobs, skipped
+	// reviews and CLIs that don't score).
+	Scores *Scores `json:"scores,omitempty"`
+}
+
+// Scores rate a review's change from 1 (poor) to 100 (excellent), as the
+// CLI reports them.
+type Scores struct {
+	Quality         int `json:"quality"`
+	Security        int `json:"security"`
+	Maintainability int `json:"maintainability"`
+}
+
+// ScoreKinds are the score names, in display order.
+var ScoreKinds = []string{"quality", "security", "maintainability"}
+
+// Get returns one score by kind (0 for an unknown kind).
+func (s Scores) Get(kind string) int {
+	switch kind {
+	case "quality":
+		return s.Quality
+	case "security":
+		return s.Security
+	case "maintainability":
+		return s.Maintainability
+	}
+	return 0
+}
+
+// Valid reports whether every score is in 1..100.
+func (s Scores) Valid() bool {
+	for _, k := range ScoreKinds {
+		if v := s.Get(k); v < 1 || v > 100 {
+			return false
+		}
+	}
+	return true
+}
+
+// RepoScore is a repository's latest scored review and its daily score
+// trend.
+type RepoScore struct {
+	Platform string    `json:"platform"`
+	Host     string    `json:"host"`
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	At       time.Time `json:"at"`
+	Latest   Scores    `json:"latest"`
+	// Trend is one point per day with scored reviews, oldest first.
+	Trend []MetricPoint `json:"trend"`
 }
 
 // HostRow is a code host as stored: Config holds non-secret settings and
@@ -246,6 +296,10 @@ type JobFilter struct {
 	From, To time.Time // finished within [From, To)
 	BeforeID int64     // pagination: only jobs with id < BeforeID
 	Limit    int
+	// ScoreKind and ScoreBelow keep scored reviews whose ScoreKind score
+	// is below ScoreBelow ("any" means any of the three).
+	ScoreKind  string
+	ScoreBelow int
 }
 
 // Metric granularities.
@@ -278,6 +332,12 @@ type MetricPoint struct {
 	TokensIn   int64     `json:"tokens_in"`
 	TokensOut  int64     `json:"tokens_out"`
 	DurationMS int64     `json:"duration_ms"`
+	// Scored counts reviews with scores; the sums divided by it are the
+	// average scores.
+	Scored             int   `json:"scored"`
+	QualitySum         int64 `json:"quality_sum"`
+	SecuritySum        int64 `json:"security_sum"`
+	MaintainabilitySum int64 `json:"maintainability_sum"`
 }
 
 // ModelProfile is a model configuration managed in the UI. It never holds
@@ -439,6 +499,9 @@ type Store interface {
 	// older than hourlyBefore (daily and monthly rollups are kept).
 	PruneJobs(ctx context.Context, before, hourlyBefore time.Time) (int64, error)
 	RecentJobs(ctx context.Context, limit int) ([]Job, error)
+	// RepoScores returns each repository's latest scored review, with its
+	// daily score trend since since.
+	RepoScores(ctx context.Context, since time.Time) ([]RepoScore, error)
 	// ListJobs returns jobs newest first, without Result.
 	ListJobs(ctx context.Context, f JobFilter) ([]Job, error)
 	// GetJob returns one job including Result.
@@ -780,7 +843,29 @@ var migrations = []string{
 		owner   text PRIMARY KEY,
 		seen_at timestamptz NOT NULL DEFAULT now()
 	);`,
+	// 17: review scores per job and in the rollups (issue #98), filled in
+	// from the review results already stored.
+	`ALTER TABLE jobs ADD COLUMN score_quality smallint, ADD COLUMN score_security smallint, ADD COLUMN score_maintainability smallint;
+	CREATE INDEX jobs_scored_idx ON jobs (platform, host, lower(repo), id DESC) WHERE score_quality IS NOT NULL;
+	ALTER TABLE job_metrics ADD COLUMN scored integer NOT NULL DEFAULT 0, ADD COLUMN quality_sum bigint NOT NULL DEFAULT 0,
+		ADD COLUMN security_sum bigint NOT NULL DEFAULT 0, ADD COLUMN maintainability_sum bigint NOT NULL DEFAULT 0;` + backfillScores,
 }
+
+// backfillScores fills in the scores of jobs whose stored result has them
+// (all three 1..100) and adds them to the rollups (migration 17).
+const backfillScores = `
+	UPDATE jobs SET score_quality = (result->'scores'->>'quality')::int, score_security = (result->'scores'->>'security')::int,
+		score_maintainability = (result->'scores'->>'maintainability')::int
+	WHERE score_quality IS NULL AND jsonb_typeof(result->'scores') = 'object'
+		AND (result->'scores'->>'quality') ~ '^[0-9]{1,3}$' AND (result->'scores'->>'security') ~ '^[0-9]{1,3}$'
+		AND (result->'scores'->>'maintainability') ~ '^[0-9]{1,3}$'
+		AND (result->'scores'->>'quality')::int BETWEEN 1 AND 100 AND (result->'scores'->>'security')::int BETWEEN 1 AND 100
+		AND (result->'scores'->>'maintainability')::int BETWEEN 1 AND 100;
+	UPDATE job_metrics m SET scored = s.n, quality_sum = s.q, security_sum = s.sec, maintainability_sum = s.mt
+	FROM (SELECT g, date_trunc(g, finished AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket, platform, host, lower(repo) AS repo,
+			count(*) AS n, sum(score_quality) AS q, sum(score_security) AS sec, sum(score_maintainability) AS mt
+		FROM jobs, unnest(ARRAY['hour', 'day', 'month']) AS g WHERE score_quality IS NOT NULL GROUP BY 1, 2, 3, 4, 5) s
+	WHERE m.granularity = s.g AND m.bucket = s.bucket AND m.platform = s.platform AND m.host = s.host AND m.repo = s.repo;`
 
 // migrate applies pending migrations under an advisory lock, so several
 // server instances can start at once.
@@ -1722,11 +1807,13 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	var id int64
 	err = tx.QueryRow(ctx, `
 		INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
-			merged, error, note, comments, files, tokens_in, tokens_out, model, result, requested_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+			merged, error, note, comments, files, tokens_in, tokens_out, model, result, requested_by,
+			score_quality, score_security, score_maintainability)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		RETURNING id`,
 		j.Kind, j.Platform, j.Host, j.Repo, j.Number, j.URL, j.Trigger, j.State, j.Enqueued, nullTime(j.Started), j.Finished,
-		j.Merged, j.Error, j.Note, j.Comments, j.Files, j.TokensIn, j.TokensOut, j.Model, result, j.RequestedBy).Scan(&id)
+		j.Merged, j.Error, j.Note, j.Comments, j.Files, j.TokensIn, j.TokensOut, j.Model, result, j.RequestedBy,
+		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability")).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -1740,17 +1827,27 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 		}
 		return 0
 	}
+	var sc Scores
+	scored := 0
+	if j.Scores != nil {
+		sc, scored = *j.Scores, 1
+	}
 	// One row per granularity; buckets are UTC.
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO job_metrics (granularity, bucket, platform, host, repo, jobs, done, skipped, failed, comments, files, tokens_in, tokens_out, duration_ms)
-		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12
+		INSERT INTO job_metrics (granularity, bucket, platform, host, repo, jobs, done, skipped, failed, comments, files, tokens_in, tokens_out, duration_ms,
+			scored, quality_sum, security_sum, maintainability_sum)
+		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		FROM unnest(ARRAY['hour', 'day', 'month']) AS g
 		ON CONFLICT (granularity, bucket, platform, host, repo) DO UPDATE SET
 			jobs = job_metrics.jobs + 1, done = job_metrics.done + EXCLUDED.done, skipped = job_metrics.skipped + EXCLUDED.skipped,
 			failed = job_metrics.failed + EXCLUDED.failed, comments = job_metrics.comments + EXCLUDED.comments,
 			files = job_metrics.files + EXCLUDED.files, tokens_in = job_metrics.tokens_in + EXCLUDED.tokens_in,
-			tokens_out = job_metrics.tokens_out + EXCLUDED.tokens_out, duration_ms = job_metrics.duration_ms + EXCLUDED.duration_ms`,
-		j.Finished, j.Platform, j.Host, j.Repo, is("done"), is("skipped"), is("failed"), j.Comments, j.Files, j.TokensIn, j.TokensOut, durMS); err != nil {
+			tokens_out = job_metrics.tokens_out + EXCLUDED.tokens_out, duration_ms = job_metrics.duration_ms + EXCLUDED.duration_ms,
+			scored = job_metrics.scored + EXCLUDED.scored, quality_sum = job_metrics.quality_sum + EXCLUDED.quality_sum,
+			security_sum = job_metrics.security_sum + EXCLUDED.security_sum,
+			maintainability_sum = job_metrics.maintainability_sum + EXCLUDED.maintainability_sum`,
+		j.Finished, j.Platform, j.Host, j.Repo, is("done"), is("skipped"), is("failed"), j.Comments, j.Files, j.TokensIn, j.TokensOut, durMS,
+		scored, sc.Quality, sc.Security, sc.Maintainability); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit(ctx)
@@ -1762,7 +1859,8 @@ func (p *Postgres) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint,
 	default:
 		return nil, fmt.Errorf("granularity %q: want hour, day or month", f.Granularity)
 	}
-	q := `SELECT bucket, sum(jobs), sum(done), sum(skipped), sum(failed), sum(comments), sum(files), sum(tokens_in), sum(tokens_out), sum(duration_ms)
+	q := `SELECT bucket, sum(jobs), sum(done), sum(skipped), sum(failed), sum(comments), sum(files), sum(tokens_in), sum(tokens_out), sum(duration_ms),
+		sum(scored), sum(quality_sum), sum(security_sum), sum(maintainability_sum)
 		FROM job_metrics WHERE granularity = $1 AND bucket >= $2 AND bucket < $3`
 	args := []any{f.Granularity, f.From, f.To}
 	for _, c := range []struct{ col, v string }{{"platform", f.Platform}, {"host", strings.ToLower(f.Host)}, {"repo", strings.ToLower(f.Repo)}} {
@@ -1779,7 +1877,8 @@ func (p *Postgres) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint,
 	out := []MetricPoint{}
 	for rows.Next() {
 		var m MetricPoint
-		if err := rows.Scan(&m.Bucket, &m.Jobs, &m.Done, &m.Skipped, &m.Failed, &m.Comments, &m.Files, &m.TokensIn, &m.TokensOut, &m.DurationMS); err != nil {
+		if err := rows.Scan(&m.Bucket, &m.Jobs, &m.Done, &m.Skipped, &m.Failed, &m.Comments, &m.Files, &m.TokensIn, &m.TokensOut, &m.DurationMS,
+			&m.Scored, &m.QualitySum, &m.SecuritySum, &m.MaintainabilitySum); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -1812,13 +1911,22 @@ func (p *Postgres) PruneJobs(ctx context.Context, before, hourlyBefore time.Time
 }
 
 const jobCols = `id, kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
-	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by`
+	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by, score_quality, score_security, score_maintainability`
+
+// scoreArg is one score for an insert (NULL without scores).
+func scoreArg(s *Scores, kind string) any {
+	if s == nil {
+		return nil
+	}
+	return s.Get(kind)
+}
 
 func scanJob(row pgx.Row, withResult bool) (*Job, error) {
 	var j Job
 	var started *time.Time
+	var q, sec, mt *int
 	dest := []any{&j.ID, &j.Kind, &j.Platform, &j.Host, &j.Repo, &j.Number, &j.URL, &j.Trigger, &j.State, &j.Enqueued, &started, &j.Finished,
-		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy}
+		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy, &q, &sec, &mt}
 	var result []byte
 	if withResult {
 		dest = append(dest, &result)
@@ -1831,6 +1939,9 @@ func scanJob(row pgx.Row, withResult bool) (*Job, error) {
 	}
 	if started != nil {
 		j.Started = *started
+	}
+	if q != nil && sec != nil && mt != nil {
+		j.Scores = &Scores{Quality: *q, Security: *sec, Maintainability: *mt}
 	}
 	if len(result) > 0 {
 		j.Result = result
@@ -1882,6 +1993,14 @@ func (p *Postgres) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	if f.BeforeID > 0 {
 		add("id < $%d", f.BeforeID)
 	}
+	if f.ScoreBelow > 0 {
+		switch f.ScoreKind {
+		case "quality", "security", "maintainability":
+			add("score_"+f.ScoreKind+" < $%d", f.ScoreBelow)
+		default: // any
+			add("least(score_quality, score_security, score_maintainability) < $%d", f.ScoreBelow)
+		}
+	}
 	q := `SELECT ` + jobCols + ` FROM jobs`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -1902,6 +2021,52 @@ func (p *Postgres) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 		out = append(out, *j)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) RepoScores(ctx context.Context, since time.Time) ([]RepoScore, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT DISTINCT ON (platform, host, lower(repo)) platform, host, lower(repo), number, finished,
+			score_quality, score_security, score_maintainability
+		FROM jobs WHERE score_quality IS NOT NULL
+		ORDER BY platform, host, lower(repo), id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	out := []RepoScore{}
+	idx := map[string]int{}
+	for rows.Next() {
+		var r RepoScore
+		if err := rows.Scan(&r.Platform, &r.Host, &r.Repo, &r.Number, &r.At, &r.Latest.Quality, &r.Latest.Security, &r.Latest.Maintainability); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		r.Trend = []MetricPoint{}
+		idx[r.Platform+"|"+r.Host+"|"+r.Repo] = len(out)
+		out = append(out, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	trows, err := p.pool.Query(ctx, `
+		SELECT platform, host, repo, bucket, scored, quality_sum, security_sum, maintainability_sum
+		FROM job_metrics WHERE granularity = 'day' AND bucket >= $1 AND scored > 0
+		ORDER BY bucket`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var plat, host, repo string
+		var m MetricPoint
+		if err := trows.Scan(&plat, &host, &repo, &m.Bucket, &m.Scored, &m.QualitySum, &m.SecuritySum, &m.MaintainabilitySum); err != nil {
+			return nil, err
+		}
+		if i, ok := idx[plat+"|"+host+"|"+repo]; ok {
+			out[i].Trend = append(out[i].Trend, m)
+		}
+	}
+	return out, trows.Err()
 }
 
 func (p *Postgres) GetJob(ctx context.Context, id int64) (*Job, error) {

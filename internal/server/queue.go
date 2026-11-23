@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/divmora/code-review-console/internal/store"
 )
 
 // State of a job record.
@@ -45,6 +47,8 @@ type Report struct {
 	Model     string `json:"model,omitempty"`
 	// Result is the full review result JSON (stored, not shown in status).
 	Result json.RawMessage `json:"-"`
+	// Scores are the review's scores, when the CLI gave them.
+	Scores *store.Scores `json:"scores,omitempty"`
 }
 
 // Record is one job's lifecycle, as shown on the dashboard.

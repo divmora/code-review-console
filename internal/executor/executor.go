@@ -53,11 +53,20 @@ type Result struct {
 	Partial   bool // some batches failed
 	TooLarge  bool
 	Answer    string // for ask
+	// Scores are the review's scores (nil when the CLI gave none).
+	Scores *Scores
 	// Unreadable is set when the CLI succeeded but its result couldn't be
 	// read in full (see parseMerged); the counts are a best effort.
 	Unreadable string
 	// Logs is the tail of stderr.
 	Logs string
+}
+
+// Scores rate a review's change from 1 to 100 (the CLI's "scores").
+type Scores struct {
+	Quality         int `json:"quality"`
+	Security        int `json:"security"`
+	Maintainability int `json:"maintainability"`
 }
 
 // Executor runs tasks.
@@ -161,6 +170,7 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 		Model      string          `json:"model"`
 		Errors     []any           `json:"errors"`
 		TooLarge   bool            `json:"too_large"`
+		Scores     *Scores         `json:"scores"`
 		Usage      struct {
 			InputTokens  int `json:"InputTokens"`
 			OutputTokens int `json:"OutputTokens"`
@@ -176,8 +186,13 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 	res.Posted, res.Rejected, res.Files, res.Model = v.Posted, v.Rejected, len(v.Reviewed), v.Model
 	res.TokensIn, res.TokensOut = v.Usage.InputTokens, v.Usage.OutputTokens
 	res.Partial, res.TooLarge = len(v.Errors) > 0, v.TooLarge
+	if sc := v.Scores; !res.Skipped && sc != nil && in1to100(sc.Quality) && in1to100(sc.Security) && in1to100(sc.Maintainability) {
+		res.Scores = sc
+	}
 	return res, nil
 }
+
+func in1to100(v int) bool { return v >= 1 && v <= 100 }
 
 // tailBuffer keeps the last n bytes written to it.
 type tailBuffer struct {

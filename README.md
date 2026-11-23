@@ -73,6 +73,7 @@ Rules are managed under *Groups & patterns* in the admin UI:
 | `acme/svc-*` | matching names in one level (`*` never crosses `/`) |
 
 Deeper rules beat shallower ones and exact groups beat patterns, so `acme` enabled with `acme/legacy-*` disabled reviews everything except the legacy repositories. A repository set to Enabled or Disabled overrides every rule. Settings add up from the broadest matching rule to the most specific, then the repository's own settings; extra instructions are joined.
+- **Scores**: each review's quality, security and maintainability scores on Reviews, per repository with trends, on the status dashboard and in `/metrics`.
 - **Status**: running, pending and recent reviews on a status dashboard, for signed-in admins by default; it can also be opened with a token (for a team screen) or made public (Settings → Status dashboard access).
 - **Metrics**: `/metrics` in the Prometheus format (queue, reviews, durations, tokens, webhooks, license and token expiry), off until chosen under Settings.
 

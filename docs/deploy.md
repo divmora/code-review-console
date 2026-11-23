@@ -348,8 +348,9 @@ release stops reading these keys.
 ## Status dashboard
 
 When it is on (**Settings → Status dashboard**), the dashboard shows every running, waiting and recent
-review: repository, merge or pull request, errors and token use. **Settings → Status dashboard
-access** decides who can open it:
+review: repository, merge or pull request, errors, token use and the review's scores. Hiding
+repository names hides the scores too. **Settings → Status dashboard access** decides who can open
+it:
 
 | Access | Who | Where |
 |---|---|---|
@@ -438,8 +439,14 @@ gives a ready-made scrape config:
 | `codereview_license_state` | gauge | `state` (none, active, grace, expired, invalid) |
 | `codereview_license_expiry_timestamp_seconds` | gauge | |
 | `codereview_host_token_expiry_timestamp_seconds` | gauge | `platform`, `host` |
+| `codereview_review_score` | gauge | `kind` (quality, security, maintainability), `platform`, `host`, `repo` |
 
-Counters and the queue are per replica (Prometheus adds them up); labels never carry repository names.
+Counters and the queue are per replica (Prometheus adds them up), and their labels never carry
+repository names. `codereview_review_score` is each repository's latest review score, read from the
+database (the same on every replica, refreshed at most once a minute), one series per repository and
+kind. While the status dashboard hides repository names, it has only the `kind` label instead: the
+average of the repositories' latest scores. For example, to alert when a repository's latest
+security score drops below 50: `codereview_review_score{kind="security"} < 50`.
 For example, to alert two weeks before a code host token expires:
 
 ```yaml

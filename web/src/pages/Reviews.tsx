@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, Play, Search } from "lucide-react";
 import { get, post, qs } from "../api";
-import JobsChart, { Point, series } from "../Chart";
+import JobsChart, { fillBuckets, Metrics, series } from "../Chart";
+import { avg, ScoreChart, ScoreChips, ScoreKind, ScoreLegend, Scores, ScoreSums, scoreKinds } from "../scores";
 import { ago, fmtDur, fmtNum, fmtDateTime, utcTitle } from "../format";
 import { Empty, errMsg, Locked, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useFeature, useMe, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
@@ -16,34 +17,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 type Job = {
   id: number; kind: string; platform: string; host: string; repo: string; number: number; url: string; trigger: string;
   state: string; started: string; finished: string; error: string; note: string; comments: number; files: number;
-  tokens_in: number; tokens_out: number; model: string; requested_by: string; result?: any;
+  tokens_in: number; tokens_out: number; model: string; requested_by: string; result?: any; scores?: Scores | null;
 };
-
-type Metrics = { granularity: string; from: string; to: string; points: Point[]; today_tokens: number; daily_token_budget: number };
-
-// Fill empty buckets so the time axis is continuous.
-function fillBuckets(d: Metrics): Point[] {
-  const out: Point[] = [];
-  const by: Record<string, Point> = {};
-  d.points.forEach((p) => (by[new Date(p.bucket).toISOString()] = p));
-  const end = new Date(d.to);
-  const start = new Date(d.from);
-  if (d.granularity === "month") {
-    let t = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-    while (t < end) {
-      out.push(by[t.toISOString()] || { bucket: t.toISOString() });
-      t = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 1));
-    }
-    return out;
-  }
-  const step = d.granularity === "hour" ? 3600e3 : 86400e3;
-  let t = new Date(Math.floor(start.getTime() / step) * step);
-  while (t < end) {
-    out.push(by[t.toISOString()] || { bucket: t.toISOString() });
-    t = new Date(t.getTime() + step);
-  }
-  return out;
-}
 
 const severityKind: Record<string, "off" | "warn" | "idle"> = { critical: "off", major: "warn", minor: "idle", nitpick: "idle" };
 
@@ -147,7 +122,8 @@ export default function Reviews() {
   const [gran, setGran] = useState("day");
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [hosts, setHosts] = useState<{ host: string; name: string }[]>([]);
-  const [f, setF] = useState({ host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "" });
+  const [f, setF] = useState({ host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "" });
+  const [sort, setSort] = useState<"" | ScoreKind | "lowest">("");
   const [repoQ, setRepoQ] = useState("");
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [more, setMore] = useState(false);
@@ -193,7 +169,8 @@ export default function Reviews() {
       .catch((e) => toast(errMsg(e), true));
 
   const pts = metrics ? fillBuckets(metrics) : [];
-  const tot = { jobs: 0, done: 0, skipped: 0, failed: 0, comments: 0, tokens_in: 0, tokens_out: 0, duration_ms: 0 } as Record<string, number>;
+  const tot = { jobs: 0, done: 0, skipped: 0, failed: 0, comments: 0, tokens_in: 0, tokens_out: 0, duration_ms: 0,
+    scored: 0, quality_sum: 0, security_sum: 0, maintainability_sum: 0 } as Record<string, number>;
   pts.forEach((p) => Object.keys(tot).forEach((k) => (tot[k] += ((p as any)[k] as number) || 0)));
   const ran = tot.done + tot.failed;
   const tiles: [string, string][] = [
@@ -206,6 +183,11 @@ export default function Reviews() {
     ["Avg time", fmtDur(ran ? tot.duration_ms / Math.max(1, tot.jobs) : 0)],
     ["Tokens today (UTC)", fmtNum(metrics?.today_tokens || 0) + (metrics?.daily_token_budget ? " of " + fmtNum(metrics.daily_token_budget) : "")],
   ];
+  const periodAvg = Object.fromEntries(scoreKinds.map(([k]) => [k, avg({ bucket: "", ...tot } as ScoreSums, k)])) as Record<ScoreKind, number | null>;
+  if (tot.scored)
+    tiles.push(["Avg scores (Q / S / M)", scoreKinds.map(([k]) => Math.round(periodAvg[k] || 0)).join(" / ")], ["Scored reviews", fmtNum(tot.scored)]);
+  const lowest = (j: Job) => (j.scores ? Math.min(j.scores.quality, j.scores.security, j.scores.maintainability) : 101);
+  const shown = !jobs || !sort ? jobs : [...jobs].sort((a, b) => (sort === "lowest" ? lowest(a) - lowest(b) : (a.scores?.[sort] ?? 101) - (b.scores?.[sort] ?? 101)));
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const openJob = jobs?.find((j) => j.id === open) ?? null;
 
@@ -262,6 +244,15 @@ export default function Reviews() {
               {metrics && <JobsChart points={pts} granularity={metrics.granularity} />}
             </CardContent>
           </Card>
+          {tot.scored > 0 && metrics && (
+            <Card className="py-4">
+              <CardContent className="grid gap-3 px-4">
+                <ScoreLegend values={periodAvg} />
+                <ScoreChart points={pts as ScoreSums[]} granularity={metrics.granularity} />
+                <Sub>Average scores of the reviews in each {metrics.granularity}. Dashed lines at 80 and 50 are the bands of the score labels.</Sub>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 
@@ -302,12 +293,40 @@ export default function Reviews() {
         </NativeSelect>
         <Input type="date" className="w-auto" aria-label="From" value={f.from} onChange={set("from")} />
         <Input type="date" className="w-auto" aria-label="To" value={f.to} onChange={set("to")} />
+        <NativeSelect className="w-auto" aria-label="Score" value={f.score_kind} onChange={set("score_kind")}>
+          <option value="">Any score</option>
+          <option value="any">Lowest score</option>
+          {scoreKinds.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </NativeSelect>
+        {f.score_kind && (
+          <NativeSelect className="w-auto" aria-label="Score below" value={f.score_below} onChange={set("score_below")}>
+            <option value="">at any value</option>
+            <option value="50">below 50</option>
+            <option value="60">below 60</option>
+            <option value="70">below 70</option>
+            <option value="80">below 80</option>
+            <option value="90">below 90</option>
+          </NativeSelect>
+        )}
+        <NativeSelect className="w-auto" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+          <option value="">Newest first</option>
+          <option value="lowest">Lowest score first</option>
+          {scoreKinds.map(([k, label]) => (
+            <option key={k} value={k}>
+              Lowest {label.toLowerCase()} first
+            </option>
+          ))}
+        </NativeSelect>
       </Toolbar>
 
       <Panel>
         {!jobs ? (
           <Empty>Loading…</Empty>
-        ) : !jobs.length ? (
+        ) : !shown || !shown.length ? (
           <Empty>No reviews match.</Empty>
         ) : (
           <Table>
@@ -317,6 +336,7 @@ export default function Reviews() {
                 <TableHead>Pull request</TableHead>
                 <TableHead>Job</TableHead>
                 <TableHead>State</TableHead>
+                <TableHead>Scores</TableHead>
                 <TableHead className="text-right">Comments / files</TableHead>
                 <TableHead className="text-right">Tokens in / out</TableHead>
                 <TableHead className="text-right">Took</TableHead>
@@ -324,7 +344,7 @@ export default function Reviews() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {jobs.map((j) => {
+              {shown.map((j) => {
                 const dur = j.started && !j.started.startsWith("0001-") ? new Date(j.finished).getTime() - new Date(j.started).getTime() : 0;
                 return (
                   <TableRow key={j.id} className="cursor-pointer" onClick={() => setOpen(j.id)}>
@@ -353,6 +373,9 @@ export default function Reviews() {
                       <StateBadge kind={j.state === "done" ? "on" : j.state === "failed" ? "off" : "idle"}>{j.state}</StateBadge>
                       {(j.error || j.note) && <Sub className="line-clamp-2">{j.error ? j.error.slice(0, 120) : j.note}</Sub>}
                     </TableCell>
+                    <TableCell>
+                      <ScoreChips s={j.scores} />
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {j.comments} / {j.files}
                     </TableCell>
@@ -379,7 +402,10 @@ export default function Reviews() {
           </Button>
         </div>
       )}
-      <Note>Every finished review, answer, help and learning job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; hourly detail for 3 days, daily and monthly totals for good.</Note>
+      <Note>
+        Every finished review, answer, help and learning job. Charts read hourly, daily and monthly rollups that are updated as each job finishes. Reviews are kept for the retention set in Settings; hourly detail for 3 days, daily and monthly totals for good.
+        Scores (quality, security, maintainability, 1 to 100) come from the review; sorting by score orders the reviews loaded so far, and the score filter searches all of them.
+      </Note>
 
       <SidePanel
         wide
