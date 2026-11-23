@@ -111,13 +111,47 @@ func (s *Server) renderDashboard(w http.ResponseWriter, r *http.Request, statusU
 
 // statusResponse is what /api/status returns.
 type statusResponse struct {
-	Title     string `json:"title"`
-	Version   string `json:"version"`
-	Redacted  bool   `json:"redacted"`
-	Workers   int    `json:"workers"`
-	BotName   string `json:"bot_name"`
-	Debounced string `json:"debounce"`
+	Title    string `json:"title"`
+	Version  string `json:"version"`
+	Redacted bool   `json:"redacted"`
+	Workers  int    `json:"workers"`
+	// BotName is the mention handle when every code host uses the same
+	// one, else empty; Mentions has each host's.
+	BotName   string    `json:"bot_name"`
+	Mentions  []mention `json:"mentions"`
+	Debounced string    `json:"debounce"`
 	Snapshot
+}
+
+// mention is the handle that starts chat commands on one code host
+// (@<handle> review). Host is empty when repository names are hidden.
+type mention struct {
+	Platform string `json:"platform,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Handle   string `json:"handle"`
+}
+
+// mentions are the handles commands are matched against, per enabled
+// code host (see Server.mention): the host's bot_name, else the default
+// bot name, else the token user the console read at startup.
+func (s *Server) mentions(hide bool) (all []mention, common string) {
+	seen := map[string]bool{}
+	for _, h := range s.hosts.Enabled("") {
+		handle := s.mention(h.BotName, h.Host)
+		m := mention{Platform: string(h.Platform), Host: h.Host, Handle: handle}
+		if hide {
+			if seen[handle] {
+				continue
+			}
+			m.Platform, m.Host = "", ""
+		}
+		seen[handle] = true
+		all = append(all, m)
+	}
+	if len(seen) == 1 {
+		common = all[0].Handle
+	}
+	return all, common
 }
 
 // handleStatus is /api/status: for anyone with the token, or anyone when
@@ -163,9 +197,10 @@ func (s *Server) writeStatus(w http.ResponseWriter, r *http.Request, tn tuning.S
 		redact(snap.Pending)
 		redact(snap.Recent)
 	}
+	ms, common := s.mentions(eff.HideRepos)
 	writeJSON(w, http.StatusOK, statusResponse{
 		Title: eff.DashboardTitle, Version: version.Version, Redacted: eff.HideRepos,
-		Workers: tn.Workers, BotName: firstNonEmpty(tn.BotName, "codereview"), Debounced: tn.DebounceDuration().String(),
+		Workers: tn.Workers, BotName: common, Mentions: ms, Debounced: tn.DebounceDuration().String(),
 		Snapshot: snap,
 	})
 }

@@ -26,10 +26,12 @@ const impactFreeRange = "30d"
 const impactTop = 10
 
 type impactView struct {
-	Range       string    `json:"range"`
-	From        time.Time `json:"from"`
-	To          time.Time `json:"to"`
-	Granularity string    `json:"granularity"`
+	Range string    `json:"range"`
+	From  time.Time `json:"from"`
+	To    time.Time `json:"to"` // exclusive: midnight after the last day
+	// Through is the last day included, "2006-01-02" (UTC).
+	Through     string `json:"through"`
+	Granularity string `json:"granularity"`
 	// Licensed is false in the free core: only the headline numbers are
 	// filled in.
 	Licensed bool `json:"licensed"`
@@ -78,7 +80,7 @@ func (a *Admin) impact(w http.ResponseWriter, r *http.Request) (impactView, bool
 	if !licensed { // the headline numbers only
 		im.Trend, im.ByCategory, im.TopByReviews, im.TopByFindings = []store.ImpactPoint{}, []store.FindingCount{}, []store.RepoCount{}, []store.RepoCount{}
 	}
-	return impactView{Range: rng, From: from, To: to, Granularity: gran, Licensed: licensed, Impact: *im}, true
+	return impactView{Range: rng, From: from, To: to, Through: to.AddDate(0, 0, -1).Format(time.DateOnly), Granularity: gran, Licensed: licensed, Impact: *im}, true
 }
 
 // apiImpact is GET /admin/api/impact?range=30d|90d|365d|all.
@@ -125,7 +127,7 @@ func (a *Admin) apiImpactExport(w http.ResponseWriter, r *http.Request, s *store
 	}
 	row("section", "name", "value")
 	for _, x := range [][2]string{
-		{"from", v.From.Format(time.RFC3339)}, {"to", v.To.Format(time.RFC3339)},
+		{"from", v.From.Format(time.RFC3339)}, {"to_exclusive", v.To.Format(time.RFC3339)}, {"through", v.Through},
 		{"merge_requests_reviewed", n(v.PRsReviewed)}, {"review_runs", n(v.ReviewRuns)}, {"active_repositories", n(v.ActiveRepos)},
 		{"findings", n(v.Findings)}, {"security_findings", n(v.SecurityFindings)}, {"comments_posted", n(v.Comments)}, {"approvals_by_the_bot", n(v.Approvals)},
 		{"first_reviews", n(v.FirstReviews)}, {"median_time_to_first_review_seconds", strconv.FormatFloat(float64(v.MedianFirstReviewMS)/1000, 'f', 1, 64)},

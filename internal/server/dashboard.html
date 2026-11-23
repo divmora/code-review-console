@@ -181,11 +181,20 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
   function tile(n, l) { return el("div", { cls: "tile" }, [el("div", { cls: "n", text: n }), el("div", { cls: "l", text: l })]); }
   function set(id, node) { var p = document.getElementById(id); p.replaceChildren(node); }
 
+  // mentionText names the handle that starts commands: one for all hosts,
+  // or each host's ("@gitlab-bot on gitlab.example.com"), or nothing.
+  function mentionText(d) {
+    var ms = d.mentions || [];
+    if (d.bot_name) return " · mention @" + d.bot_name;
+    if (!ms.length) return "";
+    return " · mention " + ms.map(function (m) { return "@" + m.handle + (m.host ? " on " + m.host : ""); }).join(", ");
+  }
+
   function render(d) {
     var now = ms(d.now);
     document.getElementById("meta").textContent =
       d.workers + " workers · debounce " + d.debounce + " · up " + dur(now - ms(d.since)) +
-      (d.redacted ? " · repository names hidden" : "") + " · mention @" + d.bot_name;
+      (d.redacted ? " · repository names hidden" : "") + mentionText(d);
     var t = d.totals;
     document.getElementById("tiles").replaceChildren(
       tile(num(d.running.length), "running"),
