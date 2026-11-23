@@ -79,7 +79,8 @@ the same key in an optional config file.
 | Variable | Config file key | |
 |---|---|---|
 | `CODEREVIEW_CONSOLE_ADDR` | `server.addr` | listen address, default `:8080` |
-| `CODEREVIEW_CONSOLE_TRUSTED_PROXIES` | `server.trusted_proxies` | comma-separated IPs or CIDR ranges of the load balancer or ingress in front; see [Client addresses](#client-addresses) |
+| `CODEREVIEW_CONSOLE_TRUSTED_PROXIES` | `server.trusted_proxies` | the load balancer's or ingress controller's own IPs, comma-separated; see [Client addresses](#client-addresses) |
+| `CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS` | `server.trusted_proxy_hops` | instead: how many proxies are in front (usually `1`) |
 | `CODEREVIEW_CONSOLE_BASE_URL` | `admin.base_url` | public URL (sign-in redirect, webhook URLs) |
 | `CODEREVIEW_CONSOLE_ADMIN_ENABLED` | `admin.enabled` | default true once an OIDC issuer is set |
 | `CODEREVIEW_CONSOLE_SESSION_TTL` | `admin.session_ttl` | default `12h` |
@@ -283,11 +284,42 @@ Sign-ins, denied sign-ins, sign-outs and every audited change record the client'
 browser (user agent); **Settings → Signed-in admins** shows each session's address, browser and last
 activity; and the **Webhooks** page shows where each delivery, rejected ones included, came from.
 
-Behind a load balancer or ingress, set `CODEREVIEW_CONSOLE_TRUSTED_PROXIES` (`server.trusted_proxies`)
-to its addresses, for example `10.0.0.0/8` for a cluster's pod network. The console then takes the
-client from `X-Forwarded-For`: the right-most address that isn't a trusted proxy, since anything
-further left can be written by the client. Without trusted proxies the header is ignored and the
-connection's address is recorded, which behind a proxy is the proxy itself.
+Behind a load balancer or ingress, the connection comes from the proxy, so the console has to read
+the client from `X-Forwarded-For`, a header anyone can send. Tell it which part to believe, in one
+of two ways:
+
+- **Hop count (recommended):** `CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS=1` (`server.trusted_proxy_hops`)
+  when exactly one proxy is in front, such as an AWS ALB, a Google or Azure load balancer, or one
+  ingress controller. The console takes the address that proxy appended, which the client can't
+  forge, and it keeps working when the proxy's addresses change. Use `2` for two proxies in a row
+  (for example a CDN in front of the load balancer). A request that reaches the console without going
+  through the proxies is recorded with its own address.
+- **Trusted addresses:** `CODEREVIEW_CONSOLE_TRUSTED_PROXIES` (`server.trusted_proxies`) set to the
+  proxies' own IP addresses. The console takes the right-most `X-Forwarded-For` address that isn't
+  one of them.
+
+> **List only the proxies' own addresses, never a range that clients connect from.** Any client
+> that connects from a trusted address can choose the IP the console records in the audit log,
+> sessions and webhook history. Ranges such as `10.0.0.0/8`, a pod network, or the load balancer's
+> whole subnets usually include clients too: people on a VPN or zero-trust connector that SNATs into
+> the network (Cloudflare WARP with `cloudflared`, Tailscale subnet routers, AWS Client VPN), bastions
+> and other workloads. The console warns at startup when a trusted range is wider than /16 (IPv4) or
+> /48 (IPv6). When the proxy's addresses aren't fixed, use the hop count.
+
+Finding the addresses:
+
+- **AWS ALB (target type ip):** its network interfaces,
+  ```bash
+  aws ec2 describe-network-interfaces --filters Name=description,Values='ELB app/<lb-name>/*' \
+    --query 'NetworkInterfaces[].PrivateIpAddress' --output text
+  ```
+  They change when the ALB scales, so the hop count suits an ALB better.
+- **ingress-nginx and similar controllers:** the controller pods' addresses (they change on
+  restarts too), or the hop count.
+
+Without either setting, the header is ignored and the connection's address is recorded, which behind
+a proxy is the proxy itself.
+
 ## Prometheus metrics
 
 `/metrics` serves the console's metrics in the Prometheus text format, which Prometheus,

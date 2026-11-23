@@ -125,6 +125,10 @@ func serve(ctx context.Context, args []string) error {
 	// executor settings, the license) in the database, with secrets
 	// encrypted by the secret key.
 	logger.Info("configuration", "file", cmp.Or(cfg.File(), "none"), "environment", cfg.EnvUsed())
+	if r, err := cfg.ClientResolver(); err == nil && len(r.WideRanges()) > 0 {
+		logger.Warn("trusted proxy ranges this wide usually hold clients too, and a client connecting from a trusted address can choose the IP recorded in the audit log, sessions and webhooks: "+
+			"list only the load balancer's own addresses, or use CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS", "ranges", r.WideRanges())
+	}
 	if cfg.Database.URL == "" {
 		return errors.New("DATABASE_URL (or database.url) is required: the console keeps its configuration in PostgreSQL")
 	}
