@@ -219,7 +219,7 @@ export default function Settings() {
             <Num label="Keep webhook deliveries (days)" min={1} max={3650} value={v.webhook_retention_days} onChange={set("webhook_retention_days")} />
           </FormGrid>
         </Group>
-        <Group title="Status dashboard">
+        <Group title="Status dashboard" description="Who can open it is set under Status dashboard access, further down.">
           <FormGrid className="lg:grid-cols-2">
             <Bool label="Dashboard" value={v.dashboard_enabled} onChange={set("dashboard_enabled")} yes="On" no="Off" />
             <Bool label="Repository names" value={!v.hide_repos} onChange={(x) => set("hide_repos")(!x)} yes="Shown" no="Hidden" />

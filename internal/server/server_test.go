@@ -465,8 +465,13 @@ func TestRuntimeSettingsWithoutRestart(t *testing.T) {
 	_, _ = svc.Put(context.Background(), settings.Stored{Allowlist: &off, DashboardEnabled: &on}, "a@x")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/dashboard", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("dashboard switched on from the admin panel: %d", rec.Code)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/admin/dashboard" {
+		t.Errorf("dashboard switched on from the admin panel, for admins by default: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/status", nil))
+	if rec.Code != http.StatusUnauthorized || !bytes.Contains(rec.Body.Bytes(), []byte("/admin/dashboard")) {
+		t.Errorf("the status API is not public by default: %d %s", rec.Code, rec.Body)
 	}
 }
 

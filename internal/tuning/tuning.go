@@ -71,6 +71,36 @@ type Settings struct {
 	// DashboardTokenHash is the SHA-256 (hex) of the /dashboard token;
 	// empty = no token. The token itself is never stored.
 	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"`
+	// DashboardTokenExpires is when the token stops working (RFC 3339,
+	// UTC); empty = never.
+	DashboardTokenExpires string `json:"dashboard_token_expires,omitempty"`
+	// DashboardAccess says who can open the status dashboard: AccessAdmins,
+	// AccessToken or AccessPublic. Empty: see Access.
+	DashboardAccess string `json:"dashboard_access,omitempty"`
+}
+
+// Who can open the status dashboard.
+const (
+	// AccessAdmins: signed-in admins only (at /admin/dashboard).
+	AccessAdmins = "admins"
+	// AccessToken: signed-in admins, and anyone with the dashboard token.
+	AccessToken = "token"
+	// AccessPublic: anyone who can reach the console.
+	AccessPublic = "public"
+)
+
+// Access is who can open the status dashboard. Never chosen: anyone with
+// the token when one is set (so links already shared keep working),
+// otherwise admins only.
+func (s Settings) Access() string {
+	switch s.DashboardAccess {
+	case AccessAdmins, AccessToken, AccessPublic:
+		return s.DashboardAccess
+	}
+	if s.DashboardTokenHash != "" {
+		return AccessToken
+	}
+	return AccessAdmins
 }
 
 // Engine is the codereview CLI's review: section (zero values use the
@@ -175,13 +205,51 @@ func (s Settings) DebounceDuration() time.Duration {
 	return DefaultDebounce
 }
 
-// DashboardTokenOK reports whether token opens /dashboard (always true
-// when no token is set).
+// DashboardTokenOK reports whether token is the dashboard token and has
+// not expired (false when none is set).
 func (s Settings) DashboardTokenOK(token string) bool {
-	if s.DashboardTokenHash == "" {
-		return true
+	return s.tokenMatches(token) && !s.TokenExpired(time.Now())
+}
+
+// DashboardTokenExpiredFor reports whether token is the dashboard token
+// but has expired, so the page can say so instead of "token required".
+func (s Settings) DashboardTokenExpiredFor(token string) bool {
+	return s.tokenMatches(token) && s.TokenExpired(time.Now())
+}
+
+func (s Settings) tokenMatches(token string) bool {
+	if s.DashboardTokenHash == "" || token == "" {
+		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(hashToken(token)), []byte(s.DashboardTokenHash)) == 1
+}
+
+// TokenExpiry is when the dashboard token expires (zero = never).
+func (s Settings) TokenExpiry() time.Time {
+	t, _ := time.Parse(time.RFC3339, s.DashboardTokenExpires)
+	return t
+}
+
+// TokenExpired reports whether the dashboard token has expired at now.
+func (s Settings) TokenExpired(now time.Time) bool {
+	exp := s.TokenExpiry()
+	return !exp.IsZero() && !now.Before(exp)
+}
+
+// TokenValidDays are the choices for how long a new dashboard token
+// works (0 = never expires).
+var TokenValidDays = []int{7, 30, 90, 365, 0}
+
+// DashboardOpen reports whether a request with token (and signed in as an
+// admin or not) may see the status dashboard.
+func (s Settings) DashboardOpen(token string, admin bool) bool {
+	switch s.Access() {
+	case AccessPublic:
+		return true
+	case AccessToken:
+		return admin || s.DashboardTokenOK(token)
+	}
+	return admin
 }
 
 func hashToken(t string) string {
@@ -231,6 +299,14 @@ func (s Settings) Validate(profiles map[string]bool) error {
 	}
 	if s.BotName != "" && !botNameRe.MatchString(s.BotName) {
 		return fmt.Errorf("bot name %q: use the account's username without @", s.BotName)
+	}
+	switch s.DashboardAccess {
+	case "", AccessAdmins, AccessToken, AccessPublic:
+	default:
+		return fmt.Errorf("dashboard access %q: want admins, token or public", s.DashboardAccess)
+	}
+	if s.DashboardAccess == AccessToken && s.DashboardTokenHash == "" {
+		return errors.New("set a dashboard token, or choose another dashboard access")
 	}
 	if len(s.ExtraEnv) > 50 {
 		return errors.New("at most 50 extra environment variables")
@@ -355,11 +431,13 @@ func (s *Service) Get(ctx context.Context) Settings {
 }
 
 // Update is a save from the admin panel. Token: "" keeps the dashboard
-// token, ClearToken removes it.
+// token (and its expiry), ClearToken removes it. ValidDays is how long a
+// new token works (one of TokenValidDays; 0 = never).
 type Update struct {
 	Settings
 	DashboardToken string `json:"dashboard_token"`
 	ClearToken     bool   `json:"clear_dashboard_token"`
+	ValidDays      int    `json:"dashboard_token_valid_days"`
 }
 
 // Put validates and saves an update, keeping the stored dashboard token
@@ -370,20 +448,30 @@ func (s *Service) Put(ctx context.Context, u Update, profiles map[string]bool, a
 	}
 	n := clean(u.Settings)
 	cur := s.Get(ctx)
-	n.DashboardTokenHash = cur.DashboardTokenHash
+	n.DashboardTokenHash, n.DashboardTokenExpires = cur.DashboardTokenHash, cur.DashboardTokenExpires
 	switch t := strings.TrimSpace(u.DashboardToken); {
 	case u.ClearToken:
-		n.DashboardTokenHash = ""
+		n.DashboardTokenHash, n.DashboardTokenExpires = "", ""
 	case t != "":
 		if len(t) < 16 {
 			return Settings{}, errors.New("the dashboard token needs at least 16 characters")
 		}
-		n.DashboardTokenHash = hashToken(t)
+		valid := false
+		for _, d := range TokenValidDays {
+			valid = valid || d == u.ValidDays
+		}
+		if !valid {
+			return Settings{}, fmt.Errorf("token validity %d days: choose 7, 30, 90 or 365 days, or never (0)", u.ValidDays)
+		}
+		n.DashboardTokenHash, n.DashboardTokenExpires = hashToken(t), ""
+		if u.ValidDays > 0 {
+			n.DashboardTokenExpires = time.Now().UTC().Add(time.Duration(u.ValidDays) * 24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
+		}
 	}
 	if err := n.Validate(profiles); err != nil {
 		return Settings{}, err
 	}
-	if err := s.st.PutSetting(ctx, Key, n, actor); err != nil {
+	if err := s.st.PutSettingAudited(ctx, Key, n, auditDetail(n, cur.DashboardTokenHash), actor); err != nil {
 		return Settings{}, err
 	}
 	n = n.Effective()
@@ -394,6 +482,24 @@ func (s *Service) Put(ctx context.Context, u Update, profiles map[string]bool, a
 		s.OnChange(n)
 	}
 	return n, nil
+}
+
+// auditDetail is s for the audit log, which admins can read: the token's
+// hash is replaced by what happened to the token, so a short hand-typed
+// token can't be guessed offline from the log.
+func auditDetail(s Settings, oldHash string) Settings {
+	switch {
+	case s.DashboardTokenHash == "" && oldHash != "":
+		s.DashboardTokenHash = "(removed)"
+	case s.DashboardTokenHash == "":
+	case oldHash == "":
+		s.DashboardTokenHash = "(set)"
+	case s.DashboardTokenHash != oldHash:
+		s.DashboardTokenHash = "(changed)"
+	default:
+		s.DashboardTokenHash = "(unchanged)"
+	}
+	return s
 }
 
 func clean(s Settings) Settings {
@@ -429,7 +535,7 @@ func (s *Service) Import(ctx context.Context) (imported bool, err error) {
 	}
 	f, ferr := FromConfig(s.cfg)
 	f = clean(f)
-	if err := s.st.PutSetting(ctx, Key, f, ImportActor); err != nil {
+	if err := s.st.PutSettingAudited(ctx, Key, f, auditDetail(f, ""), ImportActor); err != nil {
 		return false, err
 	}
 	return true, ferr

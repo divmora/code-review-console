@@ -154,7 +154,7 @@ type flowState struct {
 // safeNext keeps only known admin pages, so the return target can never
 // send someone off-site.
 func safeNext(next string) string {
-	if sec, ok := strings.CutPrefix(next, "/admin/"); ok && adminSections[sec] {
+	if sec, ok := strings.CutPrefix(next, "/admin/"); ok && (adminSections[sec] || sec == "dashboard") {
 		return next
 	}
 	return "/admin"
@@ -381,6 +381,13 @@ func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 		return nil, false
 	}
 	return s, true
+}
+
+// SignedIn reports whether the request comes from a signed-in admin (for
+// pages the server serves under /admin, such as the status dashboard).
+func (a *Admin) SignedIn(r *http.Request) bool {
+	_, ok := a.session(r)
+	return ok
 }
 
 // sessionHash is the stored hash of the request's session cookie.

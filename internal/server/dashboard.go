@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/divmora/code-review-console/internal/tuning"
 	"github.com/divmora/code-review-console/internal/version"
 )
 
@@ -17,13 +18,18 @@ var dashboardHTML string
 
 var dashboardTmpl = template.Must(template.New("dashboard").Parse(dashboardHTML))
 
-// dashboardAuthorized checks the optional dashboard token.
-func (s *Server) dashboardAuthorized(r *http.Request) bool {
-	got := r.URL.Query().Get("token")
+// requestToken is the dashboard token sent with r (?token= or Bearer).
+func requestToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		got = strings.TrimPrefix(h, "Bearer ")
+		return strings.TrimPrefix(h, "Bearer ")
 	}
-	return s.tuning.Get(r.Context()).DashboardTokenOK(got)
+	return r.URL.Query().Get("token")
+}
+
+// signedIn reports whether r comes from a signed-in admin. The session
+// cookie is scoped to /admin, so this only holds on /admin routes.
+func (s *Server) signedIn(r *http.Request) bool {
+	return s.admin != nil && s.admin.SignedIn(r)
 }
 
 func securityHeaders(w http.ResponseWriter, nonce string) {
@@ -39,17 +45,50 @@ func securityHeaders(w http.ResponseWriter, nonce string) {
 	h.Set("Content-Security-Policy", csp)
 }
 
+// handleDashboardPage serves /dashboard to anyone with the token, or to
+// anyone when the dashboard is public. When it is for admins only, it
+// sends them to /admin/dashboard, where their session cookie applies.
 func (s *Server) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
-	eff := s.settings.Runtime(r.Context())
-	if !eff.DashboardEnabled {
+	if !s.settings.Runtime(r.Context()).DashboardEnabled {
 		http.NotFound(w, r)
 		return
 	}
-	if !s.dashboardAuthorized(r) {
-		securityHeaders(w, "")
-		http.Error(w, "dashboard token required: open /dashboard?token=...", http.StatusUnauthorized)
+	t := s.tuning.Get(r.Context())
+	if t.Access() == tuning.AccessAdmins {
+		http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
 		return
 	}
+	if tok := requestToken(r); !t.DashboardOpen(tok, false) {
+		msg := `This dashboard needs its token: open <code>/dashboard?token=…</code>.`
+		if t.DashboardTokenExpiredFor(tok) {
+			msg = `This dashboard link has expired. Ask an admin for a new one.`
+		}
+		securityHeaders(w, "")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>Status dashboard</title>` +
+			`<p>` + msg + ` Admins can <a href="/admin/dashboard">sign in</a> instead.</p>`))
+		return
+	}
+	s.renderDashboard(w, r, "/api/status")
+}
+
+// handleAdminDashboardPage serves the dashboard to signed-in admins,
+// whatever the access setting.
+func (s *Server) handleAdminDashboardPage(w http.ResponseWriter, r *http.Request) {
+	if !s.settings.Runtime(r.Context()).DashboardEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.signedIn(r) {
+		http.Redirect(w, r, "/admin/login?next=/admin/dashboard", http.StatusFound)
+		return
+	}
+	s.renderDashboard(w, r, "/admin/api/status")
+}
+
+func (s *Server) renderDashboard(w http.ResponseWriter, r *http.Request, statusURL string) {
+	eff := s.settings.Runtime(r.Context())
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	nonce := base64.RawStdEncoding.EncodeToString(b)
@@ -59,6 +98,7 @@ func (s *Server) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
 		"Version":    version.Version,
 		"Nonce":      nonce,
 		"Persistent": s.store != nil,
+		"StatusURL":  statusURL,
 	})
 	if err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
@@ -80,19 +120,44 @@ type statusResponse struct {
 	Snapshot
 }
 
+// handleStatus is /api/status: for anyone with the token, or anyone when
+// the dashboard is public.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w, "")
+	tn := s.tuning.Get(r.Context())
+	if tn.Access() == tuning.AccessAdmins {
+		if s.settings.Runtime(r.Context()).DashboardEnabled {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "the dashboard is for signed-in admins: open /admin/dashboard"})
+			return
+		}
+	} else if tok := requestToken(r); !tn.DashboardOpen(tok, false) {
+		msg := "dashboard token required"
+		if tn.DashboardTokenExpiredFor(tok) {
+			msg = "this dashboard link has expired: ask an admin for a new one"
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": msg})
+		return
+	}
+	s.writeStatus(w, r, tn)
+}
+
+// handleAdminStatus is /admin/api/status, for signed-in admins.
+func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
+	securityHeaders(w, "")
+	if !s.signedIn(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "sign in to the admin panel"})
+		return
+	}
+	s.writeStatus(w, r, s.tuning.Get(r.Context()))
+}
+
+func (s *Server) writeStatus(w http.ResponseWriter, r *http.Request, tn tuning.Settings) {
 	eff := s.settings.Runtime(r.Context())
 	if !eff.DashboardEnabled {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "the status dashboard is off"})
 		return
 	}
-	if !s.dashboardAuthorized(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "dashboard token required"})
-		return
-	}
 	snap := s.queue.Snapshot()
-	tn := s.tuning.Get(r.Context())
 	if eff.HideRepos {
 		redact(snap.Running)
 		redact(snap.Pending)
