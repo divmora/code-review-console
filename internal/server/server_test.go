@@ -173,7 +173,7 @@ func testServer(t *testing.T) *Server {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour // keep jobs pending
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func testServer(t *testing.T) *Server {
 }
 
 func post(t *testing.T, h http.Handler, event string, body []byte, sig string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", hookPath("github", 1), bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", event)
 	req.Header.Set("X-Hub-Signature-256", sig)
 	w := httptest.NewRecorder()
@@ -236,14 +236,14 @@ func TestGitLabWebhookToken(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(context.Background())
 	body := []byte(`{"object_kind":"merge_request","project":{"path_with_namespace":"g/p"},"object_attributes":{"iid":3,"action":"update","oldrev":""}}`)
 	send := func(tok string, b []byte) int {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(b))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(b))
 		req.Header.Set("X-Gitlab-Token", tok)
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -337,11 +337,11 @@ func TestAllowlist(t *testing.T) {
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.Allowlist = true
 
-	if _, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)}); err == nil {
+	if _, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)}); err == nil {
 		t.Fatal("allowlist without a store must fail")
 	}
 	st := storetest.New()
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestJobHistoryPersists(t *testing.T) {
 	cfg.Model = "m"
 	st := storetest.New()
 	_, _ = st.InsertJob(context.Background(), store.Job{Kind: "review", Platform: "github", Repo: "o/old", State: "done", Finished: time.Now()})
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestRuntimeSettingsWithoutRestart(t *testing.T) {
 	if _, _, err := svc.Seed(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, Settings: svc})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, Settings: svc})
 	if err != nil {
 		t.Fatal(err)
 	}

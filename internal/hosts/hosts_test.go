@@ -43,7 +43,7 @@ func TestSeedEncryptAndReload(t *testing.T) {
 		}
 	}
 	gl, ok := r.Find(GitLab, "gitlab.example.com")
-	if !ok || gl.Token != "glpat-file" || gl.BaseURL != "https://gitlab.example.com" || len(gl.SigningTokens) != 1 {
+	if !ok || gl.Token != "glpat-file" || gl.BaseURL != "https://gitlab.example.com" || len(gl.Hook.SigningTokens) != 0 {
 		t.Fatalf("decrypted gitlab host: %+v", gl)
 	}
 	if bb, ok := r.Find(Bitbucket, "bitbucket.org"); !ok || bb.BaseURL != "https://api.bitbucket.org/2.0" {
@@ -104,26 +104,12 @@ func TestValidate(t *testing.T) {
 		h    Host
 		want string
 	}{
-		{Host{Platform: GitHub, Settings: Settings{AppID: 1}, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "token, or a GitHub App"},
-		{Host{Platform: GitLab, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "access token"},
-		{Host{Platform: GitLab, Secrets: Secrets{Token: "t", SigningTokens: []string{"nope"}}}, "whsec_"},
-		{Host{Platform: Bitbucket, Settings: Settings{Email: "a@x"}, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "API token"},
+		{Host{Platform: GitHub, Settings: Settings{AppID: 1}}, "token, or a GitHub App"},
+		{Host{Platform: GitLab}, "access token"},
+		{Host{Platform: Bitbucket, Settings: Settings{Email: "a@x"}}, "API token"},
 	} {
 		if err := c.h.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: want %q, got %v", c.h, c.want, err)
-		}
-	}
-	for _, c := range []struct {
-		h    Host
-		want string
-	}{
-		{Host{Platform: GitHub}, "webhook secret"},
-		{Host{Platform: GitLab}, "signing token"},
-		{Host{Platform: GitLab, Settings: Settings{RequireSignature: true}, Secrets: Secrets{WebhookSecrets: []string{"s"}}}, "require signature"},
-		{Host{Platform: Bitbucket}, "webhook secret"},
-	} {
-		if err := c.h.ValidateShared(); err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("shared URL %+v: want %q, got %v", c.h, c.want, err)
 		}
 	}
 	if err := (Host{Platform: GitHub, Secrets: Secrets{Token: "t"}}).Validate(); err != nil {
@@ -171,7 +157,7 @@ func TestEndpointsEncryptedAndRouted(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, got, err := r2.Route(GitLab, strings.ToUpper(e.ID))
-	if err != nil || got.ID != e.ID || h.ID != gl.ID || len(h.WebhookSecrets) != 1 || h.WebhookSecrets[0] != secret || len(h.SigningTokens) != 0 || h.Token != "glpat-file" {
+	if err != nil || got.ID != e.ID || h.ID != gl.ID || len(h.Hook.WebhookSecrets) != 1 || h.Hook.WebhookSecrets[0] != secret || len(h.Hook.SigningTokens) != 0 || h.Token != "glpat-file" {
 		t.Fatalf("route: %+v %+v %v", h, got, err)
 	}
 	if _, _, err := r2.Route(GitHub, e.ID); err != ErrNoEndpoint {

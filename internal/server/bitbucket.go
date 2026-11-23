@@ -101,41 +101,21 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
-	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.Bitbucket)
+	h, ok := s.endpointHost(w, r, hosts.Bitbucket)
 	if !ok {
 		return
-	}
-	cands := []hosts.Host{h}
-	if !viaEndpoint {
-		cands = s.hosts.Enabled(hosts.Bitbucket) // the secret picks one
-	}
-	if len(cands) == 0 {
-		hm.Auth, hm.Reason = "failed", "no Bitbucket host configured"
-		http.Error(w, "unknown bitbucket host", http.StatusUnauthorized)
-		return
-	}
-	if len(cands) == 1 {
-		hm.Host = cands[0].Host
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBody))
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
-	verified := false
-	for _, c := range cands {
-		if verifyBitbucket(c.WebhookSecrets, body, sig) {
-			h, verified = c, true
-			break
-		}
-	}
-	if !verified {
-		hm.Auth, hm.Reason = "failed", "X-Hub-Signature does not match the webhook secret of "+hostNames(cands)
-		s.logger.Warn("bitbucket webhook signature mismatch", "hosts", hostNames(cands))
+	if !verifyBitbucket(h.Hook.WebhookSecrets, body, sig) {
+		hm.Auth, hm.Reason = "failed", "X-Hub-Signature does not match this webhook's secret ("+h.Host+")"
+		s.logger.Warn("bitbucket webhook signature mismatch", "host", h.Host)
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
-	hm.Host = h.Host
 	var p bbPayload
 	_ = json.Unmarshal(body, &p)
 	hm.Auth = "signature"

@@ -30,7 +30,7 @@ func TestRequireReviewerGitLab(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.RequireReviewer = true
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRequireReviewerGitLab(t *testing.T) {
 		attrs := payload["object_attributes"].(map[string]any)
 		attrs["iid"] = iid
 		b, _ := json.Marshal(payload)
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(b))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(b))
 		req.Header.Set("X-Gitlab-Token", "glsecret")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -134,7 +134,7 @@ func TestPerInstanceIdentity(t *testing.T) {
 			cfg.GitLab[i].BotName = cfg.BotName
 		}
 	}
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,11 @@ func TestPerInstanceIdentity(t *testing.T) {
 	send := func(secret, host, reviewer string) int {
 		b, _ := json.Marshal(map[string]any{"object_kind": "merge_request", "project": map[string]any{"path_with_namespace": "g/p", "web_url": "http://" + host + "/g/p"},
 			"object_attributes": map[string]any{"iid": 1, "action": "open"}, "reviewers": []map[string]string{{"username": reviewer}}})
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(b))
+		n := 1
+		if host == "127.0.0.2:1" {
+			n = 2
+		}
+		req := httptest.NewRequest("POST", hookPath("gitlab", n), bytes.NewReader(b))
 		req.Header.Set("X-Gitlab-Token", secret)
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -179,13 +183,13 @@ func TestClosedMergeRequests(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour // keep reviews waiting
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(context.Background())
 	send := func(body string) (int, string) {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(body)))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(body)))
 		req.Header.Set("X-Gitlab-Token", "glsecret")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -225,13 +229,13 @@ func TestDistinctEventsSameSecondAreNotDuplicates(t *testing.T) {
 	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(context.Background())
 	send := func(body string) string {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(body)))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(body)))
 		req.Header.Set("X-Gitlab-Token", "glsecret")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -257,7 +261,7 @@ func TestBranchSyncSkipped(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.RequireReviewer = true
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +269,7 @@ func TestBranchSyncSkipped(t *testing.T) {
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.1:1"] = "gitlab-bot"
 	send := func(body string) (int, string) {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(body)))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(body)))
 		req.Header.Set("X-Gitlab-Token", "glsecret")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -296,7 +300,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	cfg.GitLab = []config.GitLab{{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "glsecret"}}
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +318,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	send := func(note string) int {
 		b := `{"object_kind":"note","user":{"username":"dev"},"project":{"path_with_namespace":"g/p"},"merge_request":{"iid":3},` +
 			`"object_attributes":{"id":` + strconv.Itoa(len(note)) + `,"note":"` + note + `","noteable_type":"MergeRequest"}}`
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(b)))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(b)))
 		req.Header.Set("X-Gitlab-Token", "glsecret")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
@@ -345,7 +349,7 @@ func TestReviewNow(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	cfg.Repos.RequireReviewer = true // an explicit request ignores this
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +375,7 @@ func TestTokenBudgets(t *testing.T) {
 	cfg.Model = "m"
 	st := storetest.New()
 	exec := &fakeExec{}
-	s, err := New(cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +430,7 @@ func TestConsoleModelKeyReachesJob(t *testing.T) {
 	ctx := context.Background()
 	_ = st.PutModelProfile(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "c", "api_key_env": "TEAM_CLAUDE_KEY"}, "a@x")
 	_ = st.PutSetting(ctx, models.SettingKey, models.Choice{Default: "claude"}, "a@x")
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +455,7 @@ func TestUnreadableResultIsDone(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = 0
 	exec := &fakeExec{res: &executor.Result{Posted: 4, TokensIn: 38000, TokensOut: 2100, Model: "m", Unreadable: "the review ran, but its result could not be read"}}
-	s, err := New(cfg, exec, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, exec, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

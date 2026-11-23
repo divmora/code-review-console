@@ -134,7 +134,7 @@ func runE2E(t *testing.T, exec executor.Executor) {
 	cfg.Model = "fake"
 	cfg.Server.Debounce = 0
 	st := storetest.New()
-	s, err := New(cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

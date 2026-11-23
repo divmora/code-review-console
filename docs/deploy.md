@@ -495,3 +495,14 @@ written, and unknown fields are rejected. Imports are audited as `cli: hosts imp
    that stops hands its waiting jobs to another (at once on a clean shutdown, within 90 seconds if it
    was killed), and each job runs once. Learnings saved from replies (`@bot remember`, replies to the
    bot) are not kept across a restart: ask again.
+
+**Upgrading to 0.12: the shared webhook URLs are gone.** `/webhooks/github`, `/webhooks/gitlab` and
+`/webhooks/bitbucket` no longer exist; a hook still pointing at one gets `404 Not Found` and is not in
+the webhook history. Every hook needs a webhook of its own in the console (**Code hosts** → **Manage
+webhooks** → **Add webhook**), with its own URL and secret. Before upgrading, check the **Webhooks**
+page: deliveries listed as "shared URL" come from hooks to move. On the first start, 0.12 deletes the
+webhook secrets and signing tokens that hosts kept for the shared URL (the log says which hosts), and
+the config file's `webhook_secret`, `webhook_secrets`, `signing_token` and `signing_tokens` keys, and
+`GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_SECRET` and `GITLAB_WEBHOOK_SIGNING_TOKEN`, are no longer
+read. A hosts file exported from an older version still imports; its host-level webhook secrets are
+ignored.

@@ -30,7 +30,7 @@ Add one webhook in the console for each hook you set up in GitLab (a system hook
 
 Only pushes trigger reviews (`update` events with new commits). Title, label and description edits are ignored.
 
-**Shared URL.** `https://<your-host>/webhooks/gitlab` still works for existing hooks. It is shared by every GitLab host: the console matches the instance by the `X-Gitlab-Instance` header, then by the project URL host, and checks the secret tokens or signing tokens in the host's settings. It never accepts a webhook's own secret. The webhook history (**Webhooks** page) shows which URL each delivery used, so you can move hooks over at your own pace.
+**No shared URL.** The shared `https://<your-host>/webhooks/gitlab` URL was removed in 0.12: every hook needs a webhook of its own in the console, and the URL tells the console which GitLab host the delivery is for (headers such as `X-Gitlab-Instance` and the payload are never used to choose). A hook still on the shared URL gets `404 Not Found`.
 
 ## 3. Add the host
 

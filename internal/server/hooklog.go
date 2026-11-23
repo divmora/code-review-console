@@ -95,14 +95,11 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// endpointHost resolves a delivery on /webhooks/<platform>/<id>. via is
-// false for the shared URL. On failure it records why and writes a 404, so
-// the caller just returns.
-func (s *Server) endpointHost(w http.ResponseWriter, r *http.Request, platform string) (h hosts.Host, via, ok bool) {
+// endpointHost resolves a delivery on /webhooks/<platform>/<id> to its
+// host, with the webhook's secrets in Hook. On failure it records why and
+// writes a 404, so the caller just returns.
+func (s *Server) endpointHost(w http.ResponseWriter, r *http.Request, platform string) (h hosts.Host, ok bool) {
 	id := r.PathValue("id")
-	if id == "" {
-		return hosts.Host{}, false, true
-	}
 	hm := hookMetaOf(r.Context())
 	hm.Endpoint = truncate(id, 64)
 	h, e, err := s.hosts.Route(platform, id)
@@ -113,19 +110,10 @@ func (s *Server) endpointHost(w http.ResponseWriter, r *http.Request, platform s
 		}
 		s.logger.Warn(platform+" webhook on an unusable URL", "endpoint", hm.Endpoint, "reason", err.Error())
 		http.Error(w, "unknown webhook", http.StatusNotFound)
-		return hosts.Host{}, true, false
+		return hosts.Host{}, false
 	}
 	hm.Endpoint, hm.Host = e.ID, h.Host
-	return h, true, true
-}
-
-// hostNames lists hosts for a log line or a rejection reason.
-func hostNames(hs []hosts.Host) string {
-	names := make([]string, 0, len(hs))
-	for _, h := range hs {
-		names = append(names, h.Host)
-	}
-	return strings.Join(names, ", ")
+	return h, true
 }
 
 func hostOf(r *hosts.Registry, id int64) string {

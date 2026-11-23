@@ -41,13 +41,13 @@ func TestWebhookHistoryAndRepoRecording(t *testing.T) {
 	cfg.Model = "m"
 	cfg.Repos.Allowlist = true
 	st := storetest.New()
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(context.Background())
 	send := func(id string, body []byte, signed bool) int {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(body))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(body))
 		req.Header.Set("X-Gitlab-Event", "Merge Request Hook")
 		if signed {
 			for k, v := range signedHeaders(testSigningKey, id, time.Now().Unix(), body) {

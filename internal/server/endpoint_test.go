@@ -18,8 +18,7 @@ import (
 )
 
 // TestWebhookEndpoints covers per-webhook URLs: the URL picks the host and
-// only that webhook's secret verifies it; the shared URL keeps using the
-// host's secrets and never accepts an endpoint's.
+// only that webhook's secret verifies it. The shared URL no longer exists.
 func TestWebhookEndpoints(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("CODEREVIEW_CONFIG", "")
@@ -55,7 +54,7 @@ func TestWebhookEndpoints(t *testing.T) {
 	glEP, glSecret := add("gitlab")
 	bbEP, bbSecret := add("bitbucket")
 
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, Hosts: reg, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, Hosts: reg, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,11 +83,11 @@ func TestWebhookEndpoints(t *testing.T) {
 	if c := ghSend(ghEP.Path("github"), gh("2"), "gh-host-secret"); c != http.StatusUnauthorized {
 		t.Errorf("the host's secret must not verify an endpoint URL: %d", c)
 	}
-	if c := ghSend("/webhooks/github", gh("3"), ghSecret); c != http.StatusUnauthorized {
-		t.Errorf("an endpoint's secret must not verify the shared URL: %d", c)
-	}
-	if c := ghSend("/webhooks/github", gh("4"), "gh-host-secret"); c != http.StatusAccepted {
-		t.Errorf("the shared URL keeps working with the host's secret: %d", c)
+	// The shared URL is gone (0.12): a plain 404, with any secret.
+	for _, secret := range []string{ghSecret, "gh-host-secret"} {
+		if c := ghSend("/webhooks/github", gh("3"), secret); c != http.StatusNotFound {
+			t.Errorf("the shared GitHub URL no longer exists: %d", c)
+		}
 	}
 
 	// GitLab: the URL decides the host, whatever X-Gitlab-Instance says.
@@ -151,6 +150,14 @@ func TestWebhookEndpoints(t *testing.T) {
 		t.Errorf("bitbucket endpoint with its secret: %d", c)
 	}
 
+	// The shared GitLab and Bitbucket URLs are gone too.
+	if c := send("/webhooks/gitlab", gl("8"), glHdr(glSecret)); c != http.StatusNotFound {
+		t.Errorf("the shared GitLab URL no longer exists: %d", c)
+	}
+	if c := send("/webhooks/bitbucket", bb, map[string]string{"X-Event-Key": "pullrequest:created", "X-Hub-Signature": bbSign(bbSecret, bb)}); c != http.StatusNotFound {
+		t.Errorf("the shared Bitbucket URL no longer exists: %d", c)
+	}
+
 	// Unusable URLs: unknown, another platform's, disabled, deleted.
 	if c := ghSend("/webhooks/github/00000000-0000-4000-8000-000000000000", gh("5"), ghSecret); c != http.StatusNotFound {
 		t.Errorf("unknown endpoint: %d", c)
@@ -186,7 +193,7 @@ func TestWebhookEndpoints(t *testing.T) {
 			unknown++
 		}
 	}
-	if viaEndpoint == 0 || viaShared != 2 || unknown != 1 {
+	if viaEndpoint == 0 || viaShared != 0 || unknown != 1 {
 		t.Errorf("history endpoints: via endpoint %d, shared %d, unknown %d", viaEndpoint, viaShared, unknown)
 	}
 	var downgraded, rejected int

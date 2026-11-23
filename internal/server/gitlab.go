@@ -3,10 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -77,39 +75,11 @@ type glPayload struct {
 	} `json:"merge_request"`
 }
 
-// gitlabCandidates are the GitLab hosts a delivery may come from, decided
-// without reading the body: the webhook URL's host, the host GitLab names
-// in X-Gitlab-Instance, or every enabled GitLab host (the delivery's
-// secret then picks one). why is set when there is none.
-func (s *Server) gitlabCandidates(r *http.Request, endpoint hosts.Host, viaEndpoint bool) (cands []hosts.Host, why string) {
-	if viaEndpoint {
-		return []hosts.Host{endpoint}, ""
-	}
-	if raw := r.Header.Get("X-Gitlab-Instance"); raw != "" {
-		if u, err := url.Parse(raw); err == nil && u.Host != "" {
-			if h, ok := s.hosts.Find(hosts.GitLab, u.Host); ok {
-				return []hosts.Host{h}, ""
-			}
-		}
-		return nil, "unknown GitLab instance " + truncate(raw, 200)
-	}
-	return s.hosts.Enabled(hosts.GitLab), ""
-}
-
-// verifyGitLabHosts verifies a delivery against each candidate host and
-// returns the one whose token or signing token matches.
-func verifyGitLabHosts(h http.Header, body []byte, cands []hosts.Host, now time.Time) (inst hosts.Host, method, delivery string, err error) {
-	for _, c := range cands {
-		method, delivery, err = verifyGitLab(h, body, config.GitLab{WebhookSecrets: c.WebhookSecrets,
-			SigningTokens: c.SigningTokens, RequireSignature: c.RequireSignature}, now)
-		if err == nil {
-			return c, method, delivery, nil
-		}
-	}
-	if len(cands) > 1 {
-		err = fmt.Errorf("no configured GitLab host's webhook secret or signing token matches (%d hosts tried; GitLab didn't send X-Gitlab-Instance)", len(cands))
-	}
-	return hosts.Host{}, "", "", err
+// verifyGitLabHook verifies a delivery with its webhook's secret tokens
+// or signing tokens (in inst.Hook).
+func verifyGitLabHook(h http.Header, body []byte, inst hosts.Host, now time.Time) (method, delivery string, err error) {
+	return verifyGitLab(h, body, config.GitLab{WebhookSecrets: inst.Hook.WebhookSecrets,
+		SigningTokens: inst.Hook.SigningTokens, RequireSignature: inst.RequireSignature}, now)
 }
 
 func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
@@ -127,19 +97,9 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid signature or token", http.StatusUnauthorized)
 		return
 	}
-	endpoint, viaEndpoint, ok := s.endpointHost(w, r, hosts.GitLab)
+	inst, ok := s.endpointHost(w, r, hosts.GitLab)
 	if !ok {
 		return
-	}
-	cands, why := s.gitlabCandidates(r, endpoint, viaEndpoint)
-	if why != "" {
-		hm.Auth, hm.Reason = "failed", why
-		s.logger.Warn("gitlab webhook from an unknown instance", "instance", truncate(r.Header.Get("X-Gitlab-Instance"), 200))
-		http.Error(w, "unknown gitlab instance", http.StatusUnauthorized)
-		return
-	}
-	if len(cands) == 1 {
-		hm.Host = cands[0].Host
 	}
 	// A secret token is checked before the body is read; a signature
 	// covers the body, so it is read first.
@@ -151,14 +111,13 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	inst, method, delivery, err := verifyGitLabHosts(r.Header, body, cands, time.Now())
+	method, delivery, err := verifyGitLabHook(r.Header, body, inst, time.Now())
 	if err != nil {
 		hm.Auth, hm.Reason = "failed", err.Error()
-		s.logger.Warn("gitlab webhook rejected", "hosts", len(cands), "reason", err.Error())
+		s.logger.Warn("gitlab webhook rejected", "host", inst.Host, "reason", err.Error())
 		http.Error(w, "invalid signature or token", http.StatusUnauthorized)
 		return
 	}
-	hm.Host = inst.Host
 	if !signed {
 		if body, err = io.ReadAll(io.LimitReader(r.Body, maxWebhookBody)); err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)

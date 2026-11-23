@@ -91,30 +91,9 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
-	h, viaEndpoint, ok := s.endpointHost(w, r, hosts.GitHub)
+	h, ok := s.endpointHost(w, r, hosts.GitHub)
 	if !ok {
 		return
-	}
-	// The hosts the delivery may come from: the webhook URL's, the GitHub
-	// Enterprise server named in X-GitHub-Enterprise-Host, or every
-	// enabled GitHub host (the secret then picks one).
-	cands := []hosts.Host{h}
-	if !viaEndpoint {
-		cands = s.hosts.Enabled(hosts.GitHub)
-		if ghe := strings.ToLower(r.Header.Get("X-GitHub-Enterprise-Host")); ghe != "" {
-			cands = nil
-			if h, ok := s.hosts.Find(hosts.GitHub, ghe); ok {
-				cands = []hosts.Host{h}
-			}
-		}
-	}
-	if len(cands) == 0 {
-		hm.Auth, hm.Reason = "failed", "no GitHub host configured for "+firstNonEmpty(truncate(r.Header.Get("X-GitHub-Enterprise-Host"), 200), "this delivery")
-		http.Error(w, "unknown github host", http.StatusUnauthorized)
-		return
-	}
-	if len(cands) == 1 {
-		hm.Host = cands[0].Host
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBody))
 	if err != nil {
@@ -122,23 +101,15 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verified := false
-	for _, c := range cands {
-		for _, secret := range c.WebhookSecrets {
-			if verifyGitHub(secret, body, sig) {
-				h, verified = c, true
-			}
-		}
-		if verified {
-			break
-		}
+	for _, secret := range h.Hook.WebhookSecrets {
+		verified = verified || verifyGitHub(secret, body, sig)
 	}
 	if !verified {
-		hm.Auth, hm.Reason = "failed", "X-Hub-Signature-256 does not match the webhook secret of "+hostNames(cands)
-		s.logger.Warn("github webhook signature mismatch", "hosts", hostNames(cands), "delivery", hm.Delivery)
+		hm.Auth, hm.Reason = "failed", "X-Hub-Signature-256 does not match this webhook's secret ("+h.Host+")"
+		s.logger.Warn("github webhook signature mismatch", "host", h.Host, "delivery", hm.Delivery)
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
-	hm.Host = h.Host
 	var p ghPayload
 	_ = json.Unmarshal(body, &p)
 	// Verified: the payload's repository URL names the web host (it can

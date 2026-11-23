@@ -55,7 +55,7 @@ func TestLicenseGates(t *testing.T) {
 	}
 	// One host per platform is free; a second, or a custom bot name, is not.
 	host := func(base, bot string) (int, []byte) {
-		return e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": base, "token": "glpat-x", "webhook_secrets": []string{"s"},
+		return e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": base, "token": "glpat-x",
 			"settings": map[string]any{"bot_name": bot}})
 	}
 	if code, b := host("https://gitlab.one.example", "custom"); code != http.StatusPaymentRequired {

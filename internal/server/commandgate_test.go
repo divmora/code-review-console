@@ -33,7 +33,7 @@ func gateServer(t *testing.T, access string) (*Server, *fakeGitLabAPI, func(id i
 	if access != "" {
 		_ = st.PutSetting(context.Background(), settings.Key, settings.Stored{CommandAccess: access}, "a@x")
 	}
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func gateServer(t *testing.T, access string) (*Server, *fakeGitLabAPI, func(id i
 	send := func(id int, user, note string) *httptest.ResponseRecorder {
 		body := `{"object_kind":"note","user":{"username":"` + user + `"},"project":{"path_with_namespace":"acme/pay"},"merge_request":{"iid":7},` +
 			`"object_attributes":{"id":` + strconv.Itoa(id) + `,"note":"` + note + `","noteable_type":"MergeRequest"}}`
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(body)))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(body)))
 		req.Header.Set("X-Gitlab-Token", "glsecret")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)

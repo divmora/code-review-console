@@ -29,7 +29,7 @@ func replica(t *testing.T, st *storetest.Memory) *Server {
 	if st != nil {
 		deps.Store = st
 	}
-	s, err := New(cfg, &fakeExec{}, quiet, deps)
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func replica(t *testing.T, st *storetest.Memory) *Server {
 }
 
 func signedGitLab(s *Server, id string, body []byte, ts int64) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(body))
 	req.Header.Set("X-Gitlab-Event", "Merge Request Hook")
 	for k, v := range signedHeaders(testSigningKey, id, ts, body) {
 		req.Header[k] = v
@@ -74,7 +74,7 @@ func TestReplayAcrossReplicasAndRestarts(t *testing.T) {
 	// replay new.
 	gh := []byte(`{"action":"opened","number":7,"repository":{"full_name":"o/r","html_url":"https://github.com/o/r"}}`)
 	send := func(s *Server, delivery string) string {
-		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(gh))
+		req := httptest.NewRequest("POST", hookPath("github", 1), bytes.NewReader(gh))
 		req.Header.Set("X-GitHub-Event", "pull_request")
 		req.Header.Set("X-GitHub-Delivery", delivery)
 		req.Header.Set("X-Hub-Signature-256", sign("s3cret", gh))

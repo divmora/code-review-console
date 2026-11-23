@@ -46,6 +46,10 @@ type Host struct {
 	Enabled bool   `json:"enabled"`
 	Settings
 	Secrets `json:"-"`
+	// Hook are the secrets of the webhook a delivery came in on, set by
+	// Route (never stored on the host: every webhook has its own URL and
+	// secrets).
+	Hook EndpointSecrets `json:"-"`
 }
 
 // Settings are a host's non-secret settings.
@@ -60,15 +64,20 @@ type Settings struct {
 
 // Secrets are a host's secret values; they are stored encrypted.
 type Secrets struct {
-	Token          string   `json:"token,omitempty"`
-	AppPrivateKey  string   `json:"app_private_key,omitempty"`
-	APIToken       string   `json:"api_token,omitempty"`
-	WebhookSecrets []string `json:"webhook_secrets,omitempty"`
-	SigningTokens  []string `json:"signing_tokens,omitempty"`
+	Token         string `json:"token,omitempty"`
+	AppPrivateKey string `json:"app_private_key,omitempty"`
+	APIToken      string `json:"api_token,omitempty"`
+}
+
+// sharedHookSecrets are the host-level webhook secrets of the shared
+// /webhooks/<platform> URL, removed in 0.12: read only to delete them.
+type sharedHookSecrets struct {
+	WebhookSecrets []string `json:"webhook_secrets"`
+	SigningTokens  []string `json:"signing_tokens"`
 }
 
 func (s Secrets) empty() bool {
-	return s.Token == "" && s.AppPrivateKey == "" && s.APIToken == "" && len(s.WebhookSecrets) == 0 && len(s.SigningTokens) == 0
+	return s.Token == "" && s.AppPrivateKey == "" && s.APIToken == ""
 }
 
 // AppKey returns the GitHub App private key ("file:<path>" reads a file,
@@ -86,17 +95,14 @@ func (h Host) AppKey() ([]byte, error) {
 
 // Status says which secrets are set, for display (never the values).
 type Status struct {
-	Token          bool `json:"token"`
-	AppPrivateKey  bool `json:"app_private_key"`
-	APIToken       bool `json:"api_token"`
-	WebhookSecrets int  `json:"webhook_secrets"`
-	SigningTokens  int  `json:"signing_tokens"`
+	Token         bool `json:"token"`
+	AppPrivateKey bool `json:"app_private_key"`
+	APIToken      bool `json:"api_token"`
 }
 
 // SecretStatus reports which secrets are set.
 func (h Host) SecretStatus() Status {
-	return Status{Token: h.Token != "", AppPrivateKey: h.AppPrivateKey != "", APIToken: h.APIToken != "",
-		WebhookSecrets: len(h.WebhookSecrets), SigningTokens: len(h.SigningTokens)}
+	return Status{Token: h.Token != "", AppPrivateKey: h.AppPrivateKey != "", APIToken: h.APIToken != ""}
 }
 
 // Normalize fills defaults and derives Host from BaseURL.
@@ -124,7 +130,6 @@ func (h *Host) Normalize() error {
 		return fmt.Errorf("base URL %q: want an http(s) URL", h.BaseURL)
 	}
 	h.Host = WebHost(h.Platform, h.BaseURL)
-	h.WebhookSecrets, h.SigningTokens = clean(h.WebhookSecrets), clean(h.SigningTokens)
 	if h.Name == "" {
 		h.Name = h.Host
 	}
@@ -168,41 +173,13 @@ func (h Host) Validate() error {
 		if h.Token == "" {
 			return errors.New("gitlab: set an access token with api scope")
 		}
-		if err := checkSigningTokens(h.SigningTokens); err != nil {
-			return err
-		}
 	case Bitbucket:
 		if h.Token == "" && (h.Email == "" || h.APIToken == "") {
 			return errors.New("bitbucket: set an access token, or an account email and API token")
 		}
 	}
-	// Webhook secrets on the host are optional: they verify the shared
-	// /webhooks/<platform> URL. Webhooks added in the admin panel
-	// (endpoints) have their own URL and secrets.
-	return nil
-}
-
-// ValidateShared checks that a host can verify deliveries on the shared
-// /webhooks/<platform> URL. Hosts from the config file (read-only mode)
-// have no other URL, so they need it.
-func (h Host) ValidateShared() error {
-	switch h.Platform {
-	case GitHub:
-		if len(h.WebhookSecrets) == 0 {
-			return errors.New("github: set a webhook secret (GitHub signs every delivery with it)")
-		}
-	case GitLab:
-		if len(h.WebhookSecrets) == 0 && len(h.SigningTokens) == 0 {
-			return errors.New("gitlab: set a webhook signing token (GitLab 19.0+, recommended) or a secret token")
-		}
-		if h.RequireSignature && len(h.SigningTokens) == 0 {
-			return errors.New("gitlab: require signature needs a signing token")
-		}
-	case Bitbucket:
-		if len(h.WebhookSecrets) == 0 {
-			return errors.New("bitbucket: set a webhook secret")
-		}
-	}
+	// Webhooks (endpoints, added under Manage webhooks) have their own URL
+	// and secrets.
 	return nil
 }
 
@@ -227,7 +204,10 @@ type Registry struct {
 	list      []Host
 	endpoints []Endpoint
 	mode      string // "database" or "config"
-	notes     []string
+	// shared are hosts that still store shared-URL webhook secrets (see
+	// dropSharedSecrets).
+	shared []int64
+	notes  []string
 	// expiry is what is known about each host's token expiry (by ID);
 	// checks the last Test result.
 	expiry map[int64]TokenExpiry
@@ -251,24 +231,24 @@ func New(cfg *config.Config, st store.Store, box *secrets.Box, logger *slog.Logg
 func FromConfig(cfg *config.Config) []Host {
 	var out []Host
 	g := cfg.GitHub
-	if g.WebhookSecret != "" || g.AppID != 0 || g.Token != "" {
+	if g.AppID != 0 || g.Token != "" {
 		key := g.PrivateKey
 		if key == "" && g.PrivateKeyFile != "" {
 			key = "file:" + g.PrivateKeyFile // read when used, see AppKey
 		}
 		out = append(out, Host{Platform: GitHub, BaseURL: g.APIURL, Enabled: true,
 			Settings: Settings{AppID: g.AppID, BotName: g.BotName, Reviewer: g.Reviewer},
-			Secrets:  Secrets{Token: g.Token, AppPrivateKey: key, WebhookSecrets: clean([]string{g.WebhookSecret})}})
+			Secrets:  Secrets{Token: g.Token, AppPrivateKey: key}})
 	}
 	for _, l := range cfg.GitLab {
 		out = append(out, Host{Platform: GitLab, BaseURL: l.BaseURL, Enabled: true,
 			Settings: Settings{RequireSignature: l.RequireSignature, SkipTLSVerify: l.SkipTLSVerify, BotName: l.BotName, Reviewer: l.Reviewer},
-			Secrets:  Secrets{Token: l.Token, WebhookSecrets: l.AllSecrets(), SigningTokens: l.AllSigningTokens()}})
+			Secrets:  Secrets{Token: l.Token}})
 	}
 	for _, b := range cfg.Bitbucket {
 		out = append(out, Host{Platform: Bitbucket, BaseURL: b.APIURL, Enabled: true,
 			Settings: Settings{Email: b.Email, BotName: b.BotName, Reviewer: b.Reviewer},
-			Secrets:  Secrets{Token: b.Token, APIToken: b.APIToken, WebhookSecrets: clean([]string{b.WebhookSecret})}})
+			Secrets:  Secrets{Token: b.Token, APIToken: b.APIToken}})
 	}
 	for i := range out {
 		_ = out[i].Normalize()
@@ -302,7 +282,10 @@ func (r *Registry) Init(ctx context.Context) ([]string, error) {
 			}
 		}
 	}
-	return r.notes, r.Load(ctx)
+	if err := r.Load(ctx); err != nil {
+		return r.notes, err
+	}
+	return r.notes, r.dropSharedSecrets(ctx)
 }
 
 func (r *Registry) addNote(n string) { r.notes = append(r.notes, n) }
@@ -310,6 +293,7 @@ func (r *Registry) addNote(n string) { r.notes = append(r.notes, n) }
 // Load reads the hosts from the database (or the config file).
 func (r *Registry) Load(ctx context.Context) error {
 	list, mode := FromConfig(r.cfg), "config"
+	var shared []int64
 	if r.st != nil {
 		rows, err := r.st.ListHosts(ctx)
 		if err != nil {
@@ -318,11 +302,14 @@ func (r *Registry) Load(ctx context.Context) error {
 		if len(rows) > 0 {
 			list, mode = nil, "database"
 			for _, row := range rows {
-				h, err := r.decode(row)
+				h, legacy, err := r.decode(row)
 				if err != nil {
 					return fmt.Errorf("host %s:%s: %w", row.Platform, row.Host, err)
 				}
 				list = append(list, h)
+				if legacy {
+					shared = append(shared, h.ID)
+				}
 			}
 		} else if r.box != nil {
 			mode = "database" // nothing stored yet, but the admin panel can add hosts
@@ -344,7 +331,7 @@ func (r *Registry) Load(ctx context.Context) error {
 		}
 	}
 	r.mu.Lock()
-	r.list, r.mode, r.endpoints = list, mode, eps
+	r.list, r.mode, r.endpoints, r.shared = list, mode, eps, shared
 	r.mu.Unlock()
 	return nil
 }
@@ -514,21 +501,50 @@ func (r *Registry) Delete(ctx context.Context, id int64, actor string) error {
 	return nil
 }
 
-func (r *Registry) decode(row store.HostRow) (Host, error) {
-	h := Host{ID: row.ID, Platform: row.Platform, Host: row.Host, BaseURL: row.BaseURL, Name: row.Name, Enabled: row.Enabled}
+// decode opens a stored host; legacy is true when it still has the
+// shared URL's webhook secrets (see dropSharedSecrets).
+func (r *Registry) decode(row store.HostRow) (h Host, legacy bool, err error) {
+	h = Host{ID: row.ID, Platform: row.Platform, Host: row.Host, BaseURL: row.BaseURL, Name: row.Name, Enabled: row.Enabled}
 	if len(row.Config) > 0 {
 		if err := json.Unmarshal(row.Config, &h.Settings); err != nil {
-			return h, fmt.Errorf("settings: %w", err)
+			return h, false, fmt.Errorf("settings: %w", err)
 		}
 	}
 	if row.Secrets != "" {
 		pt, err := r.box.Open(row.Secrets)
 		if err != nil {
-			return h, err
+			return h, false, err
 		}
 		if err := json.Unmarshal(pt, &h.Secrets); err != nil {
-			return h, fmt.Errorf("secrets: %w", err)
+			return h, false, fmt.Errorf("secrets: %w", err)
 		}
+		var old sharedHookSecrets
+		legacy = json.Unmarshal(pt, &old) == nil && len(old.WebhookSecrets)+len(old.SigningTokens) > 0
 	}
-	return h, nil
+	return h, legacy, nil
+}
+
+// dropSharedSecrets deletes the webhook secrets still stored on hosts
+// from the shared /webhooks/<platform> URL, removed in 0.12: saving a
+// host stores only its current secrets.
+func (r *Registry) dropSharedSecrets(ctx context.Context) error {
+	r.mu.RLock()
+	ids := append([]int64{}, r.shared...)
+	r.mu.RUnlock()
+	if len(ids) == 0 || r.st == nil || r.box == nil {
+		return nil
+	}
+	var names []string
+	for _, id := range ids {
+		h, ok := r.Get(id)
+		if !ok {
+			continue
+		}
+		if _, err := r.save(ctx, h, "upgrade: shared webhook URL removed"); err != nil {
+			return fmt.Errorf("remove the shared webhook secrets of %s: %w", h.Host, err)
+		}
+		names = append(names, h.Platform+" "+h.Host)
+	}
+	r.addNote(fmt.Sprintf("removed the webhook secrets of the shared /webhooks/<platform> URL from %s: it no longer exists, so point those webhooks at a URL from Code hosts → Manage webhooks", strings.Join(names, ", ")))
+	return r.Load(ctx)
 }

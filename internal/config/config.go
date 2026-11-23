@@ -164,8 +164,10 @@ type GitHub struct {
 	AppID          int64  `yaml:"app_id"`
 	PrivateKeyFile string `yaml:"private_key_file"`
 	PrivateKey     string `yaml:"private_key"`
-	WebhookSecret  string `yaml:"webhook_secret"`
-	Identity       `yaml:",inline"`
+	// WebhookSecret was the shared webhook URL's (removed in 0.12): still
+	// accepted in the file, not used.
+	WebhookSecret string `yaml:"webhook_secret"`
+	Identity      `yaml:",inline"`
 }
 
 // Identity is who the bot is on one code host. Both default from the
@@ -184,20 +186,20 @@ type Identity struct {
 // Bitbucket configures Bitbucket Cloud. Use a repository/workspace access
 // token (Token) or an Atlassian API token with the account email.
 type Bitbucket struct {
-	APIURL        string `yaml:"api_url"` // default https://api.bitbucket.org/2.0
-	Token         string `yaml:"token"`
-	Email         string `yaml:"email"`
-	APIToken      string `yaml:"api_token"`
+	APIURL   string `yaml:"api_url"` // default https://api.bitbucket.org/2.0
+	Token    string `yaml:"token"`
+	Email    string `yaml:"email"`
+	APIToken string `yaml:"api_token"`
+	// WebhookSecret: not used (see GitHub.WebhookSecret).
 	WebhookSecret string `yaml:"webhook_secret"`
 	Identity      `yaml:",inline"`
 }
 
 // GitLab configures one GitLab instance (gitlab.com or self-managed).
 //
-// Webhooks are authenticated with a signing token (GitLab 19.0+, the
-// webhook-signature header, HMAC-SHA256), a secret token (the plain-text
-// X-Gitlab-Token header), or both while migrating: a signed request is
-// checked by its signature, an unsigned one falls back to the secret token.
+// The webhook fields (WebhookSecret(s), SigningToken(s)) were the shared
+// webhook URL's, removed in 0.12: still accepted in the file, not used.
+// Each webhook added in the admin panel has its own secrets.
 type GitLab struct {
 	BaseURL string `yaml:"base_url"`
 	Token   string `yaml:"token"`

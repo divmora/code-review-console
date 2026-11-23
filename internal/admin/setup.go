@@ -105,9 +105,6 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 	hooks := 0
 	for _, h := range active {
 		hooks += len(a.Hosts.Endpoints(h.ID))
-		if len(h.WebhookSecrets)+len(h.SigningTokens) > 0 {
-			hooks++ // the shared URL is set up for this host
-		}
 	}
 	if hooks > 0 {
 		hook.Done, hook.Detail = true, plural(hooks, "webhook")

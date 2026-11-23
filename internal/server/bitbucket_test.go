@@ -29,13 +29,13 @@ func TestBitbucketWebhook(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(context.Background())
 	send := func(event, body, secret string) (int, string) {
-		req := httptest.NewRequest("POST", "/webhooks/bitbucket", bytes.NewReader([]byte(body)))
+		req := httptest.NewRequest("POST", hookPath("bitbucket", 1), bytes.NewReader([]byte(body)))
 		req.Header.Set("X-Event-Key", event)
 		req.Header.Set("X-Hub-Signature", bbSign(secret, []byte(body)))
 		w := httptest.NewRecorder()

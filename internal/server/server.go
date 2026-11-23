@@ -142,11 +142,6 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		if err := h.Validate(); err != nil {
 			return nil, fmt.Errorf("host %s: %w", h.Host, err)
 		}
-		if s.hosts.Mode() != "database" {
-			if err := h.ValidateShared(); err != nil {
-				return nil, fmt.Errorf("host %s: %w", h.Host, err)
-			}
-		}
 	}
 	if len(s.hosts.Enabled("")) == 0 && (deps.Store == nil || s.hosts.Mode() != "database") {
 		return nil, errors.New("nothing to serve: configure github, gitlab and/or bitbucket hosts (or set " + secrets.EnvKey + " and add them in the admin panel)")
@@ -319,11 +314,11 @@ func (s *Server) Handler() http.Handler {
 	// sessions and webhook history. The config was validated at load.
 	resolver, _ := s.cfg.ClientResolver()
 	mux := http.NewServeMux()
-	// The shared URL per platform matches the host from the delivery; a
-	// webhook added in the admin panel has its own URL (/<platform>/<id>)
-	// and secrets.
+	// Every webhook added in the admin panel has its own URL
+	// (/webhooks/<platform>/<id>) and secrets; the URL picks the host. The
+	// shared /webhooks/<platform> URL was removed in 0.12, so a delivery
+	// there is a plain 404 (and not in the webhook history).
 	for platform, h := range map[string]http.HandlerFunc{"github": s.handleGitHub, "gitlab": s.handleGitLab, "bitbucket": s.handleBitbucket} {
-		mux.HandleFunc("POST /webhooks/"+platform, s.recordHooks(platform, h))
 		mux.HandleFunc("POST /webhooks/"+platform+"/{id}", s.recordHooks(platform, h))
 	}
 	// Probes need only the status. The version and queue are for signed-in
