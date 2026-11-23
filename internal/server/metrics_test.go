@@ -96,3 +96,12 @@ func TestMetricsEndpoint(t *testing.T) {
 		t.Errorf("public: %d", w.Code)
 	}
 }
+
+func TestHealthzShowsOnlyTheStatus(t *testing.T) {
+	s := testServer(t)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/healthz", nil))
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"status":"ok"}` {
+		t.Errorf("healthz: %d %s", w.Code, w.Body)
+	}
+}
