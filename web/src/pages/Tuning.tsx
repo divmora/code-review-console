@@ -15,7 +15,8 @@ type Engine = {
 type View = {
   workers: number; queue_size: number; job_timeout: string; debounce: string; history: number;
   bot_name?: string; allow_repo_model: boolean; extra_env: string[]; engine: Engine;
-  dashboard_token_set: boolean; dashboard_access: "admins" | "token" | "public"; env_set: Record<string, boolean>;
+  dashboard_token_set: boolean; dashboard_token_expires?: string; dashboard_token_expired: boolean;
+  dashboard_access: "admins" | "token" | "public"; env_set: Record<string, boolean>;
 };
 
 function Card2({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -45,6 +46,27 @@ function accessNote(access: string, hasToken: boolean, clearing: boolean) {
   return "Admins open it at /admin/dashboard (the sidebar link). /dashboard sends everyone else to sign in.";
 }
 
+// shareLink is the dashboard URL with the token, for people without an admin sign-in.
+function shareLink(token: string) {
+  return location.origin + "/dashboard?token=" + encodeURIComponent(token);
+}
+
+const day = 24 * 60 * 60 * 1000;
+
+// TokenState says whether a token is set and when it expires.
+function TokenState({ v, clearing, replacing }: { v: View; clearing: boolean; replacing: boolean }) {
+  if (clearing) return <Sub>The token is removed when you save.</Sub>;
+  if (replacing) return <Sub>The new token replaces the current one when you save; the old link stops working.</Sub>;
+  if (!v.dashboard_token_set) return <Sub>No token.</Sub>;
+  if (v.dashboard_token_expired) return <StateBadge kind="warn">Expired: generate a new token</StateBadge>;
+  if (!v.dashboard_token_expires) return <StateBadge kind="on">Set, never expires</StateBadge>;
+  const exp = new Date(v.dashboard_token_expires);
+  const when = exp.toLocaleDateString(undefined, { dateStyle: "medium" });
+  return exp.getTime() - Date.now() < 7 * day
+    ? <StateBadge kind="warn">Expires soon: {when}</StateBadge>
+    : <StateBadge kind="on">Set, expires {when}</StateBadge>;
+}
+
 // newToken makes a random dashboard token (32 hex characters).
 function newToken() {
   const b = new Uint8Array(16);
@@ -63,12 +85,15 @@ export default function Tuning() {
   const [defaults, setDefaults] = useState("");
   const [token, setToken] = useState("");
   const [clear, setClear] = useState(false);
+  const [validDays, setValidDays] = useState(90);
+  const [copied, setCopied] = useState(false);
   const take = (n: View) => {
     setV(n);
     setEnv(n.extra_env.join(", "));
     setDefaults(n.engine.defaults ? JSON.stringify(n.engine.defaults, null, 2) : "");
     setToken("");
     setClear(false);
+    setCopied(false);
   };
   useEffect(() => {
     get<View>("/admin/api/tuning").then(take).catch((e) => toast(errMsg(e), true));
@@ -89,7 +114,7 @@ export default function Tuning() {
     const body = {
       ...v, engine: { ...v.engine, defaults: parsed },
       extra_env: env.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean),
-      dashboard_token: token, clear_dashboard_token: clear,
+      dashboard_token: token, clear_dashboard_token: clear, dashboard_token_valid_days: validDays,
     };
     try {
       take(await put<View>("/admin/api/tuning", body));
@@ -192,15 +217,39 @@ export default function Tuning() {
               <option value="public">Anyone who can reach the console</option>
             </NativeSelect>
           </Field>
-          <Field label="Dashboard token" hint={<Sub>For screens and people without an admin sign-in: /dashboard?token=… or a Bearer header. Stored hashed and never shown again: copy a new one before saving.</Sub>}>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input className="max-w-sm font-mono" placeholder={v.dashboard_token_set ? "Set (leave empty to keep it)" : "Not set"} value={token} onChange={(e) => { setToken(e.target.value); setClear(false); }} />
-              <Button variant="outline" onClick={() => { setToken(newToken()); setClear(false); }}>Generate</Button>
-              {v.dashboard_token_set && (
-                <Button variant="ghost" className="text-destructive" onClick={() => { setToken(""); setClear(true); }} disabled={clear}>{clear ? "Removed on save" : "Remove"}</Button>
-              )}
+          <Field label="Dashboard token" hint={<Sub>For screens and people without an admin sign-in: /dashboard?token=… or a Bearer header. Stored hashed and never shown again.</Sub>}>
+            <div className="grid gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input className="max-w-sm font-mono" placeholder={v.dashboard_token_set ? "Set (leave empty to keep it)" : "Not set"} value={token} onChange={(e) => { setToken(e.target.value); setClear(false); setCopied(false); }} />
+                <Button variant="outline" onClick={() => { setToken(newToken()); setClear(false); setCopied(false); }}>Generate</Button>
+                {v.dashboard_token_set && (
+                  <Button variant="ghost" className="text-destructive" onClick={() => { setToken(""); setClear(true); }} disabled={clear}>{clear ? "Removed on save" : "Remove"}</Button>
+                )}
+              </div>
+              <TokenState v={v} clearing={clear} replacing={!!token} />
             </div>
           </Field>
+          {token && (
+            <>
+              <Field label="New token valid for" hint={<Sub>Counted from when you save. After that the link stops working until a new token is generated.</Sub>}>
+                <NativeSelect value={String(validDays)} onChange={(e) => setValidDays(parseInt(e.target.value, 10))}>
+                  <option value="7">7 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="365">1 year</option>
+                  <option value="0">Never expires</option>
+                </NativeSelect>
+              </Field>
+              <Field label="Link to share" hint={<Sub className="text-warning">Copy it now: once saved, the token can't be shown again.</Sub>}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input readOnly className="font-mono text-xs" value={shareLink(token)} onFocus={(e) => e.target.select()} />
+                  <Button variant="outline" onClick={() => {
+                    navigator.clipboard?.writeText(shareLink(token)).then(() => setCopied(true), () => toast("Copy failed: select the link and copy it", true));
+                  }}>{copied ? "Copied" : "Copy link"}</Button>
+                </div>
+              </Field>
+            </>
+          )}
         </FormGrid>
       </Card2>
       <Card className="py-4">

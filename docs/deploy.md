@@ -259,7 +259,11 @@ access** decides who can open it:
 | Admins, and anyone with the token | admins, and screens or people with the token | `/dashboard?token=…` or `Authorization: Bearer …` |
 | Anyone who can reach the console | everyone | `/dashboard` |
 
-The token is set or generated on the same page, stored as a SHA-256 hash, and never shown again.
+The token is set or generated on the same page. Choose how long it works (7, 30 or 90 days, a year,
+or never; 90 days by default) and copy the ready-made link before saving: only a SHA-256 hash of the
+token is stored (in the database's settings, never in the audit log), so it can't be shown again.
+The page shows when the token expires and warns a week before. An expired link tells its viewer to
+ask an admin for a new one; generating a new token starts a new period and stops the old link.
 An install that had a token before keeps working with it; one without a token is now for admins
 only, until you choose otherwise. When the dashboard is public, consider hiding repository names.
 

@@ -2,6 +2,7 @@ package tuning
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -187,5 +188,83 @@ func TestPutKeepsAccessWithStoredToken(t *testing.T) {
 	got, err := s.Put(ctx, Update{Settings: cur}, nil, "a@x")
 	if err != nil || got.Access() != AccessToken || !got.DashboardOpen("first-token-long-enough", false) {
 		t.Fatalf("saving token access keeps the stored token: %v %+v", err, got)
+	}
+}
+
+func TestTokenExpiry(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New()
+	s := New(&config.Config{}, st)
+	if _, err := s.Import(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := s.Get(ctx)
+	if _, err := s.Put(ctx, Update{Settings: base, DashboardToken: "a-token-for-the-wall", ValidDays: 12}, nil, "a@x"); err == nil {
+		t.Error("only the offered validities are accepted")
+	}
+	got, err := s.Put(ctx, Update{Settings: base, DashboardToken: "a-token-for-the-wall", ValidDays: 30}, nil, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := got.TokenExpiry()
+	if d := time.Until(exp); d < 29*24*time.Hour || d > 31*24*time.Hour {
+		t.Errorf("expires in %v", d)
+	}
+	if !got.DashboardTokenOK("a-token-for-the-wall") || got.DashboardTokenExpiredFor("a-token-for-the-wall") {
+		t.Error("valid until it expires")
+	}
+	// Saving other settings keeps the token and its expiry.
+	got.Workers = 5
+	got.DashboardTokenHash, got.DashboardTokenExpires = "", "" // the panel never sends them
+	again, _ := s.Put(ctx, Update{Settings: got}, nil, "a@x")
+	if !again.TokenExpiry().Equal(exp) || !again.DashboardTokenOK("a-token-for-the-wall") {
+		t.Errorf("expiry kept: %v", again.TokenExpiry())
+	}
+	expired := again
+	expired.DashboardTokenExpires = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	if expired.DashboardTokenOK("a-token-for-the-wall") || !expired.DashboardTokenExpiredFor("a-token-for-the-wall") || expired.DashboardTokenExpiredFor("other") {
+		t.Error("an expired token stops working and is reported as expired")
+	}
+	if expired.DashboardOpen("a-token-for-the-wall", false) || !expired.DashboardOpen("", true) {
+		t.Error("admins still get in")
+	}
+	never, _ := s.Put(ctx, Update{Settings: base, DashboardToken: "another-token-1234", ValidDays: 0}, nil, "a@x")
+	if !never.TokenExpiry().IsZero() || !never.DashboardTokenOK("another-token-1234") {
+		t.Error("0 days: never expires")
+	}
+	cleared, _ := s.Put(ctx, Update{Settings: base, ClearToken: true}, nil, "a@x")
+	if cleared.DashboardTokenHash != "" || cleared.DashboardTokenExpires != "" {
+		t.Error("remove clears the expiry too")
+	}
+}
+
+func TestAuditNeverHoldsTheTokenHash(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New()
+	s := New(&config.Config{Server: config.Server{Dashboard: config.Dashboard{Token: "token-from-the-file-123"}}}, st)
+	if _, err := s.Import(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := s.Get(ctx)
+	_, _ = s.Put(ctx, Update{Settings: base, DashboardToken: "second-token-long-enough", ValidDays: 7}, nil, "a@x")
+	_, _ = s.Put(ctx, Update{Settings: base, ClearToken: true}, nil, "a@x")
+	entries, err := st.ListAudit(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := ""
+	for _, e := range entries {
+		b, _ := json.Marshal(e)
+		all += string(b)
+	}
+	for _, tok := range []string{"token-from-the-file-123", "second-token-long-enough"} {
+		if strings.Contains(all, hashToken(tok)) || strings.Contains(all, tok) {
+			t.Errorf("the audit log holds the token or its hash: %s", all)
+		}
+	}
+	for _, want := range []string{"(set)", "(changed)", "(removed)"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("audit says %s: %s", want, all)
+		}
 	}
 }

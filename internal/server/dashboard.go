@@ -58,12 +58,16 @@ func (s *Server) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
 		return
 	}
-	if !t.DashboardOpen(requestToken(r), false) {
+	if tok := requestToken(r); !t.DashboardOpen(tok, false) {
+		msg := `This dashboard needs its token: open <code>/dashboard?token=…</code>.`
+		if t.DashboardTokenExpiredFor(tok) {
+			msg = `This dashboard link has expired. Ask an admin for a new one.`
+		}
 		securityHeaders(w, "")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>Status dashboard</title>` +
-			`<p>This dashboard needs its token: open <code>/dashboard?token=…</code>. Admins can <a href="/admin/dashboard">sign in</a> instead.</p>`))
+			`<p>` + msg + ` Admins can <a href="/admin/dashboard">sign in</a> instead.</p>`))
 		return
 	}
 	s.renderDashboard(w, r, "/api/status")
@@ -126,8 +130,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "the dashboard is for signed-in admins: open /admin/dashboard"})
 			return
 		}
-	} else if !tn.DashboardOpen(requestToken(r), false) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "dashboard token required"})
+	} else if tok := requestToken(r); !tn.DashboardOpen(tok, false) {
+		msg := "dashboard token required"
+		if tn.DashboardTokenExpiredFor(tok) {
+			msg = "this dashboard link has expired: ask an admin for a new one"
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": msg})
 		return
 	}
 	s.writeStatus(w, r, tn)
