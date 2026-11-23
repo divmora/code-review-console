@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/divmora/code-review-console/compare/v0.8.0...v0.9.0) (2026-11-23)
+
+
+### Features
+
+* **kubernetes:** limit review pods' disk and /tmp ([#62](https://github.com/divmora/code-review-console/issues/62)) ([8cc2812](https://github.com/divmora/code-review-console/commit/8cc2812a5bbd25bf033ad88f7de514fc682ebd7c)), closes [#30](https://github.com/divmora/code-review-console/issues/30)
+
+
+### Bug Fixes
+
+* **admin:** redirect /admin/, show "page not found", ask before signing out ([#61](https://github.com/divmora/code-review-console/issues/61)) ([1ae41bf](https://github.com/divmora/code-review-console/commit/1ae41bfa2f1e7812bd6d70a18726f698927bc05b)), closes [#60](https://github.com/divmora/code-review-console/issues/60)
+
 ## [0.8.0](https://github.com/divmora/code-review-console/compare/v0.7.1...v0.8.0) (2026-11-22)
 
 
