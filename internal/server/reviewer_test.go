@@ -148,7 +148,7 @@ func TestPerInstanceIdentity(t *testing.T) {
 	if y.botName != "codereview" || s.reviewerFor(y, "127.0.0.2:1") != "y-token-user" {
 		t.Errorf("instance y should default to bot_name and the token user: %q %q", y.botName, s.reviewerFor(y, "127.0.0.2:1"))
 	}
-	yml, _, err := s.jobConfig(context.Background(), x)
+	yml, _, err := s.jobConfig(context.Background(), x, x.host.Host)
 	if err != nil || !bytes.Contains(yml, []byte("bot_name: xbot")) {
 		t.Errorf("job config should carry the host's handle: %s %v", yml, err)
 	}
@@ -311,7 +311,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	if tgt.botName != "gitlab-bot" {
 		t.Errorf("mention should default to the token user: %q", tgt.botName)
 	}
-	yml, _, _ := s.jobConfig(context.Background(), tgt)
+	yml, _, _ := s.jobConfig(context.Background(), tgt, tgt.host.Host)
 	if !bytes.Contains(yml, []byte("bot_name: gitlab-bot")) {
 		t.Errorf("the CLI should get the same handle for its command hints: %s", yml)
 	}

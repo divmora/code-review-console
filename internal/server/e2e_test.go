@@ -17,6 +17,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
 	"github.com/divmora/code-review-console/internal/executor"
+	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/store/storetest"
 )
 
@@ -134,7 +135,13 @@ func runE2E(t *testing.T, exec executor.Executor) {
 	cfg.Model = "fake"
 	cfg.Server.Debounce = 0
 	st := storetest.New()
-	s, err := newHooked(t, cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	// Like start-up: the config file's model profiles are copied into the
+	// database, where reviews read them from.
+	ms := models.New(cfg, st)
+	if _, _, err := ms.Import(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newHooked(t, cfg, exec, quiet, Deps{Store: st, License: licensetest.Full(t), Models: ms})
 	if err != nil {
 		t.Fatal(err)
 	}

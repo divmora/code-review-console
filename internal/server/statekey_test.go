@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/divmora/code-review-console/internal/hosts"
@@ -52,5 +53,37 @@ func TestJobSecretsCarryStateKey(t *testing.T) {
 		if m, err := tgt.secrets(context.Background()); err != nil || len(m["CODEREVIEW_STATE_KEY"]) != 64 {
 			t.Errorf("%s: %v %v", tgt.host.Platform, m, err)
 		}
+	}
+}
+
+// The job config names the PR's host when the API URL implies another
+// (code-review-bot#31), and only then.
+func TestJobConfigPRHost(t *testing.T) {
+	s := testServer(t)
+	cfgFor := func(tgt target, prHost string) string {
+		y, _, err := s.jobConfig(context.Background(), tgt, prHost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(y)
+	}
+	gl := s.gitlabTarget(hosts.Host{Platform: hosts.GitLab, Host: "gitlab-webservice.gitlab.svc:8181", BaseURL: "http://gitlab-webservice.gitlab.svc:8181", Token: "t"})
+	if y := cfgFor(gl, "gitlab.example.com"); !strings.Contains(y, "host: gitlab.example.com") {
+		t.Errorf("internal GitLab URL, public MR host:\n%s", y)
+	}
+	if y := cfgFor(gl, "gitlab-webservice.gitlab.svc:8181"); strings.Contains(y, "host:") {
+		t.Errorf("same host: no host key:\n%s", y)
+	}
+	gh := s.githubTarget(hosts.Host{Platform: hosts.GitHub, Host: "github.com", BaseURL: "https://api.github.com", Token: "t"}, 0)
+	if y := cfgFor(gh, "github.com"); strings.Contains(y, "github:") {
+		t.Errorf("github.com: nothing to write:\n%s", y)
+	}
+	ghe := s.githubTarget(hosts.Host{Platform: hosts.GitHub, Host: "api.octocorp.ghe.com", BaseURL: "https://api.octocorp.ghe.com", Token: "t"}, 0)
+	if y := cfgFor(ghe, "octocorp.ghe.com"); strings.Contains(y, "host:") || !strings.Contains(y, "api_url: https://api.octocorp.ghe.com") {
+		t.Errorf("ghe.com maps by itself:\n%s", y)
+	}
+	proxy := s.githubTarget(hosts.Host{Platform: hosts.GitHub, Host: "127.0.0.1:9999", BaseURL: "http://127.0.0.1:9999", Token: "t"}, 0)
+	if y := cfgFor(proxy, "github.com"); !strings.Contains(y, "host: github.com") {
+		t.Errorf("API under another name:\n%s", y)
 	}
 }
