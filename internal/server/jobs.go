@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -87,6 +88,26 @@ func (s *Server) bitbucketTarget(h hosts.Host) target {
 	}
 }
 
+// urlHost is a URL's host (with port), lower case.
+func urlHost(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(p.Host)
+}
+
+// githubWebHost is the web host an API URL serves, the way the CLI works
+// it out: api.github.com serves github.com, api.<name>.ghe.com serves
+// <name>.ghe.com, and Enterprise Server's https://<host>/api/v3 <host>.
+func githubWebHost(api string) string {
+	h := urlHost(api)
+	if h == "api.github.com" || strings.HasPrefix(h, "api.") && strings.HasSuffix(h, ".ghe.com") {
+		return strings.TrimPrefix(h, "api.")
+	}
+	return h
+}
+
 // withStateKey adds CODEREVIEW_STATE_KEY, derived per code host from the
 // console's secret key: the CLI (0.6 or later) signs the markers it reads
 // back from its comments, so its earlier comments still count after the
@@ -125,17 +146,27 @@ type engineBitbucket struct {
 
 type engineGitHub struct {
 	APIURL string `yaml:"api_url,omitempty"`
+	// Host is written only when the PR URLs' host isn't what api_url
+	// implies (CLI 0.6.1 or later reads it; it binds the token to a host).
+	Host string `yaml:"host,omitempty"`
 }
 
 type engineGitLab struct {
-	BaseURL       string `yaml:"base_url"`
+	BaseURL string `yaml:"base_url"`
+	// Host likewise, when MR URLs use another name than base_url.
+	Host          string `yaml:"host,omitempty"`
 	Token         string `yaml:"token"`
 	SkipTLSVerify bool   `yaml:"skip_tls_verify,omitempty"`
 }
 
 // jobConfig builds the engine config for a job. Secret values never go into
 // the YAML: literal API keys move to env vars and are referenced by name.
-func (s *Server) jobConfig(ctx context.Context, tgt target) ([]byte, map[string]string, error) {
+//
+// prHost is the host of the PR's URL. The CLI only sends the token for PRs
+// on the host its API URL implies (code-review-bot#23), so when the PR's
+// host is another (an API reached under another name, GitHub Enterprise
+// Cloud's api.<name>.ghe.com), the config names it as host.
+func (s *Server) jobConfig(ctx context.Context, tgt target, prHost string) ([]byte, map[string]string, error) {
 	models, defModel, fallback, err := s.effectiveModels(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -147,11 +178,22 @@ func (s *Server) jobConfig(ctx context.Context, tgt target) ([]byte, map[string]
 	// Code host settings for this job; secrets stay in env vars.
 	switch h := tgt.host; h.Platform {
 	case hosts.GitHub:
-		if h.BaseURL != "https://api.github.com" {
-			ec.GitHub = &engineGitHub{APIURL: h.BaseURL}
+		gh := engineGitHub{APIURL: h.BaseURL}
+		if gh.APIURL == "https://api.github.com" {
+			gh.APIURL = ""
+		}
+		if prHost != "" && !strings.EqualFold(githubWebHost(h.BaseURL), prHost) {
+			gh.Host = prHost
+		}
+		if gh != (engineGitHub{}) {
+			ec.GitHub = &gh
 		}
 	case hosts.GitLab:
-		ec.GitLab = []engineGitLab{{BaseURL: h.BaseURL, Token: "${GITLAB_TOKEN}", SkipTLSVerify: h.SkipTLSVerify}}
+		gl := engineGitLab{BaseURL: h.BaseURL, Token: "${GITLAB_TOKEN}", SkipTLSVerify: h.SkipTLSVerify}
+		if prHost != "" && !strings.EqualFold(urlHost(h.BaseURL), prHost) {
+			gl.Host = prHost
+		}
+		ec.GitLab = []engineGitLab{gl}
 	case hosts.Bitbucket:
 		bb := &engineBitbucket{APIURL: h.BaseURL}
 		if h.Token != "" {
@@ -218,7 +260,7 @@ func (s *Server) newTask(ctx context.Context, tgt target, ref vcs.Ref, kind stri
 	if err != nil {
 		return executor.Task{}, err
 	}
-	cfgYAML, keyEnv, err := s.jobConfig(ctx, tgt)
+	cfgYAML, keyEnv, err := s.jobConfig(ctx, tgt, ref.Host)
 	if err != nil {
 		return executor.Task{}, err
 	}
