@@ -63,3 +63,33 @@ func TestMiddleware(t *testing.T) {
 		t.Error("no client outside a request")
 	}
 }
+
+func TestHops(t *testing.T) {
+	base, _ := NewResolver(nil)
+	one := base.WithHops(1)
+	for name, c := range map[string]struct {
+		r    *http.Request
+		want string
+	}{
+		// An ALB appends the address it saw: the client can't push it out.
+		"through the LB":             {req("10.0.5.7:80", "198.51.100.7"), "198.51.100.7"},
+		"forged entries are ignored": {req("10.0.5.7:80", "203.0.113.99, 6.6.6.6, 198.51.100.7"), "198.51.100.7"},
+		"a VPN client in the VPC":    {req("10.0.5.7:80", "203.0.113.99, 10.0.9.20"), "10.0.9.20"},
+		"skipped the LB":             {req("198.51.100.8:4000"), "198.51.100.8"},
+		"malformed last hop":         {req("10.0.5.7:80", "198.51.100.7, junk"), "10.0.5.7"},
+	} {
+		if got := one.IP(c.r); got != c.want {
+			t.Errorf("%s: got %s, want %s", name, got, c.want)
+		}
+	}
+	if got := base.WithHops(2).IP(req("10.0.5.7:80", "203.0.113.99, 198.51.100.7, 10.0.1.1")); got != "198.51.100.7" {
+		t.Errorf("two proxies: %s", got)
+	}
+}
+
+func TestWideRanges(t *testing.T) {
+	r, _ := NewResolver([]string{"10.0.0.0/8", "10.0.12.0/24", "10.0.5.7", "fd00::/8", "2001:db8:1:2::/64"})
+	if got := strings.Join(r.WideRanges(), " "); got != "10.0.0.0/8 fd00::/8" {
+		t.Errorf("wide: %s", got)
+	}
+}

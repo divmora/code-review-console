@@ -24,8 +24,16 @@ type EnvVar struct {
 var EnvVars = []EnvVar{
 	{"DATABASE_URL", "database.url", "PostgreSQL connection string (required)", func(c *Config, v string) error { c.Database.URL = v; return nil }},
 	{"CODEREVIEW_CONSOLE_ADDR", "server.addr", "listen address, default :8080", func(c *Config, v string) error { c.Server.Addr = v; return nil }},
-	{"CODEREVIEW_CONSOLE_TRUSTED_PROXIES", "server.trusted_proxies", "comma-separated IPs or CIDRs of the load balancer in front (for client IPs)", func(c *Config, v string) error {
+	{"CODEREVIEW_CONSOLE_TRUSTED_PROXIES", "server.trusted_proxies", "the load balancer's own IPs (comma-separated), to record client IPs; never a range clients connect from", func(c *Config, v string) error {
 		c.Server.TrustedProxies = list(v)
+		return nil
+	}},
+	{"CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS", "server.trusted_proxy_hops", "instead of addresses: how many proxies are in front (usually 1)", func(c *Config, v string) error {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("want a number, got %q", v)
+		}
+		c.Server.TrustedProxyHops = n
 		return nil
 	}},
 	{"CODEREVIEW_CONSOLE_BASE_URL", "admin.base_url", "public URL of the console (sign-in redirect, webhook URLs)", func(c *Config, v string) error { c.Admin.BaseURL = v; return nil }},

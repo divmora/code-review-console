@@ -97,6 +97,23 @@ func lookup(doc map[string]any, key string) any {
 var removedEnv = []string{"CODEREVIEW_MODEL", "CODEREVIEW_FALLBACK", "GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET",
 	"GITLAB_TOKEN", "GITLAB_URL", "GITLAB_WEBHOOK_SECRET", "GITLAB_WEBHOOK_SIGNING_TOKEN"}
 
+// ClientResolver finds client IPs as configured: trusted proxy addresses,
+// or a number of proxy hops.
+func (c *Config) ClientResolver() (clientip.Resolver, error) {
+	s := c.Server
+	switch {
+	case s.TrustedProxyHops < 0 || s.TrustedProxyHops > 10:
+		return clientip.Resolver{}, fmt.Errorf("server.trusted_proxy_hops: want 0 to 10, got %d", s.TrustedProxyHops)
+	case s.TrustedProxyHops > 0 && len(s.TrustedProxies) > 0:
+		return clientip.Resolver{}, errors.New("set server.trusted_proxies or server.trusted_proxy_hops, not both")
+	}
+	r, err := clientip.NewResolver(s.TrustedProxies)
+	if err != nil {
+		return r, fmt.Errorf("server.trusted_proxies: %w", err)
+	}
+	return r.WithHops(s.TrustedProxyHops), nil
+}
+
 // RemovedKeys lists the keys and environment variables in use that are
 // managed in the admin panel now (only copied into the database on the
 // first start), so the console can say to remove them.
@@ -261,7 +278,11 @@ type Server struct {
 	// console (IPs or CIDR ranges). X-Forwarded-For is believed only from
 	// them, to record where sign-ins, changes and webhooks come from.
 	TrustedProxies []string `yaml:"trusted_proxies"`
-	Workers        int      `yaml:"workers"`
+	// TrustedProxyHops counts the proxies in front instead (the client is
+	// that many addresses from the right of X-Forwarded-For). Set one of
+	// the two.
+	TrustedProxyHops int `yaml:"trusted_proxy_hops"`
+	Workers          int `yaml:"workers"`
 	// QueueSize bounds pending jobs; extra webhooks get HTTP 503.
 	QueueSize int `yaml:"queue_size"`
 	// JobTimeout bounds one review.
@@ -595,8 +616,8 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
-	if _, err := clientip.NewResolver(c.Server.TrustedProxies); err != nil {
-		return fmt.Errorf("server.trusted_proxies: %w", err)
+	if _, err := c.ClientResolver(); err != nil {
+		return err
 	}
 	switch c.Executor.Type {
 	case "local":

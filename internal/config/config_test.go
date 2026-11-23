@@ -143,3 +143,22 @@ func TestEnvironmentWinsOverFile(t *testing.T) {
 		t.Errorf("a bad boolean names the variable: %v", err)
 	}
 }
+
+func TestTrustedProxyOptions(t *testing.T) {
+	clearStartupEnv(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS", "1")
+	cfg, err := Load("")
+	if err != nil || cfg.Server.TrustedProxyHops != 1 {
+		t.Fatalf("hops from the environment: %v %+v", err, cfg)
+	}
+	t.Setenv("CODEREVIEW_CONSOLE_TRUSTED_PROXIES", "10.0.5.7")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Errorf("addresses and hops together are refused: %v", err)
+	}
+	t.Setenv("CODEREVIEW_CONSOLE_TRUSTED_PROXIES", "")
+	t.Setenv("CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS", "many")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "CODEREVIEW_CONSOLE_TRUSTED_PROXY_HOPS") {
+		t.Errorf("a bad number names the variable: %v", err)
+	}
+}
