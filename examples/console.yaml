@@ -1,7 +1,11 @@
-# console.yaml: Divmora Code Review Console.
+# console.yaml: Divmora Code Review Console (optional).
 # ${VAR} is replaced with the environment variable VAR when the file loads.
 #
-# This file holds only what the console needs to start and the limits a
+# The file is optional: every key below can be an environment variable
+# instead (see examples/console.env, or `code-review-console env`), and an
+# environment variable wins over the file.
+#
+# It holds only what the console needs to start and the limits a
 # panel admin must not change. Everything else is managed in the admin
 # panel and stored in the database:
 #   Code hosts   GitHub, GitLab and Bitbucket hosts and their webhooks

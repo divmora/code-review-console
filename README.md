@@ -96,15 +96,17 @@ The CLI prints its result as JSON, which the console stores.
 ## Quick start
 
 ```bash
-cp examples/console.yaml console.yaml     # models, GitHub/GitLab, executor, admin
+cp examples/console.env .env              # secret key and admin sign-in
 docker compose up --build                 # console + PostgreSQL
 ```
+
+Then sign in and follow **Setup**: code hosts, model profiles and the license are added in the admin panel. No config file is needed: the few startup settings are environment variables (`code-review-console env` lists them), and a `console.yaml` can hold them instead if you prefer.
 
 - GitHub App setup: [docs/github-app.md](docs/github-app.md)
 - GitLab webhooks: [docs/gitlab.md](docs/gitlab.md)
 - Admin sign-in (OIDC): [docs/admin.md](docs/admin.md)
 - Deploying, upgrading and CLI compatibility: [docs/deploy.md](docs/deploy.md)
-- Check a config: `code-review-console check-config --config console.yaml`
+- Check what reviews will run with: `code-review-console check-config`
 
 ## Executors
 

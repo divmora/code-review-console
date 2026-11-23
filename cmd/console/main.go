@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,7 +37,12 @@ Usage:
   console serve [--config console.yaml] [--addr :8080]   Run webhooks, queue, executors, API and UI
   console check-config [--config console.yaml]          Validate the config with the CLI the executor runs
   console hosts export|import ...                       Move code hosts and webhooks as YAML (console hosts help)
+  console env                                           List the environment variables the console reads
   console version
+
+The config file is optional: every startup setting can be an environment
+variable (console env), and an environment variable wins over the file.
+Everything else is managed in the admin panel.
 `
 
 func main() {
@@ -54,6 +60,8 @@ func main() {
 		err = checkConfig(ctx, os.Args[2:])
 	case "hosts":
 		err = hostsCmd(ctx, os.Args[2:])
+	case "env":
+		printEnv()
 	case "version", "--version", "-v":
 		fmt.Println(version.Version)
 	case "help", "-h", "--help":
@@ -70,7 +78,7 @@ func main() {
 
 func load(args []string, name string) (*config.Config, *slog.Logger, *flag.FlagSet, error) {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
-	path := fs.String("config", "", "config file (default ./console.yaml or $CODEREVIEW_CONSOLE_CONFIG)")
+	path := fs.String("config", "", "config file, optional (default $CODEREVIEW_CONSOLE_CONFIG, or ./console.yaml if it exists)")
 	verbose := fs.Bool("verbose", false, "debug logging")
 	addr := fs.String("addr", "", "listen address (overrides server.addr)")
 	_ = fs.Parse(args)
@@ -116,8 +124,9 @@ func serve(ctx context.Context, args []string) error {
 	// The console keeps its configuration (code hosts, models, settings,
 	// executor settings, the license) in the database, with secrets
 	// encrypted by the secret key.
+	logger.Info("configuration", "file", cmp.Or(cfg.File(), "none"), "environment", cfg.EnvUsed())
 	if cfg.Database.URL == "" {
-		return errors.New("database.url (or DATABASE_URL) is required: the console keeps its configuration in PostgreSQL")
+		return errors.New("DATABASE_URL (or database.url) is required: the console keeps its configuration in PostgreSQL")
 	}
 	box, err := secrets.FromEnv()
 	if err != nil {
@@ -125,6 +134,11 @@ func serve(ctx context.Context, args []string) error {
 	}
 	if box == nil {
 		return errors.New(secrets.EnvKey + " is required: it encrypts code host tokens in the database (create one with: openssl rand -base64 32)")
+	}
+	// from says where first-start values come from, for the log.
+	from := " with the starting values"
+	if cfg.File() != "" {
+		from = " from the config file (with the starting values for what it doesn't set)"
 	}
 	var deps server.Deps
 	st, err := store.Open(ctx, cfg.Database.URL)
@@ -152,7 +166,7 @@ func serve(ctx context.Context, args []string) error {
 			return fmt.Errorf("executor settings: %w", err)
 		}
 		if seeded {
-			logger.Info("executor settings copied from the config file into the database; change them in the admin panel (Executor) from now on")
+			logger.Info("executor settings saved in the database" + from + "; change them in the admin panel (Executor) from now on")
 		}
 		for _, d := range differs {
 			logger.Warn("config file value ignored: the executor setting saved in the admin panel wins", "setting", "executor."+cfg.Executor.Type+"."+d)
@@ -179,7 +193,7 @@ func serve(ctx context.Context, args []string) error {
 		case err != nil:
 			return fmt.Errorf("settings: %w", err)
 		case seeded:
-			logger.Info("settings copied from the config file into the database; change them in the admin panel from now on")
+			logger.Info("settings saved in the database" + from + "; change them in the admin panel from now on")
 		}
 		for _, d := range differs {
 			logger.Info("config file value ignored: the database value wins (change it in the admin panel)", "setting", d)
@@ -199,7 +213,7 @@ func serve(ctx context.Context, args []string) error {
 	if copied, err := deps.Tuning.Import(ctx); err != nil && !copied {
 		return fmt.Errorf("queue and review engine settings: %w", err)
 	} else if copied {
-		logger.Info("queue, review engine, bot name and dashboard token settings copied from the config file into the database; change them in the admin panel (Settings) from now on")
+		logger.Info("queue, review engine, bot name and dashboard token settings saved in the database" + from + "; change them in the admin panel (Settings) from now on")
 		if err != nil {
 			logger.Error("part of the config file's review: section was not copied; set it in the admin panel", "error", err)
 		}
@@ -257,7 +271,7 @@ func checkConfig(ctx context.Context, args []string) error {
 	// and license saved in the admin panel. The database is only read (no
 	// migrations, nothing written).
 	if cfg.Database.URL == "" {
-		return errors.New("database.url (or DATABASE_URL) is required: the console keeps its configuration in PostgreSQL")
+		return errors.New("DATABASE_URL (or database.url) is required: the console keeps its configuration in PostgreSQL")
 	}
 	pg, err := store.Connect(ctx, cfg.Database.URL)
 	if err != nil {
@@ -507,4 +521,30 @@ func (e *licensedExecutor) Run(ctx context.Context, t executor.Task) (*executor.
 		return nil, &executor.RunError{Message: "the " + e.Name() + " executor needs a Divmora license with the executors feature: add one under License in the admin panel"}
 	}
 	return e.Executor.Run(ctx, t)
+}
+
+// printEnv lists the environment variables the console reads.
+func printEnv() {
+	fmt.Println("Startup settings (an environment variable wins over the config file):")
+	w := len("CODEREVIEW_CONSOLE_REGISTRY_USERNAME/_PASSWORD")
+	for _, e := range config.EnvVars {
+		w = max(w, len(e.Name))
+	}
+	for _, e := range config.EnvVars {
+		fmt.Printf("  %-*s  %s", w, e.Name, e.Key)
+		if e.Help != "" {
+			fmt.Printf(": %s", e.Help)
+		}
+		fmt.Println()
+	}
+	fmt.Printf(`
+Also:
+  %-*s  config file path (optional)
+  %-*s  encrypts code host tokens in the database (required)
+  %-*s  license key override (else the admin panel's)
+  %-*s  read-only registry credentials for the Executor page's version list
+Model API keys and cloud credentials are environment variables too: a
+model profile names its variable, and provider defaults (OPENAI_API_KEY,
+AWS_*, ...) are passed to review jobs.
+`, w, "CODEREVIEW_CONSOLE_CONFIG", w, secrets.EnvKey, w, "CODEREVIEW_CONSOLE_LICENSE", w, "CODEREVIEW_CONSOLE_REGISTRY_USERNAME/_PASSWORD")
 }

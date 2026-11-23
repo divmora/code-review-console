@@ -27,7 +27,7 @@ The console runs the `codereview` CLI for every review, so the two must agree on
   from older CLIs).
 - With the `docker` or `kubernetes` executor, `executor.*.image` is the CLI image. A release tag
   older than the minimum is rejected when the config loads.
-- Always run `code-review-console check-config --config console.yaml` after an upgrade. It asks
+- Always run `code-review-console check-config` after an upgrade (add `--config console.yaml` if you use a file). It asks
   the CLI the executor actually runs to validate the config, and fails if that CLI is too old.
   It uses what reviews use: the executor settings (version, resources, scheduling) and model
   profiles saved in the admin panel, so it needs `database.url`. It only reads the database: no
@@ -64,12 +64,36 @@ license is renewed.
 
 ## Environment
 
+The console needs no config file. Its startup settings are environment variables, listed by
+`code-review-console env` and in [examples/console.env](../examples/console.env); each one wins over
+the same key in an optional config file.
+
+| Variable | Config file key | |
+|---|---|---|
+| `CODEREVIEW_CONSOLE_ADDR` | `server.addr` | listen address, default `:8080` |
+| `CODEREVIEW_CONSOLE_BASE_URL` | `admin.base_url` | public URL (sign-in redirect, webhook URLs) |
+| `CODEREVIEW_CONSOLE_ADMIN_ENABLED` | `admin.enabled` | default true once an OIDC issuer is set |
+| `CODEREVIEW_CONSOLE_SESSION_TTL` | `admin.session_ttl` | default `12h` |
+| `CODEREVIEW_CONSOLE_COOKIE_SECRET` | `admin.cookie_secret` | 32+ random characters, for several replicas |
+| `CODEREVIEW_CONSOLE_OIDC_ISSUER`, `_OIDC_CLIENT_ID`, `_OIDC_CLIENT_SECRET` | `admin.oidc.*` | [admin.md](admin.md) |
+| `CODEREVIEW_CONSOLE_OIDC_SCOPES`, `_OIDC_ALLOWED_EMAILS`, `_OIDC_ALLOWED_DOMAINS`, `_OIDC_ALLOWED_GROUPS` | `admin.oidc.*` | comma-separated |
+| `CODEREVIEW_CONSOLE_OIDC_GROUPS_CLAIM` | `admin.oidc.groups_claim` | default `groups` |
+| `CODEREVIEW_CONSOLE_EXECUTOR` | `executor.type` | `local` (default), `docker` or `kubernetes` |
+| `CODEREVIEW_CONSOLE_IMAGE` | `executor.docker.image`, `executor.kubernetes.image` | review image; its tag is used until a version is saved on the Executor page |
+| `CODEREVIEW_CONSOLE_CLI_BINARY`, `_DOCKER_BINARY`, `_DOCKER_NETWORK` | `executor.local.binary`, `executor.docker.*` | |
+| `CODEREVIEW_CONSOLE_KUBE_NAMESPACE`, `_KUBE_SERVICE_ACCOUNT`, `_KUBE_AUTOMOUNT_TOKEN`, `_KUBECONFIG` | `executor.kubernetes.*` | see [Kubernetes](#kubernetes) |
+| `CODEREVIEW_CONSOLE_CONFIG` | | path of an optional config file |
+
+Variables starting with `CODEREVIEW_` can't be passed to review jobs, so the OIDC client secret and
+the other startup secrets stay in the console.
+
+Secrets and credentials:
+
 | Variable | Needed for |
 |---|---|
-| `DATABASE_URL` | **Required.** PostgreSQL 13+ (`database.url: ${DATABASE_URL}`): code hosts, models, settings, the license, history and learnings live there. Migrations run at startup under an advisory lock, so several replicas can start together. Replicas share webhook replay protection through it: a delivery is processed once, whichever replica receives it. |
+| `DATABASE_URL` | **Required.** PostgreSQL 13+ (`database.url`): code hosts, models, settings, the license, history and learnings live there. Migrations run at startup under an advisory lock, so several replicas can start together. Replicas share webhook replay protection through it: a delivery is processed once, whichever replica receives it. |
 | `CODEREVIEW_CONSOLE_LICENSE` | The Divmora license key (see [License](#license)) |
 | `CODEREVIEW_CONSOLE_SECRET_KEY` | **Required.** 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. |
-| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Admin sign-in ([admin.md](admin.md)) |
 | `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
 | Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names under **Settings → Bot and review jobs** (the console's own secrets can't be added) |
 
@@ -78,14 +102,9 @@ license is renewed.
 ## Docker Compose
 
 ```bash
-cp examples/console.yaml console.yaml     # admin sign-in, executor
-cat > .env <<'EOF'
-POSTGRES_PASSWORD=change-me
-CODEREVIEW_CONSOLE_SECRET_KEY=<openssl rand -base64 32>
-OIDC_CLIENT_SECRET=...
-EOF
+cp examples/console.env .env      # set CODEREVIEW_CONSOLE_SECRET_KEY and the OIDC settings
 docker compose up -d
-docker compose exec console code-review-console check-config --config /etc/console/console.yaml
+docker compose exec console code-review-console check-config
 ```
 
 Then sign in to the admin panel and follow **Setup**: add a code host, a model profile and the
@@ -121,18 +140,32 @@ rules:
     verbs: ["list"]
 ```
 
-Bind it to the console's service account with a RoleBinding. `patch` on secrets lets the console
+Configure the Deployment with environment variables, for example:
+
+```yaml
+env:
+  - { name: CODEREVIEW_CONSOLE_EXECUTOR, value: kubernetes }
+  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.4.1 }
+  - { name: CODEREVIEW_CONSOLE_KUBE_NAMESPACE, value: code-review }
+  - { name: CODEREVIEW_CONSOLE_BASE_URL, value: https://review.example.com }
+  - { name: CODEREVIEW_CONSOLE_OIDC_ISSUER, value: https://idp.example.com }
+envFrom:
+  - secretRef: { name: code-review-console }   # DATABASE_URL, CODEREVIEW_CONSOLE_SECRET_KEY,
+                                               # CODEREVIEW_CONSOLE_OIDC_CLIENT_ID/_SECRET, model keys
+```
+
+Bind the Role to the console's service account with a RoleBinding. `patch` on secrets lets the console
 make each job's Secret owned by its Job, so Kubernetes deletes the Secret with the Job even if the
 console stops mid-review. Without it the console logs a warning and the Secret, which holds the job's
 tokens and provider keys, can be left behind. `list` on events is optional: with it, a review pod that
 Kubernetes refuses to create (a ResourceQuota, a LimitRange, an admission webhook) fails the review
 at once with the reason; without it, the review waits for its deadline.
 
-Leave `executor.kubernetes.kubeconfig` empty to use the in-cluster config. Set
-`executor.kubernetes.service_account` only when review jobs need a cloud identity (for example IRSA,
+Leave `CODEREVIEW_CONSOLE_KUBECONFIG` (`executor.kubernetes.kubeconfig`) empty to use the in-cluster
+config. Set `CODEREVIEW_CONSOLE_KUBE_SERVICE_ACCOUNT` (`executor.kubernetes.service_account`) only when review jobs need a cloud identity (for example IRSA,
 EKS Pod Identity or GKE Workload Identity for Bedrock or Vertex). These don't need the Kubernetes API
 token, so review pods never get one by default, with or without a service account. Set
-`executor.kubernetes.automount_service_account_token: true` only if your setup really needs the API
+`CODEREVIEW_CONSOLE_KUBE_AUTOMOUNT_TOKEN=true` only if your setup really needs the API
 token in review pods. Review pods run untrusted PR content, so keep RBAC bound to that service account
 to a minimum.
 
@@ -186,10 +219,11 @@ Point the Deployment's liveness and readiness probes at `GET /healthz` on the se
 
 ## Config file and admin panel
 
-The config file holds only what the console needs to start, and the limits a panel admin must not
-change: `database`, `admin` (sign-in), `server.addr`, and `executor` (type, image repository,
-Kubernetes namespace, service account, token automount, kubeconfig, Docker network). See
-[examples/console.yaml](../examples/console.yaml).
+Outside the panel are only what the console needs to start, and the limits a panel admin must not
+change: the database, admin sign-in, the listen address, and the executor (type, image repository,
+Kubernetes namespace, service account, token automount, kubeconfig, Docker network). Set them as
+[environment variables](#environment) or, if you prefer, in a config file
+([examples/console.yaml](../examples/console.yaml)).
 
 Everything else is managed in the admin panel and stored in the database: code hosts and webhooks,
 model profiles and the default model, the repository settings, retention and status page, the
