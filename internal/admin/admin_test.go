@@ -1009,6 +1009,10 @@ func TestTuningAPI(t *testing.T) {
 	if code != 200 || !bytes.Contains(body, []byte(`"workers":4`)) || !bytes.Contains(body, []byte(`"dashboard_token_set":false`)) {
 		t.Fatalf("get: %d %s", code, body)
 	}
+	// A fresh install has no extra variables: still a list, never missing (#95).
+	if !bytes.Contains(body, []byte(`"extra_env":[]`)) {
+		t.Errorf("extra_env is always sent: %s", body)
+	}
 	put := map[string]any{"workers": 6, "queue_size": 50, "job_timeout": "30m", "debounce": "10s", "history": 100,
 		"bot_name": "@acme-bot", "extra_env": []string{"MY_PROXY_CA"}, "engine": map[string]any{"passes": 2, "verify_model": "fast"},
 		"dashboard_token": "a-dashboard-token-of-length"}

@@ -23,7 +23,7 @@ import {
 import { get, post, setCSRF } from "./api";
 import type { Feature, Me } from "./types";
 import { fmtDate } from "./format";
-import { ConfirmProvider, MeCtx, RefreshMeCtx, ToastProvider } from "./ui";
+import { ConfirmProvider, MeCtx, RefreshMeCtx, Section, ToastProvider } from "./ui";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -374,7 +374,7 @@ export default function App() {
                     <Routes>
                       <Route path="/" element={<Navigate to={me.setup && !me.setup.complete ? "/setup" : "/repositories"} replace />} />
                       {sections.map((s) => (
-                        <Route key={s.path} path={"/" + s.path} element={s.el} />
+                        <Route key={s.path} path={"/" + s.path} element={<Section key={s.path} name={s.title}>{s.el}</Section>} />
                       ))}
                       <Route path="/logout" element={<SignOutPage />} />
                       <Route path="*" element={<NotFoundPage />} />
