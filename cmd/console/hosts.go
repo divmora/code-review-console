@@ -178,17 +178,3 @@ func hostsImport(ctx context.Context, args []string) error {
 	}
 	return nil
 }
-
-// warnConfigHosts logs that the config file's host sections are deprecated.
-func warnConfigHosts(cfg *config.Config, mode string, logger *slog.Logger) {
-	if len(hosts.FromConfig(cfg)) == 0 {
-		return
-	}
-	if mode == "database" {
-		logger.Warn("deprecated: github:, gitlab: and bitbucket: in the config file only seed the database on first start and are otherwise ignored; " +
-			"manage hosts in the admin panel (or with `console hosts import`) and remove these sections")
-		return
-	}
-	logger.Warn("deprecated: hosts from the config file (github:, gitlab:, bitbucket:) will be removed in a future release; " +
-		"set database.url and " + secrets.EnvKey + ": on the next start they are copied into the database, and from then on managed in the admin panel")
-}

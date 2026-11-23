@@ -146,11 +146,15 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 	mux := http.NewServeMux()
 	box, _ := secrets.New("a test passphrase that is long enough for a key")
 	a.Lic = licensetest.Full(t)
-	// Two config file profiles; "fast" is the default and needs no key.
+	// Two profiles copied from the config file; "fast" is the default and
+	// needs no key.
 	a.Models = models.New(&config.Config{Model: "fast", Models: map[string]config.ModelProfile{
 		"fast":  {"provider": "ollama", "model": "qwen2.5-coder:14b"},
 		"smart": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
 	}}, st)
+	if _, skipped, err := a.Models.Import(context.Background()); err != nil || len(skipped) > 0 {
+		t.Fatal(err, skipped)
+	}
 	a.Hosts = hosts.New(&config.Config{}, st, box, quiet)
 	a.Hosts.Lic = a.Lic
 	if _, err := a.Hosts.Init(context.Background()); err != nil {
@@ -813,8 +817,8 @@ func TestModelsAPI(t *testing.T) {
 	if code, _ := e.do(t, "DELETE", "/admin/api/models/claude", csrf, nil); code != 409 {
 		t.Errorf("the default can't be deleted: %d", code)
 	}
-	if code, _ := e.do(t, "DELETE", "/admin/api/models/fast", csrf, nil); code != 404 {
-		t.Errorf("config file profiles aren't deleted from the panel: %d", code)
+	if code, _ := e.do(t, "DELETE", "/admin/api/models/fast", csrf, nil); code != 409 {
+		t.Errorf("a fallback can't be deleted: %d", code)
 	}
 	// The repository form offers console profiles too.
 	if code, body := e.do(t, "GET", "/admin/api/me", "", nil); code != 200 || !bytes.Contains(body, []byte(`"profiles":["claude","fast","smart"]`)) {

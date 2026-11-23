@@ -29,8 +29,8 @@ The console runs the `codereview` CLI for every review, so the two must agree on
   older than the minimum is rejected when the config loads.
 - Always run `code-review-console check-config --config console.yaml` after an upgrade. It asks
   the CLI the executor actually runs to validate the config, and fails if that CLI is too old.
-  With `database.url` it uses what reviews use: the executor settings (version, resources,
-  scheduling) and model profiles saved in the admin panel. It only reads the database: no
+  It uses what reviews use: the executor settings (version, resources, scheduling) and model
+  profiles saved in the admin panel, so it needs `database.url`. It only reads the database: no
   migrations, nothing written.
 
 ## License
@@ -53,8 +53,7 @@ Two other sources exist:
   set, it wins over the panel, and the panel shows the key as managed by the variable.
 - `license.file` (**deprecated**): when the database has no key yet, a valid key from the file is
   copied into it on start, and from then on the panel manages it. Afterwards the file is ignored,
-  and the console logs a warning until you remove `license.file`. Without a database, the file is
-  read as before.
+  and the console logs a warning until you remove `license.file`.
 
 Keys are verified offline against Divmora's public key; nothing is sent anywhere.
 
@@ -67,11 +66,10 @@ license is renewed.
 
 | Variable | Needed for |
 |---|---|
-| `DATABASE_URL` | PostgreSQL 13+ (`database.url: ${DATABASE_URL}`). Required for the admin panel, the allowlist, learnings and history. Migrations run at startup under an advisory lock, so several replicas can start together. Replicas share webhook replay protection through it: a delivery is processed once, whichever replica receives it. |
+| `DATABASE_URL` | **Required.** PostgreSQL 13+ (`database.url: ${DATABASE_URL}`): code hosts, models, settings, the license, history and learnings live there. Migrations run at startup under an advisory lock, so several replicas can start together. Replicas share webhook replay protection through it: a delivery is processed once, whichever replica receives it. |
 | `CODEREVIEW_CONSOLE_LICENSE` | The Divmora license key (see [License](#license)) |
-| `CODEREVIEW_CONSOLE_SECRET_KEY` | Managing code hosts in the admin panel. 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. Without it, hosts come from the config file and are read-only. |
+| `CODEREVIEW_CONSOLE_SECRET_KEY` | **Required.** 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Admin sign-in ([admin.md](admin.md)) |
-| `GITHUB_TOKEN`, `GITLAB_TOKEN`, ... and webhook secrets | Code hosts from the config file (seeded into the database on first start when the secret key is set) |
 | `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
 | Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names with `executor.env` |
 
@@ -80,7 +78,7 @@ license is renewed.
 ## Docker Compose
 
 ```bash
-cp examples/console.yaml console.yaml     # models, hosts, admin
+cp examples/console.yaml console.yaml     # admin sign-in, executor
 cat > .env <<'EOF'
 POSTGRES_PASSWORD=change-me
 CODEREVIEW_CONSOLE_SECRET_KEY=<openssl rand -base64 32>
@@ -89,6 +87,9 @@ EOF
 docker compose up -d
 docker compose exec console code-review-console check-config --config /etc/console/console.yaml
 ```
+
+Then sign in to the admin panel and follow **Setup**: add a code host, a model profile and the
+license there.
 
 To run a published image instead of building, replace `build: .` with
 `image: ghcr.io/divmora/code-review-console:X.Y.Z` in `docker-compose.yml`.
@@ -137,13 +138,14 @@ to a minimum.
 
 ### Settings in the admin panel
 
-With a database, the **Executor** page manages the image version (a tag, a digest, or both as
-`0.5.0@sha256:…`; the repository stays in the config file), CPU and memory, and for Kubernetes the disk (ephemeral storage, 2Gi by default) and /tmp size (1Gi by default), the job TTL, node selector, tolerations,
-affinity, priority class, pod labels and annotations, and the CA bundle below. On the first start
-they are copied from the config file; from then on the panel's values win. The version is picked
-from the release tags found in the image repository (your own registry or mirror works: the console
-lists its tags with the registry API), or typed. The log names any config file value that is
-ignored, and a change applies to the next review without a restart.
+The **Executor** page manages the image version (a tag, a digest, or both as `0.5.0@sha256:…`;
+the repository stays in the config file), CPU and memory (1 CPU and 1Gi to start), and for
+Kubernetes the disk (ephemeral storage, 2Gi by default) and /tmp size (1Gi by default), the job TTL,
+node selector, tolerations, affinity, priority class, pod labels and annotations, and the CA bundle
+below. Until a version is saved there, reviews use the image tag in the config file. The version is
+picked from the release tags found in the image repository (your own registry or mirror works: the
+console lists its tags with the registry API), or typed. A change applies to the next review without
+a restart.
 
 The executor type, binaries, the Docker network, `kubeconfig`, `namespace`, `service_account`,
 `automount_service_account_token` and `env` stay in the config file only: they decide what review
@@ -151,26 +153,17 @@ jobs, which carry the code host tokens and model keys, can reach.
 
 ### Where review pods run
 
-Optional fields under `executor.kubernetes` are copied into each review Job's pod template:
+The **Executor** page's scheduling fields are copied into each review Job's pod template: node
+selector, tolerations, affinity, priority class, pod labels and annotations. Tolerations and
+affinity are JSON with the Kubernetes field names, for example this affinity:
 
-```yaml
-executor:
-  kubernetes:
-    node_selector: { workload: batch }
-    tolerations:
-      - { key: dedicated, operator: Equal, value: batch, effect: NoSchedule }
-    affinity:                          # a Kubernetes Affinity, same field names as in a pod spec
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions: [{ key: kubernetes.io/arch, operator: In, values: [amd64] }]
-    priority_class_name: batch-low     # the PriorityClass must exist
-    pod_labels: { team: platform }
-    pod_annotations: { karpenter.sh/do-not-disrupt: "true" }
+```json
+{"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [
+  {"matchExpressions": [{"key": "kubernetes.io/arch", "operator": "In", "values": ["amd64"]}]}]}}}
 ```
 
-`tolerations` and `affinity` use the Kubernetes field names (`tolerationSeconds`, `nodeAffinity`,
-...). An unknown field stops startup with an error, so a typo doesn't silently drop a rule.
+An unknown field is refused when you save, so a typo doesn't silently drop a rule. The priority
+class must exist.
 `pod_labels` are merged with the console's own labels, which win on conflict because the console
 finds review pods by them. With Karpenter, `karpenter.sh/do-not-disrupt: "true"` keeps
 consolidation from evicting a review mid-run.
@@ -179,18 +172,10 @@ consolidation from evicting a review mid-run.
 
 When a self-managed GitLab or GitHub Enterprise, an LLM gateway or a TLS-inspecting proxy uses a
 certificate from a private CA, put the CA certificates (PEM) in a ConfigMap or Secret in the jobs'
-namespace and point `ca_bundle` at it:
+namespace and name it under **CA bundle** on the Executor page (the key defaults to `ca.crt`):
 
 ```bash
 kubectl -n code-review create configmap corporate-ca --from-file=ca.crt=corporate-ca.pem
-```
-
-```yaml
-executor:
-  kubernetes:
-    ca_bundle:
-      config_map: corporate-ca         # or secret: corporate-ca
-      key: ca.crt                      # default ca.crt
 ```
 
 The key is mounted read-only at `/etc/codereview/ca/ca.crt`, and `SSL_CERT_DIR` points at that
@@ -199,11 +184,32 @@ only needs your own CAs. No extra RBAC is needed: the kubelet mounts the volume,
 
 Point the Deployment's liveness and readiness probes at `GET /healthz` on the server port.
 
+## Config file and admin panel
+
+The config file holds only what the console needs to start, and the limits a panel admin must not
+change: `database`, `admin` (sign-in), `server` (address, workers, queue, timeouts, the dashboard
+token), `executor` (type, image repository, Kubernetes namespace, service account, token automount,
+kubeconfig, Docker network, `env`), `review` and `bot_name`. See
+[examples/console.yaml](../examples/console.yaml).
+
+Everything else is managed in the admin panel and stored in the database: code hosts and webhooks,
+model profiles and the default model, the repository settings, retention and status page, the
+executor's version, resources and scheduling, and the license.
+
+**Upgrading from an older config file.** These keys used to be in the file: `github`, `gitlab`,
+`bitbucket`, `models`, `model`, `fallback`, `repos`, `license`, `server.review_retention`,
+`server.webhook_retention`, `server.dashboard.enabled`/`hide_repos`/`title`, and the executor's
+resources, TTL, scheduling, pod metadata and `ca_bundle`; also the `GITHUB_TOKEN`, `GITLAB_TOKEN`,
+`CODEREVIEW_MODEL` and similar variables. On start, each one is copied into the database while the
+database has no value for it yet, and ignored after that. The log lists the ones still present
+(`these config file keys are managed in the admin panel now`): remove them once the panel shows
+your setup. Model profiles with a literal `api_key` or with `headers` can't be stored in the panel:
+put the key in an environment variable and add the profile under **Models** with that name as its
+key variable. A future release stops reading these keys.
+
 ## Moving code hosts
 
-Code hosts and their webhooks are managed in the admin panel. The `github:`, `gitlab:` and
-`bitbucket:` sections of the config file are **deprecated**: they only seed the database on first
-start, and will be removed in a future release. The console logs a warning while they are present.
+Code hosts and their webhooks are managed in the admin panel.
 
 To keep hosts in Git, move them to another install, or change them when nobody can sign in, use the
 `hosts` commands. They need `database.url` and `CODEREVIEW_CONSOLE_SECRET_KEY`, like `serve`:
@@ -237,7 +243,7 @@ written, and unknown fields are rejected. Imports are audited as `cli: hosts imp
 
 1. Read the release notes for a new minimum CLI version.
 2. Update the image or binary. For `docker` or `kubernetes` executors, change the CLI version on the
-   **Executor** page (or the image tag in the config file when there is no database).
+   **Executor** page.
 3. Run `check-config`.
 4. Restart. Database migrations apply automatically. On SIGTERM the console stops taking work and
    gives running reviews up to 2 minutes to finish; give the container at least that long

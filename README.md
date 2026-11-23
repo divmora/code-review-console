@@ -40,29 +40,29 @@ Charts and totals read pre-aggregated rollups (hourly, daily, monthly per host a
 
 Hosts are managed under **Code hosts** in the admin panel: github.com or GitHub Enterprise (token or GitHub App), gitlab.com or self-managed GitLab, and Bitbucket Cloud (access token, or account email plus API token). Under **Manage webhooks**, each host gets one webhook per hook you set up (a GitLab system hook, each group hook). The console generates its URL (`/webhooks/<platform>/<uuid>`) and its own secret, and lists the events to send. A **Test** button checks the token. The shared `/webhooks/github`, `/webhooks/gitlab` and `/webhooks/bitbucket` URLs keep working with the secrets in the host's settings.
 
-Set `CODEREVIEW_CONSOLE_SECRET_KEY` (32 random bytes, `openssl rand -base64 32`, kept outside the database): tokens, App keys, webhook secrets and signing tokens are encrypted with it (AES-256-GCM) before they are stored, and the admin panel never shows them again. Losing the key means entering the secrets again. The `github:`, `gitlab:` and `bitbucket:` sections of the config file are deprecated: on first start they are copied into the database, and from then on the admin panel is where hosts change. `console hosts export` and `console hosts import` move hosts and webhooks as YAML ([docs/deploy.md](docs/deploy.md#moving-code-hosts)). Without the key (or without a database) the config file is used as is and the Hosts page is read-only.
+Set `CODEREVIEW_CONSOLE_SECRET_KEY` (32 random bytes, `openssl rand -base64 32`, kept outside the database): tokens, App keys, webhook secrets and signing tokens are encrypted with it (AES-256-GCM) before they are stored, and the admin panel never shows them again. Losing the key means entering the secrets again. The key and `DATABASE_URL` are required. `console hosts export` and `console hosts import` move hosts and webhooks as YAML ([docs/deploy.md](docs/deploy.md#moving-code-hosts)).
 
 ### Several GitLab instances and hooks
 
 One console serves any number of GitLab instances. Repositories, rules and webhook history are keyed by host, so `acme/app` on `gitlab.x.example` and on `gitlab.y.example` are separate, and so are their rules. Each instance has its own token, and so its own bot user; set `bot_name` (mention handle) and `reviewer` (the username that counts for `require_reviewer`) per instance when they differ from the defaults.
 
-Webhooks can come from a system hook (self-managed GitLab, every project), group hooks and project hooks, alone or mixed. List each hook's signing token or secret (`signing_token` + `signing_tokens`, `webhook_secret` + `webhook_secrets`). When one event arrives through several hooks, it is processed once and the extra deliveries are recorded as duplicates. Note that system hooks do not send comment events: add a group or project hook with **Comments** for `@bot` commands.
+Webhooks can come from a system hook (self-managed GitLab, every project), group hooks and project hooks, alone or mixed. Add one webhook in the console for each, with its own URL and secret or signing token. When one event arrives through several hooks, it is processed once and the extra deliveries are recorded as duplicates. Note that system hooks do not send comment events: add a group or project hook with **Comments** for `@bot` commands.
 
 ### Review only when the bot is a reviewer
 
-With `repos.require_reviewer: true`, a merge or pull request is reviewed only when the bot user (the user of the GitLab token or GitHub token) is one of its reviewers, so webhooks from many repositories cost nothing until someone asks. Adding the bot as a reviewer starts a review; new commits are reviewed while it stays a reviewer; removing it stops automatic reviews. `@codereview review` comments still work. The setting applies on top of the allowlist and rules, so you can turn the allowlist off and let reviewer requests decide.
+With **Who asks for a review: only when the bot is a reviewer** (Settings), a merge or pull request is reviewed only when the bot user (the user of the GitLab token or GitHub token) is one of its reviewers, so webhooks from many repositories cost nothing until someone asks. Adding the bot as a reviewer starts a review; new commits are reviewed while it stays a reviewer; removing it stops automatic reviews. `@codereview review` comments still work. The setting applies on top of the allowlist and rules, so you can turn the allowlist off and let reviewer requests decide.
 
 On GitHub, a submitted review clears the request, so request the bot again to review new commits. GitHub Apps cannot be requested as reviewers; use a token user for this mode.
 
 ### GitLab webhook authentication
 
-Give each GitLab webhook a **signing token** (GitLab 19.0+) and set `signing_token` (`whsec_...`) for the instance. GitLab then signs every request (`webhook-id`, `webhook-timestamp`, `webhook-signature`, HMAC-SHA256 over `id.timestamp.body`). The console checks the signature, rejects requests more than 5 minutes old, and ignores a repeated `webhook-id`, so a captured request cannot be replayed.
+Give each GitLab webhook a **signing token** (GitLab 19.0+) and paste it (`whsec_...`) into the webhook in the console. GitLab then signs every request (`webhook-id`, `webhook-timestamp`, `webhook-signature`, HMAC-SHA256 over `id.timestamp.body`). The console checks the signature, rejects requests more than 5 minutes old, and ignores a repeated `webhook-id`, so a captured request cannot be replayed.
 
-Older webhooks with only a **secret token** (`X-Gitlab-Token`, sent in plain text) keep working through `webhook_secret`. Configure both while migrating: a signed request is judged by its signature alone (a valid secret token does not rescue a bad signature), and an unsigned one falls back to the secret token. Set `require_signature: true` when every webhook is signed.
+Older webhooks with only a **secret token** (`X-Gitlab-Token`, sent in plain text) keep working. Keep both while migrating: a signed request is judged by its signature alone (a valid secret token does not rescue a bad signature), and an unsigned one falls back to the secret token. Set the host's **Unsigned webhooks** to **Reject** when every webhook is signed.
 
 ### Which repositories are reviewed
 
-Each repository is **Inherit** (the default for repositories that send a webhook), **Enabled** or **Disabled**. Inherit follows the most specific matching rule, and without one the default: not reviewed with `repos.allowlist: true`, reviewed with it off.
+Each repository is **Inherit** (the default for repositories that send a webhook), **Enabled** or **Disabled**. Inherit follows the most specific matching rule, and without one the default: not reviewed with the allowlist on (Settings), reviewed with it off.
 
 Rules are managed under *Groups & patterns* in the admin UI:
 

@@ -7,20 +7,54 @@ import (
 )
 
 func TestExampleConfigLoads(t *testing.T) {
-	t.Setenv("CODEREVIEW_MODEL", "")
+	for _, e := range removedEnv {
+		t.Setenv(e, "")
+	}
 	t.Setenv("DATABASE_URL", "postgres://x")
 	cfg, err := Load("../../examples/console.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Executor.Type != "local" || cfg.Executor.Kubernetes.Namespace != "code-review" || cfg.Executor.Docker.Memory != "1g" {
+	if cfg.Executor.Type != "local" || cfg.Executor.Kubernetes.Namespace != "code-review" || cfg.Executor.Docker.Image == "" {
 		t.Errorf("executor = %+v", cfg.Executor)
 	}
-	if cfg.Model != "claude" || len(cfg.Models) != 2 || cfg.GitHub.AppID != 123456 || cfg.BotName != "" {
-		t.Errorf("engine settings not inlined: model=%q models=%d app=%d", cfg.Model, len(cfg.Models), cfg.GitHub.AppID)
-	}
-	if !cfg.Admin.Enabled || cfg.Server.Workers != 4 || cfg.Server.Debounce.Seconds() != 30 {
+	if !cfg.Admin.Enabled || cfg.Server.Workers != 4 || cfg.Server.Debounce.Seconds() != 30 || cfg.Database.URL != "postgres://x" {
 		t.Errorf("console settings = %+v %+v", cfg.Admin, cfg.Server)
+	}
+	if keys := cfg.RemovedKeys(); len(keys) != 0 {
+		t.Errorf("the example uses keys managed in the admin panel: %v", keys)
+	}
+}
+
+func TestRemovedKeys(t *testing.T) {
+	for _, e := range removedEnv {
+		t.Setenv(e, "")
+	}
+	t.Setenv("GITLAB_TOKEN", "glpat-x")
+	p := t.TempDir() + "/c.yaml"
+	_ = os.WriteFile(p, []byte(`gitlab:
+  - token: x
+models:
+  m: {provider: ollama, model: q}
+server:
+  workers: 2
+  dashboard: {title: Hi, token: t}
+executor:
+  kubernetes:
+    namespace: ns
+    cpu: "2"
+`), 0o600)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(cfg.RemovedKeys(), ",")
+	if got != "gitlab,models,server.dashboard.title,executor.kubernetes.cpu,$GITLAB_TOKEN" {
+		t.Errorf("removed keys: %s", got)
+	}
+	// Still read, so they can be copied into the database once.
+	if len(cfg.GitLab) != 1 || cfg.Executor.Kubernetes.CPU != "2" {
+		t.Errorf("removed keys are still read for the first start: %+v", cfg.GitLab)
 	}
 }
 
@@ -36,8 +70,6 @@ func TestValidation(t *testing.T) {
 		"executor:\n  type: docker\n":     "executor.docker.image",
 		"executor:\n  type: kubernetes\n": "executor.kubernetes.image",
 		"executor:\n  type: ssh\n":        "want local, docker or kubernetes",
-		"admin:\n  enabled: true\n":       "admin.enabled needs database.url",
-		"repos:\n  allowlist: true\n":     "repos.allowlist needs database.url",
 		"executor:\n  type: kubernetes\n  kubernetes:\n    image: x:1.0.0\n    ca_bundle: {config_map: a, secret: b}\n": "set config_map or secret, not both",
 	}
 	for body, want := range cases {

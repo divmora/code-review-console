@@ -1,9 +1,9 @@
-// Package models holds the model profiles reviews run with: those managed
-// in the admin panel (the database) and those from the config file's
-// models: section. A profile in the database wins over a config file
-// profile of the same name. API keys are never stored: a profile names the
-// environment variable that holds its key (api_key_env), and the console
-// passes that variable to review jobs.
+// Package models holds the model profiles reviews run with, managed in the
+// admin panel (the database). The config file's models:, model: and
+// fallback: are only copied into the database once (Import); without a
+// database (tests) they are used as they are. API keys are never stored: a
+// profile names the environment variable that holds its key (api_key_env),
+// and the console passes that variable to review jobs.
 package models
 
 import (
@@ -64,17 +64,17 @@ func New(cfg *config.Config, st store.Store) *Service {
 	return &Service{cfg: cfg, st: st, Getenv: os.Getenv}
 }
 
-// Effective returns every profile (database over config file), the
-// default model and the fallbacks reviews use right now.
+// Effective returns every profile, the default model and the fallbacks
+// reviews use right now: the database's, or without one the config file's.
 func (s *Service) Effective(ctx context.Context) (map[string]config.ModelProfile, string, []string, error) {
 	models := map[string]config.ModelProfile{}
-	for k, v := range s.cfg.Models {
-		models[k] = v
-	}
-	def, fb := s.cfg.Model, s.cfg.Fallback
 	if s.st == nil {
-		return models, def, fb, nil
+		for k, v := range s.cfg.Models {
+			models[k] = v
+		}
+		return models, s.cfg.Model, s.cfg.Fallback, nil
 	}
+	def, fb := "", []string(nil)
 	profiles, err := s.st.ListModelProfiles(ctx)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("load model profiles: %w", err)
@@ -143,9 +143,6 @@ type Profile struct {
 	Config config.ModelProfile `json:"config"`
 	// Source is "console" (editable) or "config" (the config file).
 	Source string `json:"source"`
-	// Shadows is true for a console profile that replaces a config file
-	// profile of the same name.
-	Shadows bool `json:"shadows,omitempty"`
 	// KeyEnv is the env var the key is read from ("" = the provider needs
 	// none, e.g. Bedrock or Ollama) and KeySet whether the console has it.
 	KeyEnv string `json:"key_env,omitempty"`
@@ -171,30 +168,25 @@ type View struct {
 // List returns the Models page.
 func (s *Service) List(ctx context.Context) (View, error) {
 	v := View{Profiles: []Profile{}, Fallback: []string{}}
-	seen := map[string]int{}
 	if s.st != nil {
 		profiles, err := s.st.ListModelProfiles(ctx)
 		if err != nil {
 			return v, err
 		}
 		for _, p := range profiles {
-			seen[p.Name] = len(v.Profiles)
 			v.Profiles = append(v.Profiles, s.profile(p.Name, p.Config, "console", p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"), p.UpdatedBy))
 		}
 	}
-	for name, m := range s.cfg.Models {
-		if i, ok := seen[name]; ok {
-			v.Profiles[i].Shadows = true
-			continue
+	if s.st == nil {
+		for name, m := range s.cfg.Models {
+			v.Profiles = append(v.Profiles, s.profile(name, m.WithoutKey(), "config", "", ""))
 		}
-		v.Profiles = append(v.Profiles, s.profile(name, m.WithoutKey(), "config", "", ""))
+		v.Default, v.Fallback = s.cfg.Model, append([]string{}, s.cfg.Fallback...)
+		if v.Default != "" {
+			v.ChoiceSource = "config"
+		}
 	}
 	sort.Slice(v.Profiles, func(i, j int) bool { return v.Profiles[i].Name < v.Profiles[j].Name })
-
-	v.Default, v.Fallback = s.cfg.Model, append([]string{}, s.cfg.Fallback...)
-	if v.Default != "" {
-		v.ChoiceSource = "config"
-	}
 	if s.st != nil {
 		c, found, err := s.choice(ctx)
 		if err != nil {
@@ -315,33 +307,86 @@ func (s *Service) Put(ctx context.Context, name string, m config.ModelProfile, a
 }
 
 // Delete removes a console profile. It refuses while the console's default
-// or fallback names it and no config file profile of that name would take
-// its place, or while a repository is set to use it.
+// or fallback names it, or while a repository is set to use it.
 func (s *Service) Delete(ctx context.Context, name string, actor string) error {
 	if s.st == nil {
 		return store.ErrNotFound
 	}
-	if _, inConfig := s.cfg.Models[name]; !inConfig {
-		if c, found, err := s.choice(ctx); err != nil {
-			return err
-		} else if found && (c.Default == name || contains(c.Fallback, name)) {
-			return fmt.Errorf("%w: %s is the default or a fallback model; choose another first", ErrInUse, name)
-		}
-		repos, err := s.st.ListRepos(ctx)
-		if err != nil {
-			return err
-		}
-		var users []string
-		for _, r := range repos {
-			if r.Settings.Model != nil && *r.Settings.Model == name {
-				users = append(users, r.Path)
-			}
-		}
-		if len(users) > 0 {
-			return fmt.Errorf("%w: repositories set to use %s: %s", ErrInUse, name, strings.Join(users, ", "))
+	if c, found, err := s.choice(ctx); err != nil {
+		return err
+	} else if found && (c.Default == name || contains(c.Fallback, name)) {
+		return fmt.Errorf("%w: %s is the default or a fallback model; choose another first", ErrInUse, name)
+	}
+	repos, err := s.st.ListRepos(ctx)
+	if err != nil {
+		return err
+	}
+	var users []string
+	for _, r := range repos {
+		if r.Settings.Model != nil && *r.Settings.Model == name {
+			users = append(users, r.Path)
 		}
 	}
+	if len(users) > 0 {
+		return fmt.Errorf("%w: repositories set to use %s: %s", ErrInUse, name, strings.Join(users, ", "))
+	}
 	return s.st.DeleteModelProfile(ctx, name, actor)
+}
+
+// importedKey marks that the config file's models were copied once.
+const importedKey = "models_imported"
+
+// ImportActor is the audit actor of the copy from the config file.
+const ImportActor = "config file (initial)"
+
+// Import copies the config file's model profiles, default and fallbacks
+// into the database, once: profiles the database doesn't have, and the
+// default when none is saved. Profiles the admin panel can't hold (a
+// literal api_key, or headers) are skipped, with the reason in skipped.
+func (s *Service) Import(ctx context.Context) (imported, skipped []string, err error) {
+	if s.st == nil || (len(s.cfg.Models) == 0 && s.cfg.Model == "") {
+		return nil, nil, nil
+	}
+	var done bool
+	if _, err := s.st.GetSetting(ctx, importedKey, &done); err != nil || done {
+		return nil, nil, err
+	}
+	have := map[string]bool{}
+	profiles, err := s.st.ListModelProfiles(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, p := range profiles {
+		have[p.Name] = true
+	}
+	names := make([]string, 0, len(s.cfg.Models))
+	for n := range s.cfg.Models {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if have[name] {
+			continue
+		}
+		if err := s.Put(ctx, name, s.cfg.Models[name], ImportActor); err != nil {
+			skipped = append(skipped, fmt.Sprintf("models.%s: %v", name, err))
+			continue
+		}
+		have[name] = true
+		imported = append(imported, name)
+	}
+	if s.cfg.Model != "" {
+		if _, found, err := s.choice(ctx); err != nil {
+			return imported, skipped, err
+		} else if !found {
+			if err := s.SetChoice(ctx, Choice{Default: s.cfg.Model, Fallback: s.cfg.Fallback}, ImportActor); err != nil {
+				skipped = append(skipped, fmt.Sprintf("model/fallback: %v", err))
+			} else {
+				imported = append(imported, "default model "+s.cfg.Model)
+			}
+		}
+	}
+	return imported, skipped, s.st.PutSetting(ctx, importedKey, true, ImportActor)
 }
 
 // SetChoice stores the default model and fallbacks. Every name must be a

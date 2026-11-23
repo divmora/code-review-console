@@ -185,7 +185,7 @@ export default function Executor() {
           <CardHeader>
             <CardTitle className="h2">Review {kube ? "pods" : "containers"}</CardTitle>
             <CardDescription>
-              {v.source === "config" ? "Showing the config file's values; saving stores them in the console." : "Saved in the console; the config file's values for these are ignored."}
+              {v.source === "config" ? "Not saved yet: showing the starting values; saving stores them in the console." : "Saved in the console."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-5">

@@ -28,7 +28,6 @@ func TestPutListAndEffective(t *testing.T) {
 	if err := s.Put(ctx, "claude", config.ModelProfile{"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "TEAM_CLAUDE_KEY", "base_url": " "}, "a@x"); err != nil {
 		t.Fatal(err)
 	}
-	// A console profile of the same name replaces the config file one.
 	if err := s.Put(ctx, "shared", config.ModelProfile{"provider": "openai", "model": "gpt-y"}, "a@x"); err != nil {
 		t.Fatal(err)
 	}
@@ -40,29 +39,84 @@ func TestPutListAndEffective(t *testing.T) {
 	for _, p := range v.Profiles {
 		by[p.Name] = p
 	}
-	if len(v.Profiles) != 3 || v.Default != "file" || v.ChoiceSource != "config" {
+	// With a database, the config file's profiles are not read (only Import copies them).
+	if len(v.Profiles) != 2 || v.Default != "" || v.ChoiceSource != "" {
 		t.Fatalf("view: %+v", v)
 	}
 	if c := by["claude"]; c.Source != "console" || c.KeyEnv != "TEAM_CLAUDE_KEY" || !c.KeySet || c.Config["base_url"] != nil {
 		t.Errorf("claude: %+v", c)
 	}
-	if sh := by["shared"]; sh.Source != "console" || !sh.Shadows || sh.KeyEnv != "OPENAI_API_KEY" || sh.KeySet {
+	if sh := by["shared"]; sh.Source != "console" || sh.KeyEnv != "OPENAI_API_KEY" || sh.KeySet {
 		t.Errorf("shared (default key env, not set): %+v", sh)
-	}
-	if f := by["file"]; f.Source != "config" || !f.KeySet || !f.KeyInConfig || f.Config["api_key"] != nil {
-		t.Errorf("config profile with a literal key: never shown, counted as set: %+v", f)
 	}
 
 	if err := s.SetChoice(ctx, Choice{Default: "claude", Fallback: []string{"shared"}}, "a@x"); err != nil {
 		t.Fatal(err)
 	}
 	models, def, fb, err := s.Effective(ctx)
-	if err != nil || def != "claude" || len(fb) != 1 || models["shared"].String("model") != "gpt-y" || models["file"].String("api_key") != "sk-literal" {
+	if err != nil || def != "claude" || len(fb) != 1 || models["shared"].String("model") != "gpt-y" || models["file"] != nil {
 		t.Fatalf("effective: %v %s %v %v", models, def, fb, err)
 	}
 	keys, _ := s.KeyEnvs(ctx)
 	if len(keys) != 1 || keys["TEAM_CLAUDE_KEY"] != "sk-ant" {
 		t.Errorf("only set key envs of console profiles go to jobs: %v", keys)
+	}
+}
+
+func TestWithoutDatabase(t *testing.T) {
+	s := New(&config.Config{Model: "file", Models: map[string]config.ModelProfile{
+		"file": {"provider": "openai", "model": "gpt-x", "api_key": "sk-literal"},
+	}}, nil)
+	models, def, _, err := s.Effective(context.Background())
+	if err != nil || def != "file" || models["file"].String("api_key") != "sk-literal" {
+		t.Fatalf("without a database the config file is used: %v %s %v", models, def, err)
+	}
+	v, _ := s.List(context.Background())
+	if len(v.Profiles) != 1 || !v.Profiles[0].KeyInConfig || v.Profiles[0].Config["api_key"] != nil || v.ChoiceSource != "config" {
+		t.Errorf("a literal key is never shown: %+v", v)
+	}
+}
+
+func TestImport(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New()
+	cfg := &config.Config{Model: "fast", Fallback: []string{"smart"}, Models: map[string]config.ModelProfile{
+		"fast":    {"provider": "ollama", "model": "qwen"},
+		"smart":   {"provider": "anthropic", "model": "claude-sonnet-5-5", "api_key_env": "TEAM_KEY"},
+		"literal": {"provider": "openai", "model": "gpt-x", "api_key": "sk-literal"},
+		"kept":    {"provider": "openai", "model": "from-file"},
+	}}
+	s := New(cfg, st)
+	// A profile already in the database is kept as it is.
+	if err := s.Put(ctx, "kept", config.ModelProfile{"provider": "openai", "model": "from-panel"}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	imported, skipped, err := s.Import(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(imported, ",") != "fast,smart,default model fast" {
+		t.Errorf("imported: %v", imported)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "models.literal") || !strings.Contains(skipped[0], "not stored") {
+		t.Errorf("a literal key can't move to the database: %v", skipped)
+	}
+	models, def, fb, err := s.Effective(ctx)
+	if err != nil || def != "fast" || len(fb) != 1 || fb[0] != "smart" || models["kept"].String("model") != "from-panel" || models["literal"] != nil {
+		t.Fatalf("effective: %v %s %v %v", models, def, fb, err)
+	}
+	// Only once: a profile deleted in the panel doesn't come back.
+	if err := s.SetChoice(ctx, Choice{Default: "smart"}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, "fast", "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if imported, _, err := s.Import(ctx); err != nil || len(imported) != 0 {
+		t.Errorf("second start: %v %v", imported, err)
+	}
+	if models, def, _, _ := s.Effective(ctx); models["fast"] != nil || def != "smart" {
+		t.Errorf("the panel's changes stand: %v %s", models, def)
 	}
 }
 
@@ -114,9 +168,8 @@ func TestDeleteInUse(t *testing.T) {
 	if err := s.Delete(ctx, "claude", "a@x"); !errors.Is(err, ErrInUse) {
 		t.Errorf("the default can't be deleted: %v", err)
 	}
-	// "shared" is a fallback, but the config file profile takes its place.
-	if err := s.Delete(ctx, "shared", "a@x"); err != nil {
-		t.Errorf("a shadowing profile can go (the config file one is used again): %v", err)
+	if err := s.Delete(ctx, "shared", "a@x"); !errors.Is(err, ErrInUse) {
+		t.Errorf("a fallback can't be deleted: %v", err)
 	}
 	repo, _ := st.CreateRepo(ctx, "gitlab", "g.example", "team/app", "enabled", "a@x")
 	m := "spare"
@@ -125,6 +178,6 @@ func TestDeleteInUse(t *testing.T) {
 		t.Errorf("a profile a repository uses can't be deleted: %v", err)
 	}
 	if err := s.Delete(ctx, "file", "a@x"); err == nil {
-		t.Error("config file profiles aren't deleted from the console")
+		t.Error("a config file profile isn't in the database")
 	}
 }

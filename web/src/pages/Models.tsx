@@ -10,10 +10,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type Config = Record<string, unknown>;
 type Profile = {
-  name: string; config: Config; source: "console" | "config"; shadows?: boolean;
-  key_env?: string; key_set: boolean; key_in_config?: boolean; updated_at?: string; updated_by?: string;
+  name: string; config: Config; source: "console";
+  key_env?: string; key_set: boolean; updated_at?: string; updated_by?: string;
 };
-type View = { profiles: Profile[]; default: string; fallback: string[]; choice_source: "console" | "config" | ""; providers: string[] };
+type View = { profiles: Profile[]; default: string; fallback: string[]; choice_source: "console" | ""; providers: string[] };
 
 // The env var each provider reads its key from when api_key_env is empty
 // ("" = no key: Bedrock uses the AWS credential chain, Ollama none).
@@ -92,7 +92,7 @@ function ProfileForm({ profile, providers, onSaved, onCancel }: { profile: Profi
 }
 
 function KeyState({ p }: { p: Profile }) {
-  if (!p.key_env) return <span className="text-sm text-muted-foreground">{p.key_in_config ? "in the config file" : "none needed"}</span>;
+  if (!p.key_env) return <span className="text-sm text-muted-foreground">none needed</span>;
   return (
     <span className="grid gap-1">
       <code className="text-xs">{p.key_env}</code>
@@ -128,14 +128,13 @@ function ChoiceCard({ v, onSaved }: { v: View; onSaved: (v: View) => void }) {
         <CardTitle className="h2">Default model</CardTitle>
         <CardDescription>
           Reviews use the default unless a repository picks another profile. When it fails, the fallbacks are tried in order.
-          {v.choice_source === "config" && " Set now by model: in the config file; saving here takes over."}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <FormGrid className="lg:grid-cols-2">
           <Field label="Default">
             <NativeSelect value={names.includes(def) ? def : ""} onChange={(e) => setDef(e.target.value)}>
-              <option value="" disabled>{def && !names.includes(def) ? def + " (from the config file)" : "Choose a profile"}</option>
+              <option value="" disabled>Choose a profile</option>
               {names.map((n) => <option key={n} value={n}>{n}</option>)}
             </NativeSelect>
           </Field>
@@ -181,8 +180,7 @@ export default function Models() {
     refreshMe(); // the repository form and Setup read the profile list
   };
   const remove = async (p: Profile) => {
-    const back = p.shadows ? " The config file profile of the same name is used again." : "";
-    if (!(await confirm({ title: "Delete " + p.name + "?", description: "Repositories can't pick it any more." + back, action: "Delete profile", danger: true }))) return;
+    if (!(await confirm({ title: "Delete " + p.name + "?", description: "Repositories can't pick it any more.", action: "Delete profile", danger: true }))) return;
     try {
       saved(await del<View>("/admin/api/models/" + encodeURIComponent(p.name)));
       toast("Deleted " + p.name);
@@ -191,9 +189,7 @@ export default function Models() {
     }
   };
   if (!v) return <Empty>Loading…</Empty>;
-  const hasConfig = v.profiles.some((p) => p.source === "config");
-  const copying = edit !== null && edit !== "new" && !v.profiles.some((p) => p.name === edit.name && p.source === "console");
-  const title = edit === null ? "" : edit === "new" ? "Add a model profile" : copying ? "Copy " + edit.name + " to the console" : "Edit " + edit.name;
+  const title = edit === null ? "" : edit === "new" ? "Add a model profile" : "Edit " + edit.name;
   return (
     <section className="grid gap-4">
       <Toolbar>
@@ -221,7 +217,7 @@ export default function Models() {
                       {p.name === v.default && <Badge>default</Badge>}
                       {v.fallback.includes(p.name) && <Badge variant="secondary">fallback {v.fallback.indexOf(p.name) + 1}</Badge>}
                     </div>
-                    <Sub>{p.source === "config" ? "config file (read-only)" : p.shadows ? "replaces the config file profile" : "by " + (p.updated_by || "—")}</Sub>
+                    <Sub>by {p.updated_by || "—"}</Sub>
                   </TableCell>
                   <TableCell className="align-top whitespace-normal">
                     <code className="text-xs">{str(p.config.provider)}:{str(p.config.model)}</code>
@@ -230,14 +226,10 @@ export default function Models() {
                   </TableCell>
                   <TableCell className="align-top"><KeyState p={p} /></TableCell>
                   <TableCell className="pr-4 text-right align-top">
-                    {p.source === "console" ? (
-                      <div className="flex justify-end gap-2">
-                        <Button size="sm" variant="outline" onClick={() => setEdit(p)}>Edit</Button>
-                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => remove(p)}>Delete</Button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => setEdit({ ...p, source: "console", config: { ...p.config } })} title="Add a console profile with the same name; it replaces this one">Copy to console</Button>
-                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setEdit(p)}>Edit</Button>
+                      <Button size="sm" variant="ghost" className="text-destructive" onClick={() => remove(p)}>Delete</Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -248,7 +240,6 @@ export default function Models() {
       {v.profiles.length > 0 && <ChoiceCard v={v} onSaved={saved} />}
       <Note>
         API keys are never stored in the console: each profile names an environment variable of the console that holds its key, and the console hands that key to each review job.
-        {hasConfig && " Profiles from the config file's models: section are shown read-only; use Copy to console to manage one here."}
       </Note>
       <SidePanel
         open={edit !== null}
