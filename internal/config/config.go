@@ -48,7 +48,18 @@ type Config struct {
 	// panel now (see RemovedKeys); loaded is true for a config read by Load.
 	removed []string
 	loaded  bool
+	// envUsed are the startup environment variables in use (see EnvVars);
+	// file is the config file read ("" = none).
+	envUsed []string
+	file    string
 }
+
+// File is the config file that was read ("" when the console runs from
+// environment variables alone).
+func (c *Config) File() string { return c.file }
+
+// EnvUsed lists the startup settings taken from environment variables.
+func (c *Config) EnvUsed() []string { return append([]string{}, c.envUsed...) }
 
 // removedKeys are config file keys (and environment variables) managed in
 // the admin panel now. They are read only to copy them into the database
@@ -65,6 +76,19 @@ var removedKeys = []string{
 	"executor.kubernetes.tmp_size_limit", "executor.kubernetes.ttl", "executor.kubernetes.node_selector",
 	"executor.kubernetes.tolerations", "executor.kubernetes.affinity", "executor.kubernetes.priority_class_name",
 	"executor.kubernetes.pod_labels", "executor.kubernetes.pod_annotations", "executor.kubernetes.ca_bundle",
+}
+
+// lookup returns the value at a dotted key in a parsed YAML file, or nil.
+func lookup(doc map[string]any, key string) any {
+	var cur any = doc
+	for _, part := range strings.Split(key, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[part]
+	}
+	return cur
 }
 
 // removedEnv are the environment variables with the same role.
@@ -96,16 +120,7 @@ func (c *Config) InFile(key string) bool {
 func findRemoved(doc map[string]any) []string {
 	var out []string
 	for _, k := range removedKeys {
-		var cur any = doc
-		for _, part := range strings.Split(k, ".") {
-			m, ok := cur.(map[string]any)
-			if !ok {
-				cur = nil
-				break
-			}
-			cur = m[part]
-		}
-		if cur != nil {
+		if lookup(doc, k) != nil {
 			out = append(out, k)
 		}
 	}
@@ -410,8 +425,9 @@ type KubeCABundle struct {
 // Enabled reports whether a CA bundle is configured.
 func (b KubeCABundle) Enabled() bool { return b.ConfigMap != "" || b.Secret != "" }
 
-// Load reads the console config. An empty path uses CODEREVIEW_CONSOLE_CONFIG
-// or ./console.yaml.
+// Load reads the console config: the file (an empty path uses
+// CODEREVIEW_CONSOLE_CONFIG, or ./console.yaml when it exists; none is
+// fine), then the environment variables in EnvVars, which win.
 func Load(path string) (*Config, error) {
 	cfg := &Config{}
 	if path == "" {
@@ -422,6 +438,9 @@ func Load(path string) (*Config, error) {
 			path = "console.yaml"
 		}
 	}
+	// The file is optional: every startup setting can come from the
+	// environment (EnvVars), which wins over the file.
+	var doc map[string]any
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -430,11 +449,19 @@ func Load(path string) (*Config, error) {
 		if err := yaml.Unmarshal(ExpandEnv(data), cfg); err != nil {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
 		}
-		var doc map[string]any
 		_ = yaml.Unmarshal(data, &doc)
-		cfg.removed = findRemoved(doc)
-	} else {
-		cfg.removed = findRemoved(nil)
+		cfg.file = path
+	}
+	cfg.removed = findRemoved(doc)
+	used, err := cfg.applyStartupEnv()
+	if err != nil {
+		return nil, err
+	}
+	cfg.envUsed = used
+	// The admin panel is on when sign-in is configured, unless the file
+	// or CODEREVIEW_CONSOLE_ADMIN_ENABLED says otherwise.
+	if lookup(doc, "admin.enabled") == nil && os.Getenv("CODEREVIEW_CONSOLE_ADMIN_ENABLED") == "" && cfg.Admin.OIDC.Issuer != "" {
+		cfg.Admin.Enabled = true
 	}
 	cfg.loaded = true
 	cfg.applyEnv()

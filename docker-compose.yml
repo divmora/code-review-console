@@ -1,7 +1,9 @@
-# Divmora Code Review Console with PostgreSQL.
-#   cp examples/console.yaml console.yaml   # edit admin sign-in and the executor
-#   .env needs CODEREVIEW_CONSOLE_SECRET_KEY (openssl rand -base64 32); hosts and models go in the admin panel
+# Divmora Code Review Console with PostgreSQL, configured with environment
+# variables (no config file needed).
+#   cp examples/console.env .env    # set the secret key and admin sign-in
 #   docker compose up --build
+# Then sign in and follow Setup: code hosts, models and the license are
+# added in the admin panel.
 services:
   db:
     image: postgres:17
@@ -18,19 +20,21 @@ services:
 
   console:
     build: .
-    command: ["serve", "--config", "/etc/console/console.yaml"]
     depends_on:
       db:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://console:${POSTGRES_PASSWORD:-change-me}@db:5432/console?sslmode=disable
     env_file:
-      - path: .env           # CODEREVIEW_CONSOLE_SECRET_KEY, provider keys, OIDC_CLIENT_SECRET, ...
+      - path: .env           # CODEREVIEW_CONSOLE_*, model keys
         required: false
-    volumes:
-      - ./console.yaml:/etc/console/console.yaml:ro
-      # For executor.type: docker, also mount the Docker socket:
-      # - /var/run/docker.sock:/var/run/docker.sock
+    # A config file is optional; to use one as well as .env, add the command
+    # and the first volume. For CODEREVIEW_CONSOLE_EXECUTOR=docker, mount
+    # the Docker socket.
+    # command: ["serve", "--config", "/etc/console/console.yaml"]
+    # volumes:
+    #   - ./console.yaml:/etc/console/console.yaml:ro
+    #   - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
 

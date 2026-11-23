@@ -27,16 +27,29 @@ Provider notes:
 | Keycloak | `https://<host>/realms/<realm>` | Add a *Group Membership* mapper (claim `groups`, full path off) to use groups. |
 | Microsoft Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Enable *groups claim* in Token configuration. Group values are object IDs unless you configure names. |
 | AWS IAM Identity Center | via a customer-managed OIDC app, or front it with Keycloak/Cognito | Identity Center is a SAML IdP for most apps. |
-| GitLab (as IdP) | `https://gitlab.example.com` | Applications → new app with `openid email profile`. Groups appear in the `groups_direct` claim: set `groups_claim: groups_direct`. |
+| GitLab (as IdP) | `https://gitlab.example.com` | Applications → new app with `openid email profile`. Groups appear in the `groups_direct` claim: set `CODEREVIEW_CONSOLE_OIDC_GROUPS_CLAIM=groups_direct`. |
 
 ## 2. Configure the server
 
-```yaml
-database:
-  url: ${DATABASE_URL}     # required, with CODEREVIEW_CONSOLE_SECRET_KEY in the environment
+With environment variables (no config file needed):
 
+```bash
+DATABASE_URL=postgres://...                 # required, with CODEREVIEW_CONSOLE_SECRET_KEY
+CODEREVIEW_CONSOLE_BASE_URL=https://review.example.com
+CODEREVIEW_CONSOLE_OIDC_ISSUER=https://example.okta.com
+CODEREVIEW_CONSOLE_OIDC_CLIENT_ID=...
+CODEREVIEW_CONSOLE_OIDC_CLIENT_SECRET=...
+CODEREVIEW_CONSOLE_OIDC_SCOPES=openid,email,profile,groups
+CODEREVIEW_CONSOLE_OIDC_ALLOWED_GROUPS=code-review-admins
+# CODEREVIEW_CONSOLE_OIDC_ALLOWED_DOMAINS=example.com
+# CODEREVIEW_CONSOLE_OIDC_ALLOWED_EMAILS=lead@example.com
+# CODEREVIEW_CONSOLE_SESSION_TTL=12h
+```
+
+The admin panel turns on once an issuer is set. The same settings can go in an optional config file:
+
+```yaml
 admin:
-  enabled: true
   base_url: https://review.example.com
   session_ttl: 12h
   oidc:
@@ -45,15 +58,13 @@ admin:
     client_secret: ${OIDC_CLIENT_SECRET}
     scopes: [openid, email, profile, groups]
     allowed_groups: [code-review-admins]
-    # allowed_domains: [example.com]
-    # allowed_emails: [lead@example.com]
 ```
 
 Any one matching rule grants admin access. Email and domain rules only match when the provider doesn't mark the email unverified.
 
 > **`allowed_domains` and `allowed_groups` need a license.** They are a paid feature (`sso_rules`). On the free core, or with a key that doesn't include `sso_rules`, only `allowed_emails` grants access, and the console logs a warning at startup when domain or group rules are configured. List at least one admin in `allowed_emails` so you can sign in and paste a key under **License**; domain and group rules start working as soon as a key with `sso_rules` is saved, with no restart.
 
-When you run several instances behind a load balancer, also set `admin.cookie_secret` (32+ random characters) so a sign-in started on one instance can finish on another.
+When you run several instances behind a load balancer, also set `CODEREVIEW_CONSOLE_COOKIE_SECRET` (`admin.cookie_secret`, 32+ random characters) so a sign-in started on one instance can finish on another.
 
 ## 3. Use it
 
