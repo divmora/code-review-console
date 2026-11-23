@@ -71,7 +71,7 @@ license is renewed.
 | `CODEREVIEW_CONSOLE_SECRET_KEY` | **Required.** 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Admin sign-in ([admin.md](admin.md)) |
 | `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
-| Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names with `executor.env` |
+| Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names under **Settings → Bot and review jobs** (the console's own secrets can't be added) |
 
 `GET /healthz` returns `{"status":"ok","version":...,"pending":N,"running":N}` for probes.
 
@@ -147,9 +147,9 @@ picked from the release tags found in the image repository (your own registry or
 console lists its tags with the registry API), or typed. A change applies to the next review without
 a restart.
 
-The executor type, binaries, the Docker network, `kubeconfig`, `namespace`, `service_account`,
-`automount_service_account_token` and `env` stay in the config file only: they decide what review
-jobs, which carry the code host tokens and model keys, can reach.
+The executor type, binaries, the Docker network, `kubeconfig`, `namespace`, `service_account` and
+`automount_service_account_token` stay in the config file only: they decide what review jobs, which
+carry the code host tokens and model keys, can reach.
 
 ### Where review pods run
 
@@ -187,25 +187,31 @@ Point the Deployment's liveness and readiness probes at `GET /healthz` on the se
 ## Config file and admin panel
 
 The config file holds only what the console needs to start, and the limits a panel admin must not
-change: `database`, `admin` (sign-in), `server` (address, workers, queue, timeouts, the dashboard
-token), `executor` (type, image repository, Kubernetes namespace, service account, token automount,
-kubeconfig, Docker network, `env`), `review` and `bot_name`. See
+change: `database`, `admin` (sign-in), `server.addr`, and `executor` (type, image repository,
+Kubernetes namespace, service account, token automount, kubeconfig, Docker network). See
 [examples/console.yaml](../examples/console.yaml).
 
 Everything else is managed in the admin panel and stored in the database: code hosts and webhooks,
 model profiles and the default model, the repository settings, retention and status page, the
-executor's version, resources and scheduling, and the license.
+executor's version, resources and scheduling, the license, and under **Settings → Queue**, **Review
+engine** and **Bot and review jobs**: how many reviews run at once, the queue size, the review
+timeout, the wait after a push, the codereview CLI's review settings (passes, verification, batch
+size, repository defaults…), whether repositories may pick a model, the default bot name, extra
+environment variables for review jobs, and the dashboard token (stored hashed). These apply without
+a restart; another replica picks them up within 30 seconds.
 
 **Upgrading from an older config file.** These keys used to be in the file: `github`, `gitlab`,
 `bitbucket`, `models`, `model`, `fallback`, `repos`, `license`, `server.review_retention`,
-`server.webhook_retention`, `server.dashboard.enabled`/`hide_repos`/`title`, and the executor's
+`server.webhook_retention`, `server.workers`, `queue_size`, `job_timeout`, `debounce`,
+`server.dashboard`, `review`, `allow_repo_model`, `bot_name`, `executor.env`, and the executor's
 resources, TTL, scheduling, pod metadata and `ca_bundle`; also the `GITHUB_TOKEN`, `GITLAB_TOKEN`,
 `CODEREVIEW_MODEL` and similar variables. On start, each one is copied into the database while the
 database has no value for it yet, and ignored after that. The log lists the ones still present
 (`these config file keys are managed in the admin panel now`): remove them once the panel shows
 your setup. Model profiles with a literal `api_key` or with `headers` can't be stored in the panel:
 put the key in an environment variable and add the profile under **Models** with that name as its
-key variable. A future release stops reading these keys.
+key variable. A `review:` key the panel doesn't know is reported in the log and not copied. A future
+release stops reading these keys.
 
 ## Moving code hosts
 

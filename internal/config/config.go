@@ -45,8 +45,9 @@ type Config struct {
 	License License `yaml:"license"`
 
 	// removed are the keys set in the file that are managed in the admin
-	// panel now (see RemovedKeys).
+	// panel now (see RemovedKeys); loaded is true for a config read by Load.
 	removed []string
+	loaded  bool
 }
 
 // removedKeys are config file keys (and environment variables) managed in
@@ -56,9 +57,10 @@ type Config struct {
 // these are ignored. They will stop being read in a future release.
 var removedKeys = []string{
 	"github", "gitlab", "bitbucket", "model", "fallback", "models", "repos", "license",
-	"server.review_retention", "server.webhook_retention",
-	"server.dashboard.enabled", "server.dashboard.hide_repos", "server.dashboard.title",
-	"executor.docker.cpus", "executor.docker.memory",
+	"review", "allow_repo_model", "bot_name",
+	"server.workers", "server.queue_size", "server.job_timeout", "server.debounce",
+	"server.review_retention", "server.webhook_retention", "server.dashboard",
+	"executor.env", "executor.docker.cpus", "executor.docker.memory",
 	"executor.kubernetes.cpu", "executor.kubernetes.memory", "executor.kubernetes.ephemeral_storage",
 	"executor.kubernetes.tmp_size_limit", "executor.kubernetes.ttl", "executor.kubernetes.node_selector",
 	"executor.kubernetes.tolerations", "executor.kubernetes.affinity", "executor.kubernetes.priority_class_name",
@@ -73,6 +75,21 @@ var removedEnv = []string{"CODEREVIEW_MODEL", "CODEREVIEW_FALLBACK", "GITHUB_TOK
 // managed in the admin panel now (only copied into the database on the
 // first start), so the console can say to remove them.
 func (c *Config) RemovedKeys() []string { return append([]string{}, c.removed...) }
+
+// InFile reports whether a removed key (as listed by RemovedKeys) is set,
+// so a copy into the database can tell "not set" from a zero value. A
+// Config built in code (not by Load) counts every key as set.
+func (c *Config) InFile(key string) bool {
+	if !c.loaded {
+		return true
+	}
+	for _, k := range c.removed {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 
 // findRemoved returns the removed keys set in the parsed file, and the
 // removed environment variables that are set.
@@ -419,6 +436,7 @@ func Load(path string) (*Config, error) {
 	} else {
 		cfg.removed = findRemoved(nil)
 	}
+	cfg.loaded = true
 	cfg.applyEnv()
 	cfg.applyDefaults()
 	return cfg, cfg.validate()

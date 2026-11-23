@@ -21,7 +21,7 @@ The control plane for [code-review-bot](https://github.com/divmora/code-review-b
 - **Webhooks** from GitHub (App or token, github.com and Enterprise), GitLab (gitlab.com and self-managed, several instances) and Bitbucket Cloud, each webhook with its own URL and secret.
 - **A review queue** with a global worker limit. Different PRs run in parallel; the same PR never runs twice at once, and a newer push replaces an older one that is still waiting.
 - **Executors**: each review runs the `codereview` CLI as a **local process**, a **Docker container** or a **Kubernetes Job**. Every job gets its own short-lived credentials and an isolated, locked-down environment.
-- **Chat commands**: `@codereview review`, `full review`, `help`, or any question in a PR comment. The handle is configurable with `bot_name`. Commands that run the model are accepted only from people who can push to the repository (checked with the code host; Settings can open them to anyone who can comment), and each person can run a few per hour.
+- **Chat commands**: `@codereview review`, `full review`, `help`, or any question in a PR comment. The handle is set per code host, with a default under Settings. Commands that run the model are accepted only from people who can push to the repository (checked with the code host; Settings can open them to anyone who can comment), and each person can run a few per hour.
 - **Admin** with OIDC single sign-on: a repository allowlist with group and pattern rules, review settings per group or repository, an audit log and persistent history in PostgreSQL.
 
 ### Learnings (team memory)
@@ -44,7 +44,7 @@ Set `CODEREVIEW_CONSOLE_SECRET_KEY` (32 random bytes, `openssl rand -base64 32`,
 
 ### Several GitLab instances and hooks
 
-One console serves any number of GitLab instances. Repositories, rules and webhook history are keyed by host, so `acme/app` on `gitlab.x.example` and on `gitlab.y.example` are separate, and so are their rules. Each instance has its own token, and so its own bot user; set `bot_name` (mention handle) and `reviewer` (the username that counts for `require_reviewer`) per instance when they differ from the defaults.
+One console serves any number of GitLab instances. Repositories, rules and webhook history are keyed by host, so `acme/app` on `gitlab.x.example` and on `gitlab.y.example` are separate, and so are their rules. Each instance has its own token, and so its own bot user; set the bot name (mention handle) and reviewer (the username that counts for the reviewer rule) per host when they differ from the defaults.
 
 Webhooks can come from a system hook (self-managed GitLab, every project), group hooks and project hooks, alone or mixed. Add one webhook in the console for each, with its own URL and secret or signing token. When one event arrives through several hooks, it is processed once and the extra deliveries are recorded as duplicates. Note that system hooks do not send comment events: add a group or project hook with **Comments** for `@bot` commands.
 
@@ -114,7 +114,7 @@ docker compose up --build                 # console + PostgreSQL
 | `docker` | `docker run --rm` from the CLI image: read-only root, no capabilities, `no-new-privileges`, pid/CPU/memory limits | container | a single host |
 | `kubernetes` | a Job with backoff 0, a deadline and a TTL; non-root, read-only root, all capabilities dropped, seccomp, resource limits; job env in a Secret deleted right after the run | pod | clusters, autoscaling, IRSA/workload identity for Bedrock |
 
-Provider keys and cloud credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_*`, ...) are forwarded from the console's environment when set; add more names with `executor.env`.
+Provider keys and cloud credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_*`, ...) are forwarded from the console's environment when set; add more names under Settings → Bot and review jobs.
 
 ## Development
 

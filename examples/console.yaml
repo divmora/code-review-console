@@ -6,7 +6,9 @@
 # panel and stored in the database:
 #   Code hosts   GitHub, GitLab and Bitbucket hosts and their webhooks
 #   Models       model profiles, the default model and fallbacks
-#   Settings     allowlist, reviewer rule, branch syncs, labels, status, retention, status page
+#   Settings     allowlist, reviewer rule, branch syncs, labels, status, retention, status page,
+#                reviews at once, queue size, timeouts, review engine, bot name, extra env vars,
+#                dashboard token
 #   Executor     bot version, CPU, memory, disk, scheduling, pod metadata, CA bundle
 #   License      the Divmora license key
 #
@@ -14,14 +16,6 @@
 #   DATABASE_URL                     PostgreSQL (or database.url below)
 #   CODEREVIEW_CONSOLE_SECRET_KEY    encrypts code host tokens: openssl rand -base64 32
 # Model API keys are environment variables too; a profile names its variable (api_key_env).
-
-# ---- Review engine ----
-review:
-  defaults: { profile: balanced, max_comments: 25 }
-
-# Mention handle for chat commands (@<bot_name> review / full review / help / <question>).
-# Default: each host's bot name in the admin panel, else the token's user (e.g. @gitlab-bot).
-# bot_name: codereview
 
 # ---- Where reviews run ----
 # The executor type and what reviews can reach stay here. The bot version,
@@ -42,19 +36,10 @@ executor:
     service_account: ""                # set for IRSA / EKS Pod Identity / workload identity (e.g. Bedrock)
     automount_service_account_token: false  # true only if review pods need the Kubernetes API token
     # kubeconfig: /path/to/kubeconfig  # empty = in-cluster
-  # Extra env var names to forward to every review (model key variables are forwarded already).
-  env: []
 
-# ---- Server and queue ----
+# ---- Server ----
 server:
   addr: ":8080"
-  workers: 4                           # reviews running at once
-  queue_size: 100
-  job_timeout: 20m
-  debounce: 30s
-  dashboard:
-    token: ${DASHBOARD_TOKEN}          # protects /dashboard (turned on in the admin panel)
-    history: 200
 
 # ---- Database and admin sign-in ----
 database:

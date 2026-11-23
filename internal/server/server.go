@@ -24,6 +24,7 @@ import (
 	"github.com/divmora/code-review-console/internal/secrets"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
+	"github.com/divmora/code-review-console/internal/tuning"
 	"github.com/divmora/code-review-console/internal/version"
 )
 
@@ -52,6 +53,7 @@ type Server struct {
 	// settings are the runtime settings (config defaults + admin changes).
 	settings *settings.Service
 	models   *models.Service
+	tuning   *tuning.Service
 	// stopPrune ends the review-history cleanup loop.
 	stopPrune chan struct{}
 	stopOnce  sync.Once
@@ -99,6 +101,8 @@ type Deps struct {
 	License *license.Manager
 	// Models, when nil, is built here from the config file and Store.
 	Models *models.Service
+	// Tuning (queue, review engine, bot name, dashboard token) likewise.
+	Tuning *tuning.Service
 }
 
 // New validates config and builds a server.
@@ -107,6 +111,9 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts, models: deps.Models}
 	if s.models == nil {
 		s.models = models.New(cfg, deps.Store)
+	}
+	if s.tuning = deps.Tuning; s.tuning == nil {
+		s.tuning = tuning.New(cfg, deps.Store)
 	}
 	if s.settings == nil {
 		s.settings = settings.New(cfg, deps.Store)
@@ -148,15 +155,42 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 			s.logger.Error("could not apply host changes", "error", err)
 		}
 	}
-	s.queue = NewQueue(cfg.Server.Workers, cfg.Server.QueueSize, cfg.Server.JobTimeout, cfg.Server.Dashboard.History, logger)
+	t := s.tuning.Get(context.Background())
+	s.queue = NewQueue(t.Workers, t.QueueSize, t.JobTimeoutDuration(), t.History, logger)
+	s.tuning.OnChange = s.applyTuning
 	if s.store != nil {
 		s.queue.OnFinish = s.persistJob
 		s.loadHistory()
 		s.hooks = newHookWriter(s.store, func() time.Duration { return s.settings.Runtime(context.Background()).WebhookRetention() }, logger)
 		s.stopPrune = make(chan struct{})
 		go s.pruneLoop()
+		go s.tuningLoop()
 	}
 	return s, nil
+}
+
+// applyTuning resizes the queue to the saved settings.
+func (s *Server) applyTuning(t tuning.Settings) {
+	if t.Workers != s.queue.Workers() {
+		s.logger.Info("reviews at once changed", "workers", t.Workers)
+	}
+	s.queue.Resize(t.Workers, t.QueueSize, t.JobTimeoutDuration(), t.History)
+}
+
+// tuningLoop picks up settings saved on another instance.
+func (s *Server) tuningLoop() {
+	tk := time.NewTicker(30 * time.Second)
+	defer tk.Stop()
+	for {
+		select {
+		case <-s.stopPrune:
+			return
+		case <-tk.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			s.applyTuning(s.tuning.Get(ctx))
+			cancel()
+		}
+	}
 }
 
 // refreshHosts rebuilds GitHub App clients and learns each host's token
@@ -194,7 +228,7 @@ func (s *Server) refreshHosts() error {
 		}
 		logins[h.Host] = login
 		s.logger.Info(h.Platform+" identity", "host", h.Host, "token_user", login,
-			"reviewer", firstNonEmpty(h.Reviewer, login), "mention", "@"+firstNonEmpty(h.BotName, s.cfg.BotName, login))
+			"reviewer", firstNonEmpty(h.Reviewer, login), "mention", "@"+firstNonEmpty(h.BotName, s.tuning.Get(ctx).BotName, login))
 	}
 	s.idMu.Lock()
 	s.ghApps, s.selfLogins = apps, logins
@@ -399,7 +433,7 @@ func (s *Server) persistJob(r Record) {
 func (s *Server) loadHistory() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	jobs, err := s.store.RecentJobs(ctx, s.cfg.Server.Dashboard.History)
+	jobs, err := s.store.RecentJobs(ctx, s.tuning.Get(ctx).History)
 	if err != nil {
 		s.logger.Warn("could not load job history", "error", err)
 		return

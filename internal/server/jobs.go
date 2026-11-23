@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/tuning"
 )
 
 // target is a code host connection for one webhook: a client for light
@@ -120,7 +122,7 @@ func (s *Server) jobConfig(ctx context.Context, tgt target) ([]byte, map[string]
 	if err != nil {
 		return nil, nil, err
 	}
-	ec, env := buildEngineConfig(s.cfg, models, defModel, fallback)
+	ec, env := buildEngineConfig(s.tuning.Get(ctx), models, defModel, fallback)
 	if tgt.botName != "" {
 		ec.BotName = tgt.botName // placeholders (@<bot> summary) follow the host's handle
 	}
@@ -148,22 +150,17 @@ func (s *Server) jobConfig(ctx context.Context, tgt target) ([]byte, map[string]
 	return b, env, nil
 }
 
-// EngineConfig builds the job config from the config file alone (no
-// UI-managed models), as YAML plus the env vars holding moved API keys.
-// "console check-config" validates it with the CLI.
-func EngineConfig(cfg *config.Config) ([]byte, map[string]string, error) {
-	return EngineConfigWith(cfg, cfg.Models, cfg.Model, cfg.Fallback)
-}
-
-// EngineConfigWith is EngineConfig with the given model profiles, default
-// and fallbacks (those managed in the admin panel, see models.Service).
-func EngineConfigWith(cfg *config.Config, models map[string]config.ModelProfile, defModel string, fallback []string) ([]byte, map[string]string, error) {
-	ec, env := buildEngineConfig(cfg, models, defModel, fallback)
+// EngineConfigWith builds the job config from the tuning settings (review
+// engine, bot name, allow_repo_model) and the model profiles, default and
+// fallbacks, as YAML plus the env vars holding moved API keys. "console
+// check-config" validates it with the CLI.
+func EngineConfigWith(t tuning.Settings, models map[string]config.ModelProfile, defModel string, fallback []string) ([]byte, map[string]string, error) {
+	ec, env := buildEngineConfig(t, models, defModel, fallback)
 	b, err := yaml.Marshal(ec)
 	return b, env, err
 }
 
-func buildEngineConfig(cfg *config.Config, models map[string]config.ModelProfile, defModel string, fallback []string) (engineConfig, map[string]string) {
+func buildEngineConfig(t tuning.Settings, models map[string]config.ModelProfile, defModel string, fallback []string) (engineConfig, map[string]string) {
 	env := map[string]string{}
 	clean := map[string]config.ModelProfile{}
 	for name, m := range models {
@@ -178,9 +175,9 @@ func buildEngineConfig(cfg *config.Config, models map[string]config.ModelProfile
 		Model:          defModel,
 		Fallback:       fallback,
 		Models:         clean,
-		AllowRepoModel: cfg.AllowRepoModel,
-		Review:         cfg.Review,
-		BotName:        cfg.BotName,
+		AllowRepoModel: t.AllowRepoModel,
+		Review:         t.Engine.Map(),
+		BotName:        t.BotName,
 	}
 	return ec, env
 }
@@ -219,6 +216,14 @@ func (s *Server) newTask(ctx context.Context, tgt target, ref vcs.Ref, kind stri
 	for k, v := range extra {
 		if _, taken := secrets[k]; !taken {
 			secrets[k] = v
+		}
+	}
+	// Extra variables an admin chose to pass to every review job.
+	for _, k := range s.tuning.Get(ctx).ExtraEnv {
+		if _, taken := secrets[k]; !taken && tuning.CheckEnvName(k) == nil {
+			if v, ok := os.LookupEnv(k); ok {
+				secrets[k] = v
+			}
 		}
 	}
 	t := executor.Task{
@@ -261,7 +266,7 @@ func (s *Server) enqueueReview(tgt target, ref vcs.Ref, opts reviewOpts, debounc
 		job.Meta.RequestedBy = cur.By
 	}
 	if debounce {
-		job.Delay = s.cfg.Server.Debounce
+		job.Delay = s.tuning.Get(context.Background()).DebounceDuration()
 	}
 	job.Merge = func(older *Job) {
 		if o, ok := older.State.(*reviewOpts); ok {
@@ -358,7 +363,7 @@ func (s *Server) postHelp(tgt target, ref vcs.Ref) error {
 		Key: fmt.Sprintf("help:%s:%d", ref.String(), time.Now().UnixNano()), Label: "help " + ref.String(),
 		Meta: meta(ref, "help", "command"),
 		Run: func(ctx context.Context, rep *Report) error {
-			return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, helpText(firstNonEmpty(tgt.botName, s.cfg.BotName)))
+			return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, helpText(firstNonEmpty(tgt.botName, s.tuning.Get(ctx).BotName)))
 		},
 	})
 }
@@ -382,7 +387,7 @@ func (s *Server) dispatch(tgt target, ref vcs.Ref, cmd command, ov *config.Overr
 // top-level bot_name, else the token's user, so command hints and
 // mentions reach the real bot account, else "codereview".
 func (s *Server) mention(explicit, host string) string {
-	return firstNonEmpty(explicit, s.cfg.BotName, s.self(host), "codereview")
+	return firstNonEmpty(explicit, s.tuning.Get(context.Background()).BotName, s.self(host), "codereview")
 }
 
 // reviewerFor is the username that counts as the bot on host.

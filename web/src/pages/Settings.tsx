@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import Tuning from "./Tuning";
 
 type Eff = {
   allowlist: boolean; require_reviewer: boolean; skip_branch_sync: boolean; sync_source_branches: string[];
@@ -237,6 +238,7 @@ export default function Settings() {
       <Group title="Default review settings" description="Apply to every repository. Group and pattern rules, then repository settings, override them.">
         <SettingsEditor key={edGen} value={eff.review_defaults} onSave={save} saveLabel="Save default review settings" />
       </Group>
+      <Tuning />
       <Sessions />
       <Note>
         These settings are kept in the database and apply without a restart. Every change is in the audit log.

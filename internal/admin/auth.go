@@ -30,6 +30,7 @@ import (
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
+	"github.com/divmora/code-review-console/internal/tuning"
 )
 
 const (
@@ -59,6 +60,9 @@ type Admin struct {
 	// Models are the model profiles shared with the server; nil means
 	// those in the database only.
 	Models *models.Service
+	// Tuning holds the queue, review engine, bot name and dashboard token
+	// settings (built over the store when nil).
+	Tuning *tuning.Service
 	// Executor holds the executor settings; nil hides them.
 	Executor *execsettings.Service
 	// Tags lists image versions for the Executor page (built on first use).
