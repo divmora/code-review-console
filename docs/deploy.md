@@ -21,6 +21,10 @@ The console runs the `codereview` CLI for every review, so the two must agree on
 |---|---|
 | 0.2.0 and later | v0.4.0 or later |
 
+- **Approving merge requests** (Settings → Approve merge requests) needs v0.5.0 or later: older CLIs
+  don't know `--approve`, and reviews fail while it is on. v0.5.0 also anchors scores to the
+  previous review, so they don't swing between runs.
+
 - The container image already contains a supported CLI.
 - With the `kubernetes` executor, use v0.4.1 or later: from then on the CLI writes its logs to the
   same stream as the result, so they can't end up inside it (the console also repairs results
@@ -159,7 +163,7 @@ Configure the Deployment with environment variables, for example:
 ```yaml
 env:
   - { name: CODEREVIEW_CONSOLE_EXECUTOR, value: kubernetes }
-  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.4.1 }
+  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.5.0 }
   - { name: CODEREVIEW_CONSOLE_KUBE_NAMESPACE, value: code-review }
   - { name: CODEREVIEW_CONSOLE_BASE_URL, value: https://review.example.com }
   - { name: CODEREVIEW_CONSOLE_OIDC_ISSUER, value: https://idp.example.com }
