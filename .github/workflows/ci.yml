@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 jobs:
   # The admin UI isn't committed; the binary and the admin tests embed it,
   # so it's built (and type-checked) before lint and tests.
