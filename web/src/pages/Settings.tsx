@@ -244,7 +244,7 @@ export default function Settings() {
             <Num label="Lowest score to approve" value={v.approve_min_score} onChange={set("approve_min_score")} min={0} max={100} placeholder="0" note={<Note className="text-xs">Every score (quality, security, maintainability) must be at least this. 0 ignores the scores.</Note>} />
             <Bool label="When a later review doesn't pass" value={v.approve_withdraw} onChange={set("approve_withdraw")} yes="Withdraw the bot's approval" no="Leave it" />
           </FormGrid>
-          <Note className="text-xs">A partial or too-large review leaves the approval as it is. GitLab: the bot's user must be allowed to approve. GitHub: withdrawing dismisses the bot's review, which branch protection may restrict.</Note>
+          <Note className="text-xs">With withdrawing on, a review that can't judge a new commit (partial, too large) also withdraws the approval (CLI 0.6 or later). GitLab: the bot's user must be allowed to approve. GitHub: withdrawing dismisses the bot's review, which branch protection may restrict.</Note>
         </Group>
         <Group title="Learnings" unsaved={any("learnings_enabled", "learnings_auto_activate")}>
           <FormGrid>

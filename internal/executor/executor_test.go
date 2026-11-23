@@ -164,12 +164,12 @@ func TestArgsPostingFlags(t *testing.T) {
 
 func TestArgsApproval(t *testing.T) {
 	args, _ := Args(Task{Kind: "review", URL: "u", Post: true, Approval: &Approval{Block: "major", MinScore: 80, Withdraw: true}})
-	if got := strings.Join(args, " "); !strings.Contains(got, "--approve --approve-block major --approve-min-score 80 --approve-withdraw") {
+	if got := strings.Join(args, " "); !strings.Contains(got, "--approve --approve-block major --approve-min-score 80 --approve-withdraw=true") {
 		t.Errorf("approval flags: %s", got)
 	}
 	args, _ = Args(Task{Kind: "review", URL: "u", Post: true, Approval: &Approval{}})
-	if got := strings.Join(args, " "); !strings.Contains(got, "--approve-block none --approve-min-score 0") || strings.Contains(got, "--approve-withdraw") {
-		t.Errorf("approve whatever was found, without withdrawing: %s", got)
+	if got := strings.Join(args, " "); !strings.Contains(got, "--approve-block none --approve-min-score 0 --approve-withdraw=false") {
+		t.Errorf("approve whatever was found, without withdrawing (explicit: the CLI's default is on): %s", got)
 	}
 	args, _ = Args(Task{Kind: "review", URL: "u", Post: true})
 	if strings.Contains(strings.Join(args, " "), "--approve") {

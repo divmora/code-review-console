@@ -123,9 +123,9 @@ func Args(t Task) ([]string, error) {
 		}
 		if a := t.Approval; a != nil {
 			args = append(args, "--approve", "--approve-block", firstNonEmpty(a.Block, "none"), "--approve-min-score", strconv.Itoa(a.MinScore))
-			if a.Withdraw {
-				args = append(args, "--approve-withdraw")
-			}
+			// Always explicit: the CLI's default changed to on in 0.6, so
+			// "leave it" must say =false (older CLIs accept that too).
+			args = append(args, "--approve-withdraw="+strconv.FormatBool(a.Withdraw))
 		}
 		return args, nil
 	case "validate":
