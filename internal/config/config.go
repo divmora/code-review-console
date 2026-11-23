@@ -301,6 +301,12 @@ type KubeExecutor struct {
 	AutomountServiceAccountToken bool   `yaml:"automount_service_account_token"`
 	CPU                          string `yaml:"cpu"`
 	Memory                       string `yaml:"memory"`
+	// EphemeralStorage is the review container's ephemeral-storage request
+	// and limit (default 2Gi; "none" for no limit). TmpSizeLimit caps the
+	// /tmp emptyDir (default 1Gi; "none" for no limit). A review that
+	// writes more is evicted instead of filling the node's disk.
+	EphemeralStorage string `yaml:"ephemeral_storage"`
+	TmpSizeLimit     string `yaml:"tmp_size_limit"`
 	// TTL keeps finished Jobs this long for debugging. Default 10m.
 	TTL time.Duration `yaml:"ttl"`
 	// Kubeconfig path; empty means in-cluster config.
