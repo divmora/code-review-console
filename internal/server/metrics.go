@@ -4,16 +4,21 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/metrics"
+	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/version"
 )
 
 // serverMetrics are the counters the server updates as work happens.
-// Labels never carry repository names: they would leak what is reviewed
-// and grow without bound.
+// Their labels never carry repository names: they would leak what is
+// reviewed and grow without bound. The one exception is
+// codereview_review_score, one series per repository and score (bounded
+// by the repositories), and only while the status dashboard shows
+// repository names.
 type serverMetrics struct {
 	reg      metrics.Registry
 	jobs     *metrics.Counter
@@ -21,7 +26,15 @@ type serverMetrics struct {
 	tokens   *metrics.Counter
 	comments *metrics.Counter
 	hooks    *metrics.Counter
+
+	// scores caches the latest score per repository (a database read)
+	// for scoreCacheFor.
+	scoreMu   sync.Mutex
+	scoreAt   time.Time
+	scoreRows []store.RepoScore
 }
+
+const scoreCacheFor = time.Minute
 
 // jobBuckets cover a help reply (well under a second) to a long review.
 var jobBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1200}
@@ -66,6 +79,8 @@ func (s *Server) initMetrics() {
 		}
 		return []metrics.Sample{{Value: float64(st.Expires.Unix())}}
 	})
+	m.reg.Gauge("codereview_review_score", "The latest review score (1 to 100) of each repository, by kind (quality, security, maintainability). "+
+		"When the status dashboard hides repository names, one series per kind: the average over repositories.", s.scoreSamples)
 	m.reg.Gauge("codereview_host_token_expiry_timestamp_seconds", "When each code host's token expires (Unix time), for tokens the host reports an expiry for.", func() []metrics.Sample {
 		var out []metrics.Sample
 		for _, h := range s.hosts.Enabled("") {
@@ -75,6 +90,48 @@ func (s *Server) initMetrics() {
 		}
 		return out
 	})
+}
+
+// scoreSamples are codereview_review_score's series (none without a
+// database or before any scored review).
+func (s *Server) scoreSamples() []metrics.Sample {
+	if s.store == nil {
+		return nil
+	}
+	m := s.metrics
+	m.scoreMu.Lock()
+	if time.Since(m.scoreAt) > scoreCacheFor {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		rows, err := s.store.RepoScores(ctx, time.Now()) // latest only, no trend
+		cancel()
+		if err != nil {
+			s.logger.Warn("review scores for /metrics", "error", err)
+		} else {
+			m.scoreRows, m.scoreAt = rows, time.Now()
+		}
+	}
+	rows := m.scoreRows
+	m.scoreMu.Unlock()
+	if len(rows) == 0 {
+		return nil
+	}
+	var out []metrics.Sample
+	if s.settings.Runtime(context.Background()).HideRepos {
+		for _, k := range store.ScoreKinds {
+			sum := 0
+			for _, r := range rows {
+				sum += r.Latest.Get(k)
+			}
+			out = append(out, metrics.Sample{Labels: metrics.Labels{"kind": k}, Value: float64(sum) / float64(len(rows))})
+		}
+		return out
+	}
+	for _, r := range rows {
+		for _, k := range store.ScoreKinds {
+			out = append(out, metrics.Sample{Labels: metrics.Labels{"kind": k, "platform": r.Platform, "host": r.Host, "repo": r.Repo}, Value: float64(r.Latest.Get(k))})
+		}
+	}
+	return out
 }
 
 // observeJob records a finished job.
@@ -95,6 +152,11 @@ func (s *Server) onFinish(r Record) {
 	if s.store != nil {
 		s.persistJob(r)
 		s.savedDone(r.durable)
+		if r.Scores != nil { // the next scrape reads the new score
+			s.metrics.scoreMu.Lock()
+			s.metrics.scoreAt = time.Time{}
+			s.metrics.scoreMu.Unlock()
+		}
 	}
 }
 

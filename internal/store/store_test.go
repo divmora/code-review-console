@@ -853,3 +853,84 @@ func TestQueuedJobsAndClaims(t *testing.T) {
 		t.Errorf("owners: %d %v", cnt, err)
 	}
 }
+
+func TestReviewScores(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Hour)
+	add := func(repo string, n int, at time.Time, sc *Scores) {
+		t.Helper()
+		if _, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: "scores.example.com", Repo: repo, Number: n, State: "done",
+			Enqueued: at, Started: at, Finished: at, Scores: sc}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("Team/App", 1, at.AddDate(0, 0, -1), &Scores{Quality: 70, Security: 90, Maintainability: 80})
+	add("Team/App", 2, at, &Scores{Quality: 90, Security: 50, Maintainability: 60})
+	add("Team/App", 3, at, nil) // an answer, or an older CLI: no scores
+	add("team/lib", 4, at, &Scores{Quality: 95, Security: 99, Maintainability: 97})
+
+	jobs, err := p.ListJobs(ctx, JobFilter{Host: "scores.example.com"})
+	byNum := map[int]*Scores{}
+	for _, j := range jobs {
+		byNum[j.Number] = j.Scores
+	}
+	if err != nil || len(jobs) != 4 || byNum[2] == nil || *byNum[2] != (Scores{Quality: 90, Security: 50, Maintainability: 60}) || byNum[3] != nil {
+		t.Fatalf("scores are stored per job (nil, not zeros, without them): %v %+v", err, byNum)
+	}
+	low, _ := p.ListJobs(ctx, JobFilter{Host: "scores.example.com", ScoreKind: "security", ScoreBelow: 60})
+	if len(low) != 1 || low[0].Number != 2 {
+		t.Errorf("security below 60: %+v", low)
+	}
+	anyLow, _ := p.ListJobs(ctx, JobFilter{Host: "scores.example.com", ScoreBelow: 75})
+	if len(anyLow) != 2 {
+		t.Errorf("any score below 75: %+v", anyLow)
+	}
+
+	pts, err := p.Metrics(ctx, MetricsFilter{Granularity: Monthly, From: at.AddDate(0, -2, 0), To: at.Add(time.Hour), Host: "scores.example.com"})
+	var scored int
+	var q int64
+	for _, pt := range pts {
+		scored, q = scored+pt.Scored, q+pt.QualitySum
+	}
+	if err != nil || scored != 3 || q != 70+90+95 {
+		t.Errorf("rollups sum the scores: %v scored %d quality %d", err, scored, q)
+	}
+
+	repos, err := p.RepoScores(ctx, at.AddDate(0, 0, -30))
+	var app *RepoScore
+	for i := range repos {
+		if repos[i].Host == "scores.example.com" && repos[i].Repo == "team/app" {
+			app = &repos[i]
+		}
+	}
+	if err != nil || app == nil || app.Number != 2 || app.Latest.Security != 50 || len(app.Trend) < 1 || len(app.Trend) > 2 {
+		t.Fatalf("latest scores and a trend per repository: %v %+v", err, app)
+	}
+
+	// Results stored before migration 17 get their scores filled in.
+	var id int64
+	if err := p.pool.QueryRow(ctx, `INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, finished, result)
+		VALUES ('review', 'gitlab', 'backfill.example.com', 'old/repo', 9, '', 'push', 'done', $1, $1, $2) RETURNING id`, at,
+		[]byte(`{"summary":"x","scores":{"quality":81,"security":82,"maintainability":83}}`)).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.pool.Exec(ctx, `INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, finished, result)
+		VALUES ('review', 'gitlab', 'backfill.example.com', 'old/repo', 10, '', 'push', 'done', $1, $1, $2)`, at,
+		[]byte(`{"scores":{"quality":"high","security":0,"maintainability":500}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.pool.Exec(ctx, backfillScores); err != nil {
+		t.Fatal(err)
+	}
+	j, err := p.GetJob(ctx, id)
+	if err != nil || j.Scores == nil || *j.Scores != (Scores{Quality: 81, Security: 82, Maintainability: 83}) {
+		t.Errorf("backfilled from the stored result: %v %+v", err, j)
+	}
+	bad, _ := p.ListJobs(ctx, JobFilter{Host: "backfill.example.com"})
+	for _, b := range bad {
+		if b.Number == 10 && b.Scores != nil {
+			t.Errorf("out-of-range or non-numeric scores are not backfilled: %+v", b.Scores)
+		}
+	}
+}

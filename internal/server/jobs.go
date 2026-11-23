@@ -15,6 +15,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/store"
 	"github.com/divmora/code-review-console/internal/tuning"
 )
 
@@ -333,6 +334,9 @@ func (s *Server) enqueueReviewWith(tgt target, ref vcs.Ref, opts reviewOpts, del
 		rep.Comments, rep.Files, rep.Model = res.Posted, res.Files, res.Model
 		rep.TokensIn, rep.TokensOut = res.TokensIn, res.TokensOut
 		rep.Result = res.Raw
+		if sc := res.Scores; sc != nil {
+			rep.Scores = &store.Scores{Quality: sc.Quality, Security: sc.Security, Maintainability: sc.Maintainability}
+		}
 		switch {
 		case res.Unreadable != "":
 			rep.Note = res.Unreadable

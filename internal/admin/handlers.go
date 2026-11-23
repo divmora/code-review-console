@@ -135,6 +135,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/reviews/{id}", a.requireAPI(a.apiGetReview))
 	mux.HandleFunc("POST /admin/api/reviews/{id}/rerun", a.requireAPI(a.apiRerun))
 	mux.HandleFunc("GET /admin/api/metrics", a.requireAPI(a.apiMetrics))
+	mux.HandleFunc("GET /admin/api/repos/scores", a.requireAPI(a.apiRepoScores))
 	mux.HandleFunc("GET /admin/api/learnings", a.requireAPI(a.apiListLearnings))
 	mux.HandleFunc("POST /admin/api/learnings", a.requireAPI(a.apiCreateLearning))
 	mux.HandleFunc("PUT /admin/api/learnings/{id}", a.requireAPI(a.apiUpdateLearning))
@@ -1196,6 +1197,11 @@ func (a *Admin) apiListReviews(w http.ResponseWriter, r *http.Request, s *store.
 	if id, err := strconv.ParseInt(q.Get("before"), 10, 64); err == nil && id > 0 {
 		f.BeforeID = id
 	}
+	// score_below=60&score_kind=security: reviews scoring below 60 on
+	// security (score_kind empty or "any": on any of the three).
+	if n, err := strconv.Atoi(q.Get("score_below")); err == nil && n > 0 && n <= 101 {
+		f.ScoreBelow, f.ScoreKind = n, q.Get("score_kind")
+	}
 	jobs, err := a.store.ListJobs(r.Context(), f)
 	if err != nil {
 		a.serverError(w, err)
@@ -1302,6 +1308,26 @@ func (a *Admin) apiMetrics(w http.ResponseWriter, r *http.Request, s *store.Sess
 	today, _ := a.store.TokensUsed(r.Context(), time.Now(), "", "", "")
 	writeJSON(w, http.StatusOK, map[string]any{"granularity": g, "from": from, "to": to, "points": points,
 		"today_tokens": today, "daily_token_budget": a.settings().Get(r.Context()).DailyTokenBudget})
+}
+
+// apiRepoScores is each repository's latest review scores and a daily
+// trend (30 days by default, ?days= up to 3650).
+func (a *Admin) apiRepoScores(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Metrics) {
+		return
+	}
+	days := 30
+	if n, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && n > 0 && n <= 3650 {
+		days = n
+	}
+	now := time.Now().UTC()
+	since := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
+	scores, err := a.store.RepoScores(r.Context(), since)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"since": since, "days": days, "repos": scores})
 }
 
 // ---- learnings ----

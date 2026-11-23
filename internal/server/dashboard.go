@@ -177,6 +177,7 @@ func redact(rs []Record) {
 		r.Repo = "private repository"
 		r.URL = ""
 		r.Number = 0
+		r.Scores = nil // a repository's scores are as private as its name
 		if r.Error != "" {
 			r.Error = "review failed"
 		}

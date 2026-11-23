@@ -14,6 +14,10 @@ export type Point = {
   tokens_in?: number;
   tokens_out?: number;
   duration_ms?: number;
+  scored?: number;
+  quality_sum?: number;
+  security_sum?: number;
+  maintainability_sum?: number;
 };
 
 export const series: [keyof Point, string, string][] = [
@@ -21,6 +25,32 @@ export const series: [keyof Point, string, string][] = [
   ["skipped", "Skipped", "--st-skip"],
   ["failed", "Failed", "--st-fail"],
 ];
+
+export type Metrics = { granularity: string; from: string; to: string; points: Point[]; today_tokens: number; daily_token_budget: number };
+
+// Fill empty buckets so the time axis is continuous.
+export function fillBuckets(d: Metrics): Point[] {
+  const out: Point[] = [];
+  const by: Record<string, Point> = {};
+  d.points.forEach((p) => (by[new Date(p.bucket).toISOString()] = p));
+  const end = new Date(d.to);
+  const start = new Date(d.from);
+  if (d.granularity === "month") {
+    let t = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+    while (t < end) {
+      out.push(by[t.toISOString()] || { bucket: t.toISOString() });
+      t = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 1));
+    }
+    return out;
+  }
+  const step = d.granularity === "hour" ? 3600e3 : 86400e3;
+  let t = new Date(Math.floor(start.getTime() / step) * step);
+  while (t < end) {
+    out.push(by[t.toISOString()] || { bucket: t.toISOString() });
+    t = new Date(t.getTime() + step);
+  }
+  return out;
+}
 
 export function bucketLabel(iso: string, g: string, long = false): string {
   const d = new Date(iso);
