@@ -287,6 +287,45 @@ to its addresses, for example `10.0.0.0/8` for a cluster's pod network. The cons
 client from `X-Forwarded-For`: the right-most address that isn't a trusted proxy, since anything
 further left can be written by the client. Without trusted proxies the header is ignored and the
 connection's address is recorded, which behind a proxy is the proxy itself.
+## Prometheus metrics
+
+`/metrics` serves the console's metrics in the Prometheus text format, which Prometheus,
+VictoriaMetrics, Grafana Agent or Alloy, the OpenTelemetry collector and Datadog can scrape. It is off
+until you choose who can read it under **Settings → Prometheus metrics**: scrapers with a bearer
+token (generated there, stored hashed, shown once) or anyone who can reach the console. The page
+gives a ready-made scrape config:
+
+```yaml
+- job_name: code-review-console
+  scheme: https
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["review.example.com"]
+  authorization:
+    credentials: <the metrics token>
+```
+
+| Metric | Type | Labels |
+|---|---|---|
+| `codereview_build_info` | gauge | `version` |
+| `codereview_start_time_seconds` | gauge | |
+| `codereview_queue_pending`, `codereview_queue_running`, `codereview_queue_capacity`, `codereview_workers` | gauge | |
+| `codereview_jobs_total` | counter | `kind` (review, full_review, answer, help), `state` (done, skipped, failed) |
+| `codereview_job_duration_seconds` | histogram | `kind` |
+| `codereview_model_tokens_total` | counter | `direction` (input, output) |
+| `codereview_review_comments_total` | counter | |
+| `codereview_webhooks_total` | counter | `platform`, `outcome` (queued, ignored, duplicate, rejected, error) |
+| `codereview_license_state` | gauge | `state` (none, active, grace, expired, invalid) |
+| `codereview_license_expiry_timestamp_seconds` | gauge | |
+| `codereview_host_token_expiry_timestamp_seconds` | gauge | `platform`, `host` |
+
+Counters and the queue are per replica (Prometheus adds them up); labels never carry repository names.
+For example, to alert two weeks before a code host token expires:
+
+```yaml
+- alert: CodeReviewHostTokenExpiring
+  expr: codereview_host_token_expiry_timestamp_seconds - time() < 14 * 86400
+```
 
 ## Moving code hosts
 

@@ -16,7 +16,9 @@ type tuningView struct {
 	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"` // hides the embedded field
 	DashboardTokenSet  bool   `json:"dashboard_token_set"`
 	// DashboardTokenExpired: the token is set but no longer works.
-	DashboardTokenExpired bool `json:"dashboard_token_expired"`
+	DashboardTokenExpired bool   `json:"dashboard_token_expired"`
+	MetricsTokenHash      string `json:"metrics_token_hash,omitempty"` // hides the embedded field
+	MetricsTokenSet       bool   `json:"metrics_token_set"`
 	// EnvSet says which extra variables the console has.
 	EnvSet map[string]bool `json:"env_set"`
 }
@@ -32,6 +34,8 @@ func viewTuning(t tuning.Settings) tuningView {
 	v := tuningView{Settings: t, DashboardTokenSet: t.DashboardTokenHash != "", EnvSet: map[string]bool{}}
 	v.Settings.DashboardTokenHash = ""
 	v.DashboardAccess = t.Access()
+	v.MetricsTokenSet, v.Settings.MetricsTokenHash = t.MetricsTokenHash != "", ""
+	v.MetricsAccess = t.Metrics()
 	v.DashboardTokenExpired = t.DashboardTokenHash != "" && t.TokenExpired(time.Now())
 	if v.ExtraEnv == nil {
 		v.ExtraEnv = []string{}

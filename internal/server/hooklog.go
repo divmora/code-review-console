@@ -12,6 +12,7 @@ import (
 
 	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/metrics"
 	"github.com/divmora/code-review-console/internal/store"
 )
 
@@ -138,15 +139,15 @@ func hostOf(r *hosts.Registry, id int64) string {
 // webhook history, whatever the handler decided.
 func (s *Server) recordHooks(platform string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.hooks == nil {
-			h(w, r)
-			return
-		}
 		m := &hookMeta{Platform: platform}
 		cw := &captureWriter{ResponseWriter: w}
 		start := time.Now()
 		h(cw, r.WithContext(context.WithValue(r.Context(), hookMetaKey{}, m)))
 		out, reason := outcome(cw.status, cw.body.Bytes())
+		s.metrics.hooks.Inc(metrics.Labels{"platform": platform, "outcome": out})
+		if s.hooks == nil {
+			return
+		}
 		if m.Reason != "" {
 			reason = m.Reason
 		}

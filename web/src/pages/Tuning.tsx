@@ -17,6 +17,7 @@ type View = {
   bot_name?: string; allow_repo_model: boolean; extra_env: string[]; engine: Engine;
   dashboard_token_set: boolean; dashboard_token_expires?: string; dashboard_token_expired: boolean;
   dashboard_access: "admins" | "token" | "public"; env_set: Record<string, boolean>;
+  metrics_access: "off" | "token" | "public"; metrics_token_set: boolean;
 };
 
 function Card2({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -44,6 +45,20 @@ function accessNote(access: string, hasToken: boolean, clearing: boolean) {
   if (access === "public") return "Anyone who can reach the console's URL sees it. Hide repository names unless that is intended.";
   if (access === "token") return clearing || !hasToken ? "Set a token first: without one, only admins can open it." : "Admins at /admin/dashboard, and anyone with the token at /dashboard.";
   return "Admins open it at /admin/dashboard (the sidebar link). /dashboard sends everyone else to sign in.";
+}
+
+// scrapeConfig is a Prometheus scrape job for this console.
+function scrapeConfig(access: string, token: string) {
+  const u = new URL(location.origin);
+  const lines = [
+    "- job_name: code-review-console",
+    "  scheme: " + u.protocol.replace(":", ""),
+    "  metrics_path: /metrics",
+    "  static_configs:",
+    "    - targets: [\"" + u.host + "\"]",
+  ];
+  if (access === "token") lines.push("  authorization:", "    credentials: " + (token || "<the metrics token>"));
+  return lines.join("\n");
 }
 
 // shareLink is the dashboard URL with the token, for people without an admin sign-in.
@@ -87,6 +102,9 @@ export default function Tuning() {
   const [clear, setClear] = useState(false);
   const [validDays, setValidDays] = useState(90);
   const [copied, setCopied] = useState(false);
+  const [mToken, setMToken] = useState("");
+  const [mClear, setMClear] = useState(false);
+  const [mCopied, setMCopied] = useState(false);
   const take = (n: View) => {
     setV(n);
     setEnv(n.extra_env.join(", "));
@@ -94,6 +112,9 @@ export default function Tuning() {
     setToken("");
     setClear(false);
     setCopied(false);
+    setMToken("");
+    setMClear(false);
+    setMCopied(false);
   };
   useEffect(() => {
     get<View>("/admin/api/tuning").then(take).catch((e) => toast(errMsg(e), true));
@@ -115,6 +136,7 @@ export default function Tuning() {
       ...v, engine: { ...v.engine, defaults: parsed },
       extra_env: env.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean),
       dashboard_token: token, clear_dashboard_token: clear, dashboard_token_valid_days: validDays,
+      metrics_token: mToken, clear_metrics_token: mClear,
     };
     try {
       take(await put<View>("/admin/api/tuning", body));
@@ -249,6 +271,38 @@ export default function Tuning() {
                 </div>
               </Field>
             </>
+          )}
+        </FormGrid>
+      </Card2>
+      <Card2 title="Prometheus metrics" description="/metrics in the Prometheus text format: queue, reviews by kind and result, durations, tokens, webhooks by outcome, and when the license and host tokens expire. No repository names.">
+        <FormGrid className="lg:grid-cols-2">
+          <Field label="Who can read /metrics" hint={<Sub>{v.metrics_access === "public" ? "Anyone who can reach the console's URL. Fine on a private network the scraper shares." : v.metrics_access === "token" ? "Scrapers send the token as a bearer token." : "Off: /metrics answers 404."}</Sub>}>
+            <NativeSelect value={v.metrics_access} onChange={(e) => set("metrics_access")(e.target.value as View["metrics_access"])}>
+              <option value="off">Off</option>
+              <option value="token">Scrapers with the token</option>
+              <option value="public">Anyone who can reach the console</option>
+            </NativeSelect>
+          </Field>
+          <Field label="Metrics token" hint={<Sub>{mClear ? "Removed when you save." : mToken ? "Replaces the current token when you save." : v.metrics_token_set ? "Set. Stored hashed and never shown again." : "No token."}</Sub>}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input className="max-w-sm font-mono" placeholder={v.metrics_token_set ? "Set (leave empty to keep it)" : "Not set"} value={mToken} onChange={(e) => { setMToken(e.target.value); setMClear(false); setMCopied(false); }} />
+              <Button variant="outline" onClick={() => { setMToken(newToken()); setMClear(false); setMCopied(false); }}>Generate</Button>
+              {v.metrics_token_set && (
+                <Button variant="ghost" className="text-destructive" onClick={() => { setMToken(""); setMClear(true); }} disabled={mClear}>{mClear ? "Removed on save" : "Remove"}</Button>
+              )}
+            </div>
+          </Field>
+          {v.metrics_access !== "off" && (
+            <Field label="Prometheus scrape config" className="lg:col-span-2" hint={mToken ? <Sub className="text-warning">Copy it now: once saved, the token can't be shown again.</Sub> : <Sub>Generate a token to fill it in.</Sub>}>
+              <div className="grid gap-2">
+                <Textarea readOnly rows={v.metrics_access === "token" ? 7 : 5} className="font-mono text-xs" value={scrapeConfig(v.metrics_access, mToken)} onFocus={(e) => e.target.select()} />
+                <div>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    navigator.clipboard?.writeText(scrapeConfig(v.metrics_access, mToken)).then(() => setMCopied(true), () => toast("Copy failed: select the text and copy it", true));
+                  }}>{mCopied ? "Copied" : "Copy"}</Button>
+                </div>
+              </div>
+            </Field>
           )}
         </FormGrid>
       </Card2>
