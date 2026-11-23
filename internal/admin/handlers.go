@@ -107,6 +107,9 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	// Sign-out is POST only (CSRF); a typed or bookmarked GET /admin/logout
 	// shows a page with a Sign out button.
 	mux.HandleFunc("GET /admin/logout", a.handlePage)
+	// signed-in is where signing in from another tab lands, after a save
+	// found the session had ended (the first tab keeps its edits).
+	mux.HandleFunc("GET /admin/signed-in", a.handlePage)
 	// Change requests were called Approvals before 0.14 (issue #115).
 	mux.HandleFunc("GET /admin/approvals", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/change-requests", http.StatusPermanentRedirect)

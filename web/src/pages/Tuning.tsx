@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
+import { diffCount, useUnsaved } from "../unsaved";
 import { fmtDate } from "../format";
 import { get, put } from "../api";
 import { Empty, errMsg, Field, FormGrid, NativeSelect, Note, StateBadge, Sub, useMe, useToast } from "../ui";
@@ -106,10 +107,12 @@ export default function Tuning() {
   const [mToken, setMToken] = useState("");
   const [mClear, setMClear] = useState(false);
   const [mCopied, setMCopied] = useState(false);
+  const [base, setBase] = useState<View | null>(null); // as loaded or saved
   const take = (raw: Partial<View>) => {
     // Older consoles leave empty fields out (#95): fill them in.
     const n = { ...raw, extra_env: raw.extra_env ?? [], engine: raw.engine ?? {}, env_set: raw.env_set ?? {} } as View;
     setV(n);
+    setBase(n);
     setEnv(n.extra_env.join(", "));
     setDefaults(n.engine.defaults ? JSON.stringify(n.engine.defaults, null, 2) : "");
     setToken("");
@@ -122,10 +125,21 @@ export default function Tuning() {
   useEffect(() => {
     get<Partial<View>>("/admin/api/tuning").then(take).catch((e) => toast(errMsg(e), true));
   }, []);
+  // Unsaved changes: the fields, the text boxes and a token typed or cleared.
+  let count = 0;
+  if (v && base) {
+    count = diffCount({ ...v, extra_env: [], engine: { ...v.engine, defaults: undefined } }, { ...base, extra_env: [], engine: { ...base.engine, defaults: undefined } });
+    if (env !== base.extra_env.join(", ")) count++;
+    if (defaults !== (base.engine.defaults ? JSON.stringify(base.engine.defaults, null, 2) : "")) count++;
+    if (token || clear) count++;
+    if (mToken || mClear) count++;
+  }
+  useUnsaved("tuning", { label: "Queue, review engine and access", count, save: () => save(), discard: () => base && take(base) });
   if (!v) return <Empty>Loading…</Empty>;
   const set = <K extends keyof View>(k: K) => (x: View[K]) => setV({ ...v, [k]: x });
   const eng = <K extends keyof Engine>(k: K) => (x: Engine[K]) => setV({ ...v, engine: { ...v.engine, [k]: x } });
-  const save = async () => {
+  async function save() {
+    if (!v) return;
     let parsed: Record<string, unknown> | undefined;
     if (defaults.trim()) {
       try {
@@ -147,7 +161,7 @@ export default function Tuning() {
     } catch (e) {
       toast(errMsg(e), true);
     }
-  };
+  }
   const verify = v.engine.verify === undefined || v.engine.verify === null ? "" : String(v.engine.verify);
   return (
     <section className="grid gap-4">
