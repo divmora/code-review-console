@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.12.0](https://github.com/divmora/code-review-console/compare/v0.11.0...v0.12.0) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* hooks still pointing at /webhooks/<platform> get 404. Add a webhook under Code hosts -> Manage webhooks and point the hook at its URL and secret before upgrading.
+
+### Features
+
+* Impact page showing what the console has done for this installation ([#105](https://github.com/divmora/code-review-console/issues/105)) ([22eba4e](https://github.com/divmora/code-review-console/commit/22eba4eecfb4cb851ae9808da084ba771913f1f1))
+* remove the shared webhook URLs ([#99](https://github.com/divmora/code-review-console/issues/99)) ([f57bb1c](https://github.com/divmora/code-review-console/commit/f57bb1c7fcd658855bc9345c57536080b1c0fe67))
+* store review scores and show them on Reviews, Repositories, the dashboard and /metrics ([#103](https://github.com/divmora/code-review-console/issues/103)) ([aa47c71](https://github.com/divmora/code-review-console/commit/aa47c7137a28b96139e156c0dc0dbfa4184a5045)), closes [#98](https://github.com/divmora/code-review-console/issues/98)
+
+
+### Bug Fixes
+
+* **hosts:** every replica picks up host and webhook changes without a restart ([#104](https://github.com/divmora/code-review-console/issues/104)) ([1599cea](https://github.com/divmora/code-review-console/commit/1599cea8c346de3e6ffc5733ac568820ef2d5f7c)), closes [#101](https://github.com/divmora/code-review-console/issues/101)
+
 ## [0.11.0](https://github.com/divmora/code-review-console/compare/v0.10.0...v0.11.0) (2026-11-23)
 
 
