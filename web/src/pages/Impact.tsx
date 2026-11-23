@@ -136,6 +136,10 @@ export default function ImpactPage() {
     : [];
   const shown = d?.range === "all" ? pts.slice(Math.max(0, pts.findIndex((p) => (p as any).reviews))) : pts;
   const scoreAvg = d ? Object.fromEntries(scoreKinds.map(([k]) => [k, avg({ bucket: "", ...d }, k)])) : {};
+  // The export link uses the range from the fixed list above, never text
+  // read back from the page.
+  const knownRange = ranges.find(([v]) => v === range)?.[0] ?? "30d";
+  const exportURL = (format: "csv" | "json") => "/admin/api/impact/export?" + new URLSearchParams({ range: knownRange, format }).toString();
   const sevSplit = d ? severities.filter(([k]) => d.by_severity[k]).map(([k, label]) => `${fmtNum(d.by_severity[k])} ${label.toLowerCase()}`).join(" · ") : "";
 
   return (
@@ -158,10 +162,10 @@ export default function ImpactPage() {
         {licensed && (
           <>
             <Button asChild variant="outline" size="sm">
-              <a href={`/admin/api/impact/export?range=${range}&format=csv`}>Export CSV</a>
+              <a href={exportURL("csv")}>Export CSV</a>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <a href={`/admin/api/impact/export?range=${range}&format=json`}>Export JSON</a>
+              <a href={exportURL("json")}>Export JSON</a>
             </Button>
           </>
         )}
