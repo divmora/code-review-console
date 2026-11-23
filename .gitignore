@@ -14,3 +14,7 @@ coverage.html
 *.kubeconfig
 web/node_modules/
 web/dist/
+# The admin UI is built from web/ (make web) and embedded at build time;
+# only the placeholder that keeps go:embed compiling is committed.
+/internal/admin/ui/*
+!/internal/admin/ui/.keep

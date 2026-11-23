@@ -7,24 +7,34 @@ on:
     branches: [ "main" ]
 
 jobs:
+  # Like the org's go-ci workflow, with the admin UI built first: it isn't
+  # committed, and the binary (and the admin tests) embed it.
   ci:
-    uses: divmora/.github/.github/workflows/go-ci.yml@main
-    with:
-      go-version: '1.27'
-
-  # The admin UI's build output is committed (the binary embeds it), so
-  # check it type-checks and matches web/src.
-  web:
+    name: Code Quality & Tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # renovate: datasource=github-releases depName=golangci/golangci-lint
+      GOLANGCI_LINT_VERSION: v2.15.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: make web
-      - name: Committed build is up to date
-        run: git diff --exit-code -- internal/admin/ui || (echo "::error::run 'make web' and commit internal/admin/ui" && exit 1)
+      - name: Build the admin UI (type-checks it too)
+        run: make web
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: true
+      - name: Run Linters
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          install-mode: goinstall
+          args: --timeout=5m
+      - name: Run Unit Tests
+        run: go test ./... -v

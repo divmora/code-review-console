@@ -5,6 +5,14 @@
 # can bump it.
 FROM ghcr.io/divmora/code-review-bot:0.5.0 AS bot
 
+# The admin UI (web/) is built here and embedded by the Go build below.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -13,6 +21,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=web /src/internal/admin/ui ./internal/admin/ui
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags "-s -w -X github.com/divmora/code-review-console/internal/version.Version=${VERSION}" \
     -o /out/code-review-console ./cmd/console
