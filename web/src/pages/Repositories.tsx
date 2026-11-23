@@ -173,7 +173,7 @@ export default function Repositories() {
             <TableBody>
               {list.map((r) => {
                 const e = r.effective;
-                const flags = [e.require_reviewer && "reviewer required", e.skip_branch_sync && "skips branch syncs", e.score_labels && "score labels", e.commit_status && "commit status"].filter(Boolean);
+                const flags = [e.require_reviewer && "reviewer required", e.skip_branch_sync && "skips branch syncs", e.score_labels && "score labels", e.commit_status && "commit status", e.approve && "approves when it passes"].filter(Boolean);
                 return (
                   <TableRow key={r.id}>
                     <TableCell className="w-44 pl-4 align-top whitespace-normal">

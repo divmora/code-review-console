@@ -174,7 +174,7 @@ func (m *Memory) CreateRule(_ context.Context, in store.Rule, actor string) (*st
 		r = &store.Rule{ID: m.nextID, Platform: p, Host: h, Pattern: pattern}
 		m.rules[r.ID] = r
 	}
-	r.Enabled, r.RequireReviewer, r.SkipBranchSync, r.ScoreLabels, r.CommitStatus = in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus
+	r.Enabled, r.RequireReviewer, r.SkipBranchSync, r.ScoreLabels, r.CommitStatus, r.Approve = in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus, in.Approve
 	r.Settings, r.UpdatedBy, r.UpdatedAt = in.Settings, actor, time.Now()
 	m.addAudit(actor, "rule.create", p+":"+h+"/"+pattern, map[string]any{"enabled": in.Enabled})
 	c := *r
@@ -188,7 +188,7 @@ func (m *Memory) UpdateRule(_ context.Context, id int64, in store.Rule, actor st
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	r.Enabled, r.RequireReviewer, r.SkipBranchSync, r.ScoreLabels, r.CommitStatus = in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus
+	r.Enabled, r.RequireReviewer, r.SkipBranchSync, r.ScoreLabels, r.CommitStatus, r.Approve = in.Enabled, in.RequireReviewer, in.SkipBranchSync, in.ScoreLabels, in.CommitStatus, in.Approve
 	r.Settings, r.UpdatedBy, r.UpdatedAt = in.Settings, actor, time.Now()
 	m.addAudit(actor, "rule.update", r.Platform+":"+r.Host+"/"+r.Pattern, map[string]any{"enabled": in.Enabled})
 	c := *r

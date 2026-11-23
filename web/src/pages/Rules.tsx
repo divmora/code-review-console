@@ -10,13 +10,14 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Flag = "enabled" | "require_reviewer" | "skip_branch_sync" | "score_labels" | "commit_status";
+type Flag = "enabled" | "require_reviewer" | "skip_branch_sync" | "score_labels" | "commit_status" | "approve";
 const flags: [Flag, string, string, string][] = [
   ["enabled", "Reviews", "Enabled", "Disabled"],
   ["require_reviewer", "Reviewer required", "On", "Off"],
   ["skip_branch_sync", "Branch syncs", "Skip", "Review"],
   ["score_labels", "Score labels", "On", "Off"],
   ["commit_status", "Commit status", "On", "Off"],
+  ["approve", "Approve MRs", "On", "Off"],
 ];
 const label = (r: Rule) => r.pattern || "Whole host";
 

@@ -423,6 +423,7 @@ type ruleReq struct {
 	SkipBranchSync  *bool            `json:"skip_branch_sync"`
 	ScoreLabels     *bool            `json:"score_labels"`
 	CommitStatus    *bool            `json:"commit_status"`
+	Approve         *bool            `json:"approve"`
 	Settings        config.Overrides `json:"settings"`
 }
 
@@ -450,7 +451,7 @@ func (a *Admin) apiCreateRule(w http.ResponseWriter, r *http.Request, s *store.S
 	}
 	rule, err := a.store.CreateRule(r.Context(), store.Rule{Platform: platform, Host: host, Pattern: pattern, Enabled: req.Enabled,
 		RequireReviewer: req.RequireReviewer, SkipBranchSync: req.SkipBranchSync, ScoreLabels: req.ScoreLabels,
-		CommitStatus: req.CommitStatus, Settings: req.Settings}, s.Email)
+		CommitStatus: req.CommitStatus, Approve: req.Approve, Settings: req.Settings}, s.Email)
 	if err != nil {
 		a.serverError(w, err)
 		return
@@ -465,6 +466,7 @@ type ruleUpdateReq struct {
 	SkipBranchSync  *bool            `json:"skip_branch_sync"`
 	ScoreLabels     *bool            `json:"score_labels"`
 	CommitStatus    *bool            `json:"commit_status"`
+	Approve         *bool            `json:"approve"`
 	Settings        config.Overrides `json:"settings"`
 }
 
@@ -486,7 +488,7 @@ func (a *Admin) apiUpdateRule(w http.ResponseWriter, r *http.Request, s *store.S
 		return
 	}
 	rule, err := a.store.UpdateRule(r.Context(), id, store.Rule{Enabled: req.Enabled, RequireReviewer: req.RequireReviewer,
-		SkipBranchSync: req.SkipBranchSync, ScoreLabels: req.ScoreLabels, CommitStatus: req.CommitStatus, Settings: req.Settings}, s.Email)
+		SkipBranchSync: req.SkipBranchSync, ScoreLabels: req.ScoreLabels, CommitStatus: req.CommitStatus, Approve: req.Approve, Settings: req.Settings}, s.Email)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "rule not found"})
 		return
@@ -528,6 +530,10 @@ type settingsReq struct {
 	SyncSourceBranches    []string         `json:"sync_source_branches"`
 	ScoreLabels           bool             `json:"score_labels"`
 	CommitStatus          bool             `json:"commit_status"`
+	Approve               bool             `json:"approve"`
+	ApproveBlock          string           `json:"approve_block"`
+	ApproveMinScore       int              `json:"approve_min_score"`
+	ApproveWithdraw       *bool            `json:"approve_withdraw"` // nil: on
 	ReviewRetentionDays   int              `json:"review_retention_days"`
 	LearningsEnabled      bool             `json:"learnings_enabled"`
 	DailyTokenBudget      int64            `json:"daily_token_budget"`
@@ -567,6 +573,8 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		Allowlist: &req.Allowlist, RequireReviewer: &req.RequireReviewer, ReviewDefaults: req.ReviewDefaults,
 		SkipBranchSync: &req.SkipBranchSync, SyncSourceBranches: cleanList(req.SyncSourceBranches),
 		ScoreLabels: &req.ScoreLabels, CommitStatus: &req.CommitStatus,
+		Approve: &req.Approve, ApproveBlock: strings.ToLower(strings.TrimSpace(req.ApproveBlock)), ApproveMinScore: &req.ApproveMinScore,
+		ApproveWithdraw:  req.ApproveWithdraw,
 		LearningsEnabled: &req.LearningsEnabled, LearningsAutoActivate: &req.LearningsAutoActivate,
 		DailyTokenBudget: &req.DailyTokenBudget, RepoDailyTokenBudget: &req.RepoDailyTokenBudget,
 		ReviewRetentionDays: intOr(req.ReviewRetentionDays, 180), WebhookRetentionDays: intOr(req.WebhookRetentionDays, 14),

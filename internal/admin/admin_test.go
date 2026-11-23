@@ -1461,3 +1461,28 @@ func TestAdminSectionsMatchApp(t *testing.T) {
 		}
 	}
 }
+
+func TestApprovalSettingsAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	code, body := e.do(t, "GET", "/admin/api/settings", "", nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"approve":false`)) || !bytes.Contains(body, []byte(`"approve_block":"major"`)) || !bytes.Contains(body, []byte(`"approve_withdraw":true`)) {
+		t.Fatalf("defaults: %d %s", code, body)
+	}
+	code, body = e.do(t, "PUT", "/admin/api/settings", csrf, map[string]any{"approve": true, "approve_block": "Critical", "approve_min_score": 70})
+	if code != 200 || !bytes.Contains(body, []byte(`"approve":true`)) || !bytes.Contains(body, []byte(`"approve_block":"critical"`)) ||
+		!bytes.Contains(body, []byte(`"approve_min_score":70`)) || !bytes.Contains(body, []byte(`"approve_withdraw":true`)) {
+		t.Errorf("saved (withdraw left out stays on): %d %s", code, body)
+	}
+	for _, bad := range []map[string]any{{"approve_block": "high"}, {"approve_min_score": 150}} {
+		if code, _ := e.do(t, "PUT", "/admin/api/settings", csrf, bad); code != 400 {
+			t.Errorf("%v must be rejected: %d", bad, code)
+		}
+	}
+	code, body = e.do(t, "POST", "/admin/api/rules", csrf, map[string]any{"platform": "gitlab", "host": "gitlab.com", "pattern": "acme", "approve": false})
+	if code != 201 || !bytes.Contains(body, []byte(`"approve":false`)) {
+		t.Errorf("a rule can switch approval off: %d %s", code, body)
+	}
+}

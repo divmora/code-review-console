@@ -142,3 +142,20 @@ func TestResolveLevels(t *testing.T) {
 		t.Errorf("another host has its own rules: %+v", c)
 	}
 }
+
+func TestResolveApprove(t *testing.T) {
+	on, off := true, false
+	rules := []Rule{
+		{ID: 1, Platform: "gitlab", Host: "gl.x", Approve: &on},                            // the whole host approves
+		{ID: 2, Platform: "gitlab", Host: "gl.x", Pattern: "acme/payments", Approve: &off}, // except payments
+	}
+	if a := Resolve(Repo{Platform: "gitlab", Host: "gl.x", Path: "acme/web"}, rules, Base{}); !a.Approve || a.ApproveSource != "rule host gl.x" {
+		t.Errorf("host rule: %+v", a)
+	}
+	if a := Resolve(Repo{Platform: "gitlab", Host: "gl.x", Path: "acme/payments/api"}, rules, Base{}); a.Approve || a.ApproveSource != "rule acme/payments" {
+		t.Errorf("group rule beats the host rule: %+v", a)
+	}
+	if a := Resolve(Repo{Platform: "gitlab", Host: "gl.y", Path: "x/y"}, rules, Base{Approve: true}); !a.Approve || a.ApproveSource != "settings" {
+		t.Errorf("no rule: the settings decide: %+v", a)
+	}
+}

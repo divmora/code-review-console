@@ -1047,3 +1047,26 @@ func TestImpact(t *testing.T) {
 		t.Errorf("backfilled: %v %+v", err, im)
 	}
 }
+
+func TestRuleApprove(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	on, off := true, false
+	r, err := p.CreateRule(ctx, Rule{Platform: "gitlab", Host: "approve.example.com", Pattern: "acme"}, "a@x")
+	if err != nil || r.Approve != nil {
+		t.Fatalf("unset stays nil: %v %+v", err, r)
+	}
+	if r, err = p.UpdateRule(ctx, r.ID, Rule{Approve: &on}, "a@x"); err != nil || r.Approve == nil || !*r.Approve {
+		t.Fatalf("on: %v %+v", err, r)
+	}
+	if r, err = p.UpdateRule(ctx, r.ID, Rule{Approve: &off}, "a@x"); err != nil || r.Approve == nil || *r.Approve {
+		t.Fatalf("off: %v %+v", err, r)
+	}
+	rules, _ := p.ListRules(ctx)
+	for _, x := range rules {
+		if x.ID == r.ID && (x.Approve == nil || *x.Approve) {
+			t.Errorf("listed: %+v", x)
+		}
+	}
+	_ = p.DeleteRule(ctx, r.ID, "a@x")
+}

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -27,7 +28,9 @@ type Task struct {
 	// ScoreLabels and CommitStatus pass --score-labels / --commit-status.
 	ScoreLabels  bool
 	CommitStatus bool
-	Question     string
+	// Approval passes --approve and its rule (nil: no approval).
+	Approval *Approval
+	Question string
 
 	// Overrides are admin settings, passed as CODEREVIEW_OVERRIDES.
 	Overrides any
@@ -55,6 +58,11 @@ type Result struct {
 	Answer    string // for ask
 	// Scores are the review's scores (nil when the CLI gave none).
 	Scores *Scores
+	// Approval is what the CLI did with the bot's approval (approved,
+	// already_approved, withdrawn, not_approved, unchanged, failed; empty
+	// without --approve), and ApprovalReason why.
+	Approval       string
+	ApprovalReason string
 	// Unreadable is set when the CLI succeeded but its result couldn't be
 	// read in full (see parseMerged); the counts are a best effort.
 	Unreadable string
@@ -67,6 +75,21 @@ type Scores struct {
 	Quality         int `json:"quality"`
 	Security        int `json:"security"`
 	Maintainability int `json:"maintainability"`
+}
+
+// Approval is the bot's approval rule (see settings.Stored.Approve).
+type Approval struct {
+	// Block is the lowest severity that blocks approval, or "none".
+	Block    string
+	MinScore int
+	Withdraw bool
+}
+
+func firstNonEmpty(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 // Executor runs tasks.
@@ -97,6 +120,12 @@ func Args(t Task) ([]string, error) {
 		}
 		if t.CommitStatus {
 			args = append(args, "--commit-status")
+		}
+		if a := t.Approval; a != nil {
+			args = append(args, "--approve", "--approve-block", firstNonEmpty(a.Block, "none"), "--approve-min-score", strconv.Itoa(a.MinScore))
+			if a.Withdraw {
+				args = append(args, "--approve-withdraw")
+			}
 		}
 		return args, nil
 	case "validate":
@@ -171,6 +200,8 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 		Errors     []any           `json:"errors"`
 		TooLarge   bool            `json:"too_large"`
 		Scores     *Scores         `json:"scores"`
+		Approval   string          `json:"approval"`
+		ApprovalR  string          `json:"approval_reason"`
 		Usage      struct {
 			InputTokens  int `json:"InputTokens"`
 			OutputTokens int `json:"OutputTokens"`
@@ -186,6 +217,7 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 	res.Posted, res.Rejected, res.Files, res.Model = v.Posted, v.Rejected, len(v.Reviewed), v.Model
 	res.TokensIn, res.TokensOut = v.Usage.InputTokens, v.Usage.OutputTokens
 	res.Partial, res.TooLarge = len(v.Errors) > 0, v.TooLarge
+	res.Approval, res.ApprovalReason = v.Approval, v.ApprovalR
 	if sc := v.Scores; !res.Skipped && sc != nil && in1to100(sc.Quality) && in1to100(sc.Security) && in1to100(sc.Maintainability) {
 		res.Scores = sc
 	}

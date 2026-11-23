@@ -81,6 +81,12 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
               ))}
             </div>
           </div>
+          {r.approval && (
+            <p className="text-muted-foreground">
+              Approval: <span className="text-foreground">{({ approved: "approved", already_approved: "already approved", withdrawn: "withdrawn", not_approved: "not approved", unchanged: "left as it was", failed: "failed" } as Record<string, string>)[r.approval] || r.approval}</span>
+              {r.approval_reason ? " — " + r.approval_reason : ""}
+            </p>
+          )}
           {v?.ran && (
             <p className="text-muted-foreground">
               Verification ({v.model}): {v.confirmed || 0} confirmed · {v.false_positives || 0} removed · {v.questions || 0} questions

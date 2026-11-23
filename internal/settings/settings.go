@@ -44,6 +44,15 @@ type Stored struct {
 	// ScoreLabels and CommitStatus control what a review posts.
 	ScoreLabels  *bool `json:"score_labels,omitempty"`
 	CommitStatus *bool `json:"commit_status,omitempty"`
+	// Approve has the bot approve merge requests whose review passes:
+	// no finding at or above ApproveBlock ("none": whatever it found)
+	// and, with ApproveMinScore above 0, every score at least that high.
+	// ApproveWithdraw removes the bot's approval when a later review
+	// doesn't pass. Rules can turn Approve on or off.
+	Approve         *bool  `json:"approve,omitempty"`
+	ApproveBlock    string `json:"approve_block,omitempty"`
+	ApproveMinScore *int   `json:"approve_min_score,omitempty"`
+	ApproveWithdraw *bool  `json:"approve_withdraw,omitempty"`
 	// Retention in days for review history and webhook deliveries.
 	ReviewRetentionDays *int `json:"review_retention_days,omitempty"`
 	// Learnings: capture team decisions from replies, and whether new ones
@@ -68,6 +77,10 @@ type Stored struct {
 	SessionIdleMinutes *int `json:"session_idle_minutes,omitempty"`
 }
 
+// DefaultApproveBlock is the severity that blocks the bot's approval until
+// one is saved: a major or critical finding.
+const DefaultApproveBlock = "major"
+
 // DefaultSessionIdleMinutes is the idle timeout until one is saved.
 const DefaultSessionIdleMinutes = 60
 
@@ -87,6 +100,10 @@ type Effective struct {
 	SyncSourceBranches    []string          `json:"sync_source_branches"`
 	ScoreLabels           bool              `json:"score_labels"`
 	CommitStatus          bool              `json:"commit_status"`
+	Approve               bool              `json:"approve"`
+	ApproveBlock          string            `json:"approve_block"`
+	ApproveMinScore       int               `json:"approve_min_score"`
+	ApproveWithdraw       bool              `json:"approve_withdraw"`
 	ReviewRetentionDays   int               `json:"review_retention_days"`
 	LearningsEnabled      bool              `json:"learnings_enabled"`
 	DailyTokenBudget      int64             `json:"daily_token_budget"`
@@ -128,6 +145,7 @@ func (s *Service) Defaults() Effective {
 		Allowlist: s.cfg.Repos.Allowlist, RequireReviewer: s.cfg.Repos.RequireReviewer,
 		SkipBranchSync: skip, SyncSourceBranches: append([]string{}, s.cfg.Repos.SyncSourceBranches...),
 		ScoreLabels: s.cfg.Repos.ScoreLabels, CommitStatus: s.cfg.Repos.CommitStatus,
+		ApproveBlock: DefaultApproveBlock, ApproveWithdraw: true,
 		ReviewRetentionDays: days(s.cfg.Server.ReviewRetention, 180),
 		LearningsEnabled:    true, LearningsAutoActivate: false,
 		WebhookRetentionDays: days(s.cfg.Server.WebhookRetention, 14),
@@ -190,6 +208,12 @@ func (s *Service) resolve(st Stored) Effective {
 	pick("skip_branch_sync", &e.SkipBranchSync, st.SkipBranchSync)
 	pick("score_labels", &e.ScoreLabels, st.ScoreLabels)
 	pick("commit_status", &e.CommitStatus, st.CommitStatus)
+	pick("approve", &e.Approve, st.Approve)
+	pick("approve_withdraw", &e.ApproveWithdraw, st.ApproveWithdraw)
+	e.Source["approve_block"] = "config"
+	if st.ApproveBlock != "" {
+		e.ApproveBlock, e.Source["approve_block"] = st.ApproveBlock, "database"
+	}
 	pick("learnings_enabled", &e.LearningsEnabled, st.LearningsEnabled)
 	for _, b := range []struct {
 		name string
@@ -208,6 +232,7 @@ func (s *Service) resolve(st Stored) Effective {
 			*dst, e.Source[name] = *v, "database"
 		}
 	}
+	pickInt("approve_min_score", &e.ApproveMinScore, st.ApproveMinScore)
 	pickInt("review_retention_days", &e.ReviewRetentionDays, st.ReviewRetentionDays)
 	pickInt("webhook_retention_days", &e.WebhookRetentionDays, st.WebhookRetentionDays)
 	e.Source["sync_source_branches"] = "config"
@@ -273,7 +298,7 @@ func (e Effective) WebhookRetention() time.Duration {
 // Base is the global level for store.Resolve.
 func (e Effective) Base() store.Base {
 	return store.Base{Allowlist: e.Allowlist, RequireReviewer: e.RequireReviewer, SkipBranchSync: e.SkipBranchSync,
-		ScoreLabels: e.ScoreLabels, CommitStatus: e.CommitStatus, ReviewDefaults: e.ReviewDefaults}
+		ScoreLabels: e.ScoreLabels, CommitStatus: e.CommitStatus, Approve: e.Approve, ReviewDefaults: e.ReviewDefaults}
 }
 
 // SeedActor is the audit actor for the initial copy of the config file.
@@ -344,6 +369,14 @@ func (st Stored) Validate(profiles map[string]bool, haveStore bool) error {
 		if v != nil && *v < 0 {
 			return errors.New("token budgets cannot be negative (0 means no limit)")
 		}
+	}
+	switch st.ApproveBlock {
+	case "", "none", "critical", "major", "minor", "nitpick":
+	default:
+		return fmt.Errorf("approve_block %q: want critical, major, minor, nitpick or none", st.ApproveBlock)
+	}
+	if v := st.ApproveMinScore; v != nil && (*v < 0 || *v > 100) {
+		return errors.New("approve_min_score: want 0 to 100 (0 ignores the scores)")
 	}
 	if len(st.SyncSourceBranches) > 50 {
 		return errors.New("at most 50 sync source branches")

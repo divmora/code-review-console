@@ -161,3 +161,22 @@ func TestArgsPostingFlags(t *testing.T) {
 		t.Error("flags must be opt-in")
 	}
 }
+
+func TestArgsApproval(t *testing.T) {
+	args, _ := Args(Task{Kind: "review", URL: "u", Post: true, Approval: &Approval{Block: "major", MinScore: 80, Withdraw: true}})
+	if got := strings.Join(args, " "); !strings.Contains(got, "--approve --approve-block major --approve-min-score 80 --approve-withdraw") {
+		t.Errorf("approval flags: %s", got)
+	}
+	args, _ = Args(Task{Kind: "review", URL: "u", Post: true, Approval: &Approval{}})
+	if got := strings.Join(args, " "); !strings.Contains(got, "--approve-block none --approve-min-score 0") || strings.Contains(got, "--approve-withdraw") {
+		t.Errorf("approve whatever was found, without withdrawing: %s", got)
+	}
+	args, _ = Args(Task{Kind: "review", URL: "u", Post: true})
+	if strings.Contains(strings.Join(args, " "), "--approve") {
+		t.Error("approval is opt-in")
+	}
+	res, err := ParseOutput("review", []byte(`{"posted":0,"approval":"withdrawn","approval_reason":"1 finding(s) at major or above"}`))
+	if err != nil || res.Approval != "withdrawn" || res.ApprovalReason == "" {
+		t.Errorf("approval outcome: %v %+v", err, res)
+	}
+}
