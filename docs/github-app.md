@@ -15,6 +15,8 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 The shared URL `https://<your-host>/webhooks/github` was removed in 0.12. If your app still points there, add a webhook in the console and change the app's **Webhook URL** and **Webhook secret** to the ones it shows.
 
+The webhook's URL decides which GitHub host a delivery belongs to, and its jobs run with that host's credentials. A delivery whose repository URL is on another GitHub host configured in the console is refused (`403`). A repository URL on a host no other GitHub host uses (an API reached through a proxy, GitHub Enterprise Cloud's `<name>.ghe.com` for `api.<name>.ghe.com`) is fine.
+
 Name the app after your bot name (default `codereview`) so `@codereview` mentions match. If the app slug differs, set the GitHub host's bot name (or the default under Settings) to the slug.
 
 After creating it, note the **App ID** and generate a **private key** (`.pem`).

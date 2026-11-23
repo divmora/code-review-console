@@ -30,17 +30,21 @@ const (
 
 // queuedPayload is what it takes to queue a job again.
 type queuedPayload struct {
-	Kind         string            `json:"kind"` // review, answer, help
-	Platform     string            `json:"platform"`
-	Host         string            `json:"host"`
-	Repo         string            `json:"repo"`
-	Number       int               `json:"number"`
-	Installation int64             `json:"installation,omitempty"` // GitHub App
-	Full         bool              `json:"full,omitempty"`
-	Auto         bool              `json:"auto,omitempty"`
-	By           string            `json:"by,omitempty"`
-	Overrides    *config.Overrides `json:"overrides,omitempty"`
-	Question     string            `json:"question,omitempty"`
+	Kind         string `json:"kind"` // review, answer, help
+	Platform     string `json:"platform"`
+	Host         string `json:"host"`
+	Repo         string `json:"repo"`
+	Number       int    `json:"number"`
+	Installation int64  `json:"installation,omitempty"` // GitHub App
+	// HostID is the code host that received the event: a restored job runs
+	// with its credentials, whatever host the PR's URL names (issue #127).
+	// 0 in jobs saved before this field: they're matched by Host.
+	HostID    int64             `json:"host_id,omitempty"`
+	Full      bool              `json:"full,omitempty"`
+	Auto      bool              `json:"auto,omitempty"`
+	By        string            `json:"by,omitempty"`
+	Overrides *config.Overrides `json:"overrides,omitempty"`
+	Question  string            `json:"question,omitempty"`
 	// Meta is shown in history if the job was interrupted.
 	Trigger string `json:"trigger,omitempty"`
 }
@@ -50,7 +54,7 @@ func (p queuedPayload) ref() vcs.Ref {
 }
 
 func payloadFor(kind string, tgt target, ref vcs.Ref) queuedPayload {
-	return queuedPayload{Kind: kind, Platform: ref.Platform, Host: ref.Host, Repo: ref.Repo, Number: ref.Number, Installation: tgt.installation}
+	return queuedPayload{Kind: kind, Platform: ref.Platform, Host: ref.Host, Repo: ref.Repo, Number: ref.Number, Installation: tgt.installation, HostID: tgt.host.ID}
 }
 
 // submit queues j and, with a database, saves it first so it survives a
@@ -177,6 +181,21 @@ func (s *Server) targetFor(platform, host string, installation int64) (target, e
 	if !ok {
 		return target{}, fmt.Errorf("no enabled %s host %s any more", platform, host)
 	}
+	return s.targetOf(h, installation)
+}
+
+// targetByID is the target of the enabled code host with this ID.
+func (s *Server) targetByID(platform string, id, installation int64) (target, error) {
+	for _, h := range s.hosts.Enabled(platform) {
+		if h.ID == id {
+			return s.targetOf(h, installation)
+		}
+	}
+	return target{}, fmt.Errorf("no enabled %s host #%d any more", platform, id)
+}
+
+func (s *Server) targetOf(h hosts.Host, installation int64) (target, error) {
+	platform := h.Platform
 	switch platform {
 	case hosts.GitHub:
 		return s.githubTarget(h, installation), nil
@@ -189,7 +208,13 @@ func (s *Server) targetFor(platform, host string, installation int64) (target, e
 }
 
 func (s *Server) requeue(q store.QueuedJob, p queuedPayload) error {
-	tgt, err := s.targetFor(p.Platform, p.Host, p.Installation)
+	var tgt target
+	var err error
+	if p.HostID != 0 {
+		tgt, err = s.targetByID(p.Platform, p.HostID, p.Installation)
+	} else {
+		tgt, err = s.targetFor(p.Platform, p.Host, p.Installation)
+	}
 	if err != nil {
 		return err
 	}

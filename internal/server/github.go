@@ -119,6 +119,21 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		host = strings.ToLower(u.Host)
 	}
 	hm.Auth = "signature"
+	// The webhook chooses the host, not the payload (issue #127): a
+	// delivery signed with this host's secret can't speak for another
+	// configured GitHub host. A web host no other host uses (a proxy,
+	// GitHub Enterprise Cloud's <name>.ghe.com for api.<name>.ghe.com) is
+	// fine: the job still runs with this host's credentials.
+	if host != strings.ToLower(h.Host) {
+		for _, other := range s.hosts.Enabled(hosts.GitHub) {
+			if other.ID != h.ID && strings.EqualFold(other.Host, host) {
+				hm.Reason = "the repository's URL is on " + host + ", another configured GitHub host: this webhook belongs to " + h.Host
+				s.logger.Warn("github webhook names another configured host", "host", h.Host, "payload_host", host, "delivery", hm.Delivery)
+				http.Error(w, "repository belongs to another host", http.StatusForbidden)
+				return
+			}
+		}
+	}
 	event := r.Header.Get("X-GitHub-Event")
 	if event == "ping" {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pong"})
