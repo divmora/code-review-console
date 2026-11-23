@@ -175,6 +175,8 @@ func hostsImport(ctx context.Context, args []string) error {
 	}
 	if dryRun {
 		fmt.Println("\ndry run: nothing was written")
+	} else {
+		fmt.Println("\nRunning consoles (0.12 and later) apply these changes within 5 seconds; older ones need a restart.")
 	}
 	return nil
 }

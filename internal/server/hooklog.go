@@ -103,6 +103,9 @@ func (s *Server) endpointHost(w http.ResponseWriter, r *http.Request, platform s
 	hm := hookMetaOf(r.Context())
 	hm.Endpoint = truncate(id, 64)
 	h, e, err := s.hosts.Route(platform, id)
+	if err != nil && s.refreshOnMiss(r.Context()) {
+		h, e, err = s.hosts.Route(platform, id) // added, enabled or rotated elsewhere just now
+	}
 	if err != nil {
 		hm.Auth, hm.Reason = "failed", err.Error()
 		if e.ID != "" {

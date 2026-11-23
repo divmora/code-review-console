@@ -934,3 +934,41 @@ func TestReviewScores(t *testing.T) {
 		}
 	}
 }
+
+func TestHostsVersion(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	v := func() int64 {
+		t.Helper()
+		n, err := p.HostsVersion(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	v0 := v()
+	h, err := p.PutHost(ctx, HostRow{Platform: "gitlab", Host: "version.example.com", BaseURL: "https://version.example.com", Enabled: true, Config: json.RawMessage(`{}`)}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1 := v()
+	if v1 <= v0 {
+		t.Errorf("a host write bumps the version: %d -> %d", v0, v1)
+	}
+	if _, err := p.PutWebhookEndpoint(ctx, WebhookEndpoint{ID: "6f1c0d5e-0000-4000-8000-00000000a101", HostID: h.ID, Name: "x", Enabled: true}, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	v2 := v()
+	if v2 <= v1 {
+		t.Errorf("a webhook write bumps the version: %d -> %d", v1, v2)
+	}
+	if v() != v2 {
+		t.Error("reading doesn't bump it")
+	}
+	if err := p.DeleteHost(ctx, h.ID, "a@x"); err != nil { // its webhooks go with it
+		t.Fatal(err)
+	}
+	if v3 := v(); v3 <= v2 {
+		t.Errorf("a delete bumps the version: %d -> %d", v2, v3)
+	}
+}

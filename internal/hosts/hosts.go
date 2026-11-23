@@ -207,7 +207,11 @@ type Registry struct {
 	// shared are hosts that still store shared-URL webhook secrets (see
 	// dropSharedSecrets).
 	shared []int64
-	notes  []string
+	// version is the store's HostsVersion at the last load (see Refresh);
+	// refreshMu keeps refreshes one at a time.
+	version   int64
+	refreshMu sync.Mutex
+	notes     []string
 	// expiry is what is known about each host's token expiry (by ID);
 	// checks the last Test result.
 	expiry map[int64]TokenExpiry
@@ -294,7 +298,15 @@ func (r *Registry) addNote(n string) { r.notes = append(r.notes, n) }
 func (r *Registry) Load(ctx context.Context) error {
 	list, mode := FromConfig(r.cfg), "config"
 	var shared []int64
+	var version int64
 	if r.st != nil {
+		// Read the version first: a write during the load bumps it again,
+		// so the next Refresh reloads.
+		v, err := r.st.HostsVersion(ctx)
+		if err != nil {
+			return err
+		}
+		version = v
 		rows, err := r.st.ListHosts(ctx)
 		if err != nil {
 			return err
@@ -331,9 +343,38 @@ func (r *Registry) Load(ctx context.Context) error {
 		}
 	}
 	r.mu.Lock()
-	r.list, r.mode, r.endpoints, r.shared = list, mode, eps, shared
+	r.list, r.mode, r.endpoints, r.shared, r.version = list, mode, eps, shared, version
 	r.mu.Unlock()
 	return nil
+}
+
+// Refresh reloads the hosts and webhooks when the database has changed
+// since the last load: a write by another replica or by "console hosts
+// import". It costs one small query when nothing changed. changed reports
+// a reload (OnChange has run).
+func (r *Registry) Refresh(ctx context.Context) (changed bool, err error) {
+	if r.st == nil || r.box == nil {
+		return false, nil
+	}
+	r.refreshMu.Lock()
+	defer r.refreshMu.Unlock()
+	v, err := r.st.HostsVersion(ctx)
+	if err != nil {
+		return false, err
+	}
+	r.mu.RLock()
+	same := v == r.version
+	r.mu.RUnlock()
+	if same {
+		return false, nil
+	}
+	if err := r.Load(ctx); err != nil {
+		return false, err
+	}
+	if r.OnChange != nil {
+		r.OnChange()
+	}
+	return true, nil
 }
 
 // Mode is "database" (managed in the admin panel) or "config" (read-only).

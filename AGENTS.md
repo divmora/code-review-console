@@ -67,6 +67,10 @@ Changing this contract means changing the bot's CLI too; keep them in step.
   the admin panel) is routed by the URL and verified against that endpoint's secrets only (Host.Hook,
   set by Registry.Route); it never trusts headers or the payload to choose. There is no shared
   `/webhooks/<platform>` URL and hosts store no webhook secrets of their own (removed in 0.12).
+- The host registry is an in-memory copy. Every write to hosts or webhook_endpoints bumps
+  hosts_version (a trigger, migration 18); Registry.Refresh reloads when it moved. The server checks
+  every 5 seconds (hostsLoop) and before answering an unknown webhook URL (refreshOnMiss, at most
+  once a second), so other replicas' writes and `console hosts import` apply without a restart.
 - Webhooks authenticate before parsing: a delivery without an auth header is rejected before its body
   is read (a GitLab token is checked before reading at all), and a rejected delivery's history record
   holds transport facts only (no project, sender or number). Saved rejections are capped per minute.
