@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type Hook = {
   id: number; received_at: string; platform: string; host: string; project: string; event: string; kind: string;
-  action: string; number: number; sender: string; outcome: string; reason: string; auth: string; endpoint: string;
+  action: string; number: number; sender: string; outcome: string; reason: string; auth: string; endpoint: string; source_ip?: string;
 };
 const outcomes = ["queued", "ignored", "duplicate", "rejected", "error"];
 const badge = (o: string) => ({ queued: "on", rejected: "off", error: "off" } as Record<string, "on" | "off">)[o] || "idle";
@@ -102,7 +102,7 @@ export default function Webhooks() {
                     <TableCell className="reason min-w-64 align-top text-sm whitespace-normal text-muted-foreground">{e.reason}</TableCell>
                     <TableCell className="pr-4 align-top text-muted-foreground">
                       <div>{e.endpoint ? hookNames[e.endpoint] || "unknown webhook" : "shared URL"}</div>
-                      <Sub>{e.auth}</Sub>
+                      <Sub>{e.auth}{e.source_ip ? " · from " + e.source_ip : ""}</Sub>
                     </TableCell>
                   </TableRow>
                 );

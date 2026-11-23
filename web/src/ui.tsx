@@ -268,8 +268,8 @@ export function Chips({ items, empty }: { items: string[]; empty?: string }) {
 }
 
 // Sub is the small second line under a table cell's main text.
-export function Sub({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("mt-0.5 text-xs text-muted-foreground", className)}>{children}</div>;
+export function Sub({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
+  return <div title={title} className={cn("mt-0.5 text-xs text-muted-foreground", className)}>{children}</div>;
 }
 
 export function settingsChips(st: Overrides = {}): string[] {
@@ -392,4 +392,14 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
 export function useReload(): [number, () => void] {
   const [n, setN] = useState(0);
   return [n, useCallback(() => setN((x) => x + 1), [])];
+}
+
+// shortAgent turns a user agent into "Firefox on Linux" (or the start of
+// it when it isn't a known browser, e.g. a script).
+export function shortAgent(ua?: string) {
+  if (!ua) return "";
+  const browser = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS X|Macintosh/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "";
+  if (browser) return os ? browser + " on " + os : browser;
+  return ua.length > 40 ? ua.slice(0, 40) + "…" : ua;
 }

@@ -79,6 +79,7 @@ the same key in an optional config file.
 | Variable | Config file key | |
 |---|---|---|
 | `CODEREVIEW_CONSOLE_ADDR` | `server.addr` | listen address, default `:8080` |
+| `CODEREVIEW_CONSOLE_TRUSTED_PROXIES` | `server.trusted_proxies` | comma-separated IPs or CIDR ranges of the load balancer or ingress in front; see [Client addresses](#client-addresses) |
 | `CODEREVIEW_CONSOLE_BASE_URL` | `admin.base_url` | public URL (sign-in redirect, webhook URLs) |
 | `CODEREVIEW_CONSOLE_ADMIN_ENABLED` | `admin.enabled` | default true once an OIDC issuer is set |
 | `CODEREVIEW_CONSOLE_SESSION_TTL` | `admin.session_ttl` | default `12h` |
@@ -274,6 +275,18 @@ The page shows when the token expires and warns a week before. An expired link t
 ask an admin for a new one; generating a new token starts a new period and stops the old link.
 An install that had a token before keeps working with it; one without a token is now for admins
 only, until you choose otherwise. When the dashboard is public, consider hiding repository names.
+
+## Client addresses
+
+Sign-ins, denied sign-ins, sign-outs and every audited change record the client's IP address and
+browser (user agent); **Settings → Signed-in admins** shows each session's address, browser and last
+activity; and the **Webhooks** page shows where each delivery, rejected ones included, came from.
+
+Behind a load balancer or ingress, set `CODEREVIEW_CONSOLE_TRUSTED_PROXIES` (`server.trusted_proxies`)
+to its addresses, for example `10.0.0.0/8` for a cluster's pod network. The console then takes the
+client from `X-Forwarded-For`: the right-most address that isn't a trusted proxy, since anything
+further left can be written by the client. Without trusted proxies the header is ignored and the
+connection's address is recorded, which behind a proxy is the proxy itself.
 
 ## Moving code hosts
 

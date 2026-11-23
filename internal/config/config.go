@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/divmora/code-review-console/internal/clientip"
 )
 
 // Config is the console config file.
@@ -254,8 +256,12 @@ func ExpandEnv(data []byte) []byte {
 
 // Server configures the HTTP server and queue.
 type Server struct {
-	Addr    string `yaml:"addr"`
-	Workers int    `yaml:"workers"`
+	Addr string `yaml:"addr"`
+	// TrustedProxies are the load balancers or ingresses in front of the
+	// console (IPs or CIDR ranges). X-Forwarded-For is believed only from
+	// them, to record where sign-ins, changes and webhooks come from.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	Workers        int      `yaml:"workers"`
 	// QueueSize bounds pending jobs; extra webhooks get HTTP 503.
 	QueueSize int `yaml:"queue_size"`
 	// JobTimeout bounds one review.
@@ -581,6 +587,9 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
+	if _, err := clientip.NewResolver(c.Server.TrustedProxies); err != nil {
+		return fmt.Errorf("server.trusted_proxies: %w", err)
+	}
 	switch c.Executor.Type {
 	case "local":
 	case "docker":

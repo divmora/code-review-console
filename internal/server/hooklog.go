@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/store"
 )
@@ -156,6 +157,7 @@ func (s *Server) recordHooks(platform string, h http.HandlerFunc) http.HandlerFu
 			ReceivedAt: start, Platform: m.Platform, Host: m.Host, Project: m.Project, Number: m.Number,
 			Event: m.Event, Kind: m.Kind, Action: m.Action, Sender: m.Sender, Delivery: m.Delivery, Endpoint: m.Endpoint, Auth: m.Auth,
 			Outcome: out, Reason: truncate(reason, 500), Status: cw.status, DurationMS: int(time.Since(start).Milliseconds()),
+			SourceIP: clientip.From(r.Context()).IP,
 		})
 	}
 }

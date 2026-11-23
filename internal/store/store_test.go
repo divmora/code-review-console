@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/config"
 )
 
@@ -636,5 +637,59 @@ func TestMarkSeen(t *testing.T) {
 	_, _ = p.pool.Exec(ctx, `UPDATE webhook_seen SET seen_at = now() - interval '8 days' WHERE key = 'race'`)
 	if n, err := p.PruneSeen(ctx, time.Now().Add(-7*24*time.Hour)); err != nil || n != 1 {
 		t.Errorf("prune: %d %v", n, err)
+	}
+}
+
+func TestClientRecorded(t *testing.T) {
+	p := openTest(t)
+	ctx := clientip.With(context.Background(), clientip.Client{IP: "198.51.100.7", UserAgent: "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0"})
+	if err := p.Audit(ctx, "a@x", "login", "admin", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutSetting(ctx, "k", 1, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Audit(context.Background(), "console", "seed", "x", nil); err != nil {
+		t.Fatal(err)
+	}
+	list, err := p.ListAudit(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 3 || list[0].IP != "" || list[1].IP != "198.51.100.7" || list[2].UserAgent == "" {
+		t.Errorf("audit entries carry the request's client: %+v", list)
+	}
+
+	hash := []byte("session-hash-for-client-test")
+	if err := p.CreateSession(ctx, hash, Session{Subject: "s", Email: "a@x", CSRF: "c", Expires: time.Now().Add(time.Hour), IP: "198.51.100.7", UserAgent: "UA"}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := p.GetSession(ctx, hash)
+	if err != nil || s.IP != "198.51.100.7" || s.UserAgent != "UA" || s.LastSeen.IsZero() {
+		t.Fatalf("session: %+v %v", s, err)
+	}
+	// Touched at most once a minute: a fresh session isn't rewritten.
+	if err := p.TouchSession(ctx, hash, "203.0.113.5"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := p.GetSession(ctx, hash); s.IP != "198.51.100.7" {
+		t.Errorf("touch within a minute is skipped: %s", s.IP)
+	}
+	if _, err := p.pool.Exec(ctx, `UPDATE sessions SET last_seen = now() - interval '5 minutes' WHERE id_hash = $1`, hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.TouchSession(ctx, hash, "203.0.113.5"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := p.GetSession(ctx, hash); s.IP != "203.0.113.5" || time.Since(s.LastSeen) > time.Minute {
+		t.Errorf("touch updates the IP and time: %+v", s)
+	}
+
+	if err := p.InsertWebhookEvents(ctx, []WebhookEvent{{Platform: "gitlab", Host: "g", Outcome: "rejected", SourceIP: "203.0.113.9"}}); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := p.ListWebhookEvents(ctx, WebhookFilter{Outcome: "rejected"})
+	if err != nil || len(ev) == 0 || ev[0].SourceIP != "203.0.113.9" {
+		t.Errorf("webhook source: %+v %v", ev, err)
 	}
 }

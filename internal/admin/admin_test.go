@@ -27,6 +27,7 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 
 	"github.com/divmora/code-review-bot/pkg/vcs"
+	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
@@ -161,7 +162,8 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 		t.Fatal(err)
 	}
 	a.Register(mux)
-	app.Config.Handler = mux
+	resolver, _ := clientip.NewResolver(nil)
+	app.Config.Handler = resolver.Middleware(mux)
 	jar, _ := cookiejar.New(nil)
 	return &env{idp: idp, app: app, st: st, adm: a, client: &http.Client{Jar: jar, Timeout: 10 * time.Second}}
 }
@@ -1091,5 +1093,31 @@ func TestTokenExpiryWarnings(t *testing.T) {
 	_, body = e.do(t, "POST", fmt.Sprintf("/admin/api/hosts/%d/test", hv.ID), csrf, nil)
 	if !bytes.Contains(body, []byte("the token expires on")) || !bytes.Contains(body, []byte("replace it soon")) {
 		t.Errorf("Test reports the expiry: %s", body)
+	}
+}
+
+func TestSignInsRecordWhereFrom(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	_, body := e.do(t, "GET", "/admin/api/sessions", "", nil)
+	if !bytes.Contains(body, []byte(`"ip":"127.0.0.1"`)) || !bytes.Contains(body, []byte(`"user_agent":"Go-http-client`)) || !bytes.Contains(body, []byte(`"last_seen":"`)) {
+		t.Errorf("sessions show where they signed in from: %s", body)
+	}
+	entries, _ := e.st.ListAudit(context.Background(), 20)
+	var login *store.AuditEntry
+	for i := range entries {
+		if entries[i].Action == "login" {
+			login = &entries[i]
+		}
+	}
+	if login == nil || login.IP != "127.0.0.1" || !strings.HasPrefix(login.UserAgent, "Go-http-client") {
+		t.Errorf("the sign-in audit entry has the IP and browser: %+v", login)
+	}
+	e.idp.as(map[string]any{"sub": "u2", "email": "mallory@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	entries, _ = e.st.ListAudit(context.Background(), 20)
+	if entries[0].Action != "login.denied" || entries[0].IP != "127.0.0.1" {
+		t.Errorf("denied sign-ins too: %+v", entries[0])
 	}
 }
