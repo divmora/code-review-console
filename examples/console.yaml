@@ -32,10 +32,10 @@ executor:
   local:
     binary: codereview                 # bundled in the console image
   docker:
-    image: ghcr.io/divmora/code-review-bot:0.5.0
+    image: ghcr.io/divmora/code-review-bot:0.6.1
     # network: bridge
   kubernetes:
-    image: ghcr.io/divmora/code-review-bot:0.5.0
+    image: ghcr.io/divmora/code-review-bot:0.6.1
     namespace: code-review
     service_account: ""                # set for IRSA / EKS Pod Identity / workload identity (e.g. Bedrock)
     automount_service_account_token: false  # true only if review pods need the Kubernetes API token

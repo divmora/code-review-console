@@ -24,6 +24,16 @@ The console runs the `codereview` CLI for every review, so the two must agree on
 - **Approving merge requests** (Settings → Approve merge requests) needs v0.5.0 or later: older CLIs
   don't know `--approve`, and reviews fail while it is on. v0.5.0 also anchors scores to the
   previous review, so they don't swing between runs.
+- **v0.6.1 is recommended**, and the console image bundles it. 0.6.0 brought security fixes (see the
+  code-review-bot advisories):
+  - no GitLab quick actions or mentions in what the bot posts;
+  - only the bot's own, or signed, comments are read back as its state, using a key the console passes each job;
+  - tokens go only to their configured host;
+  - an approval is withdrawn when a new commit can't be judged, and files the review skipped hold approval back.
+
+  It also changes scoring: only fixed findings raise scores, and summaries say what was fixed and dismissed.
+  0.6.1 fixes 0.6.0 refusing jobs when a host's API URL and PR links use different names, such as an internal URL
+  or GitHub Enterprise Cloud's `api.<name>.ghe.com`. The console tells it the PR host; avoid 0.6.0 in those setups.
 
 - The container image already contains a supported CLI.
 - With the `kubernetes` executor, use v0.4.1 or later: from then on the CLI writes its logs to the
@@ -163,7 +173,7 @@ Configure the Deployment with environment variables, for example:
 ```yaml
 env:
   - { name: CODEREVIEW_CONSOLE_EXECUTOR, value: kubernetes }
-  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.5.0 }
+  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.6.1 }
   - { name: CODEREVIEW_CONSOLE_KUBE_NAMESPACE, value: code-review }
   - { name: CODEREVIEW_CONSOLE_BASE_URL, value: https://review.example.com }
   - { name: CODEREVIEW_CONSOLE_OIDC_ISSUER, value: https://idp.example.com }
@@ -189,7 +199,7 @@ to a minimum.
 
 ### Settings in the admin panel
 
-The **Executor** page manages the image version (a tag, a digest, or both as `0.5.0@sha256:…`;
+The **Executor** page manages the image version (a tag, a digest, or both as `0.6.1@sha256:…`;
 the repository stays in the config file), CPU and memory (1 CPU and 1Gi to start), and for
 Kubernetes the disk (ephemeral storage, 2Gi by default) and /tmp size (1Gi by default), the job TTL,
 node selector, tolerations, affinity, priority class, pod labels and annotations, and the CA bundle
