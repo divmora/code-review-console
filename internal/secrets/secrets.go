@@ -7,6 +7,7 @@ package secrets
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -27,7 +28,10 @@ const prefix = "v1:"
 var ErrNoKey = errors.New(EnvKey + " is not set: it is needed to store or read code host tokens")
 
 // Box seals and opens secrets. A nil *Box has no key.
-type Box struct{ aead cipher.AEAD }
+type Box struct {
+	aead cipher.AEAD
+	raw  []byte // for Derive
+}
 
 // FromEnv returns a Box for CODEREVIEW_CONSOLE_SECRET_KEY, or nil when it
 // is unset.
@@ -55,7 +59,7 @@ func New(key string) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Box{aead: aead}, nil
+	return &Box{aead: aead, raw: raw}, nil
 }
 
 func decodeKey(k string) ([]byte, error) {
@@ -70,6 +74,18 @@ func decodeKey(k string) ([]byte, error) {
 	}
 	sum := sha256.Sum256([]byte(k))
 	return sum[:], nil
+}
+
+// Derive returns a 32-byte key for label, derived from the console's key
+// (HMAC-SHA256), so other keys don't need storing: the same console key
+// and label always give the same key. nil for a nil Box.
+func (b *Box) Derive(label string) []byte {
+	if b == nil {
+		return nil
+	}
+	h := hmac.New(sha256.New, b.raw)
+	h.Write([]byte("code-review-console derive v1\x00" + label))
+	return h.Sum(nil)
 }
 
 // Seal encrypts plaintext.
