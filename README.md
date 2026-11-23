@@ -58,7 +58,7 @@ On GitHub, a submitted review clears the request, so request the bot again to re
 
 Give each GitLab webhook a **signing token** (GitLab 19.0+) and paste it (`whsec_...`) into the webhook in the console. GitLab then signs every request (`webhook-id`, `webhook-timestamp`, `webhook-signature`, HMAC-SHA256 over `id.timestamp.body`). The console checks the signature, rejects requests more than 5 minutes old, and ignores a repeated `webhook-id`, so a captured request cannot be replayed.
 
-Older webhooks with only a **secret token** (`X-Gitlab-Token`, sent in plain text) keep working. Keep both while migrating: a signed request is judged by its signature alone (a valid secret token does not rescue a bad signature), and an unsigned one falls back to the secret token. Set the host's **Unsigned webhooks** to **Reject** when every webhook is signed.
+Older webhooks with only a **secret token** (`X-Gitlab-Token`, sent in plain text) keep working. Once a webhook has a signing token, it accepts signed deliveries only, so the old secret token can't be used to skip the signature; turn on **Accept too** for that webhook while hooks migrate (those deliveries are marked on the Webhooks page). A signed request is judged by its signature alone: a valid secret token does not rescue a bad signature. The host's **Unsigned deliveries: Reject everywhere** makes every URL of the host signature-only.
 
 ### Which repositories are reviewed
 

@@ -287,8 +287,8 @@ func (m *Memory) PutWebhookEndpoint(_ context.Context, in store.WebhookEndpoint,
 		e = &store.WebhookEndpoint{ID: in.ID, HostID: in.HostID, CreatedAt: now, CreatedBy: actor}
 		m.hooksEP[in.ID] = e
 	}
-	e.Name, e.Enabled, e.Secrets, e.UpdatedAt, e.UpdatedBy = in.Name, in.Enabled, in.Secrets, now, actor
-	m.addAudit(actor, "webhook.put", e.ID, map[string]any{"after": map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled}, "secrets_changed": nonNilList(e.SecretsChanged)})
+	e.Name, e.Enabled, e.Secrets, e.UpdatedAt, e.UpdatedBy, e.AcceptSecretToken = in.Name, in.Enabled, in.Secrets, now, actor, in.AcceptSecretToken
+	m.addAudit(actor, "webhook.put", e.ID, map[string]any{"after": map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "accept_secret_token": e.AcceptSecretToken}, "secrets_changed": nonNilList(in.SecretsChanged)})
 	c := *e
 	return &c, nil
 }

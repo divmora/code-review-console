@@ -102,7 +102,9 @@ export default function Webhooks() {
                     <TableCell className="reason min-w-64 align-top text-sm whitespace-normal text-muted-foreground">{e.reason}</TableCell>
                     <TableCell className="pr-4 align-top text-muted-foreground">
                       <div>{e.endpoint ? hookNames[e.endpoint] || "unknown webhook" : "shared URL"}</div>
-                      <Sub>{e.auth}{e.source_ip ? " · from " + e.source_ip : ""}</Sub>
+                      <Sub className={e.auth === "token-unsigned" ? "text-warning" : ""} title={e.auth === "token-unsigned" ? "Accepted by the secret token although a signing token is set: the delivery wasn't signed" : undefined}>
+                        {e.auth === "token-unsigned" ? "secret token, not signed" : e.auth}{e.source_ip ? " · from " + e.source_ip : ""}
+                      </Sub>
                     </TableCell>
                   </TableRow>
                 );

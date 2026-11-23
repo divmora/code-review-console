@@ -838,11 +838,27 @@ type webhookView struct {
 	Secrets   hosts.EndpointStatus `json:"secrets"`
 	CreatedAt time.Time            `json:"created_at"`
 	CreatedBy string               `json:"created_by"`
+	// AcceptSecretToken and Accepts: what this webhook takes ("signature",
+	// "signature or secret token", "secret token").
+	AcceptSecretToken bool   `json:"accept_secret_token"`
+	Accepts           string `json:"accepts"`
 }
 
 func (a *Admin) viewWebhook(platform string, e hosts.Endpoint) webhookView {
-	return webhookView{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, URL: a.cfg.BaseURL + e.Path(platform),
-		Secrets: e.SecretStatus(), CreatedAt: e.CreatedAt, CreatedBy: e.CreatedBy}
+	v := webhookView{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, URL: a.cfg.BaseURL + e.Path(platform),
+		Secrets: e.SecretStatus(), CreatedAt: e.CreatedAt, CreatedBy: e.CreatedBy, AcceptSecretToken: e.AcceptSecretToken, Accepts: "secret token"}
+	switch {
+	case platform != hosts.GitLab:
+		v.Accepts = "signature" // GitHub and Bitbucket sign with the secret
+	case e.SignedOnly():
+		v.Accepts = "signature"
+	case len(e.SigningTokens) > 0:
+		v.Accepts = "signature or secret token"
+	}
+	if h, ok := a.Hosts.Get(e.HostID); ok && h.Platform == hosts.GitLab && h.RequireSignature {
+		v.Accepts = "signature" // the host rejects unsigned deliveries
+	}
+	return v
 }
 
 // apiCreateWebhook adds a webhook to a host: a new UUID URL and a generated
@@ -892,10 +908,13 @@ func (a *Admin) apiUpdateWebhook(w http.ResponseWriter, r *http.Request, s *stor
 		return
 	}
 	var req struct {
-		Name             *string   `json:"name"`
-		Enabled          *bool     `json:"enabled"`
-		SigningTokens    *[]string `json:"signing_tokens"`
-		RegenerateSecret bool      `json:"regenerate_secret"`
+		Name    *string `json:"name"`
+		Enabled *bool   `json:"enabled"`
+		// AcceptSecretToken: with a signing token, also accept unsigned
+		// deliveries with the secret token (for migrating hooks).
+		AcceptSecretToken *bool     `json:"accept_secret_token"`
+		SigningTokens     *[]string `json:"signing_tokens"`
+		RegenerateSecret  bool      `json:"regenerate_secret"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -905,6 +924,9 @@ func (a *Admin) apiUpdateWebhook(w http.ResponseWriter, r *http.Request, s *stor
 	}
 	if req.Enabled != nil {
 		e.Enabled = *req.Enabled
+	}
+	if req.AcceptSecretToken != nil {
+		e.AcceptSecretToken = *req.AcceptSecretToken
 	}
 	if req.SigningTokens != nil {
 		e.SigningTokens = *req.SigningTokens

@@ -42,6 +42,10 @@ func gitlabSigningKey(token string) ([]byte, error) {
 // tokens are configured (any of them may match: system, group and project
 // hooks can each have their own); otherwise a secret token is checked,
 // unless the instance requires signatures.
+// AuthUnsignedToken is the auth of a GitLab delivery accepted by its
+// secret token on a webhook (or host) that also has a signing token.
+const AuthUnsignedToken = "token-unsigned"
+
 func verifyGitLab(h http.Header, body []byte, inst config.GitLab, now time.Time) (method, deliveryID string, err error) {
 	tokens := inst.AllSigningTokens()
 	if sig := h.Get("Webhook-Signature"); sig != "" && len(tokens) > 0 {
@@ -74,7 +78,7 @@ func verifyGitLab(h http.Header, body []byte, inst config.GitLab, now time.Time)
 		return "", "", errors.New("webhook-signature does not match any signing token")
 	}
 	if inst.RequireSignature {
-		return "", "", errors.New("unsigned webhook rejected: require_signature is on (add a signing token to the webhook)")
+		return "", "", errors.New("unsigned webhook rejected: this webhook accepts signed deliveries only (it has a signing token, or the host rejects unsigned webhooks)")
 	}
 	secrets := inst.AllSecrets()
 	if len(secrets) == 0 {
@@ -83,6 +87,11 @@ func verifyGitLab(h http.Header, body []byte, inst config.GitLab, now time.Time)
 	got := []byte(h.Get("X-Gitlab-Token"))
 	for _, sec := range secrets {
 		if subtle.ConstantTimeCompare(got, []byte(sec)) == 1 {
+			if len(tokens) > 0 {
+				// Accepted by the secret token although a signing token is
+				// set (migration mode): shown on the Webhooks page.
+				return AuthUnsignedToken, "", nil
+			}
 			return "token", "", nil
 		}
 	}

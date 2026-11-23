@@ -73,8 +73,8 @@ func TestVerifyGitLab(t *testing.T) {
 
 	legacy := http.Header{}
 	legacy.Set("X-Gitlab-Token", "legacy")
-	if m, _, err := verifyGitLab(legacy, body, both, now); err != nil || m != "token" {
-		t.Errorf("unsigned request should fall back to the secret token: %s %v", m, err)
+	if m, _, err := verifyGitLab(legacy, body, both, now); err != nil || m != AuthUnsignedToken {
+		t.Errorf("unsigned request falls back to the secret token, marked as such: %s %v", m, err)
 	}
 	legacy.Set("X-Gitlab-Token", "nope")
 	if _, _, err := verifyGitLab(legacy, body, both, now); err == nil {
@@ -86,7 +86,7 @@ func TestVerifyGitLab(t *testing.T) {
 	strict := both
 	strict.RequireSignature = true
 	legacy.Set("X-Gitlab-Token", "legacy")
-	if _, _, err := verifyGitLab(legacy, body, strict, now); err == nil || !strings.Contains(err.Error(), "require_signature") {
+	if _, _, err := verifyGitLab(legacy, body, strict, now); err == nil || !strings.Contains(err.Error(), "signed deliveries only") {
 		t.Errorf("require_signature must reject unsigned requests: %v", err)
 	}
 	// Signature headers but no signing token configured: judged by the secret token.
@@ -165,7 +165,7 @@ func TestSeveralHooksOneInstance(t *testing.T) {
 	}
 	h := http.Header{}
 	h.Set("X-Gitlab-Token", "project-secret")
-	if m, _, err := verifyGitLab(h, body, inst, now); err != nil || m != "token" {
+	if m, _, err := verifyGitLab(h, body, inst, now); err != nil || m != AuthUnsignedToken {
 		t.Errorf("a project hook's secret from webhook_secrets should verify: %s %v", m, err)
 	}
 

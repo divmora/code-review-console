@@ -97,6 +97,9 @@ type WebhookEndpoint struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
 	Secrets string `json:"-"`
+	// AcceptSecretToken lets a webhook with a signing token still take
+	// unsigned deliveries with its secret token (while migrating).
+	AcceptSecretToken bool `json:"accept_secret_token"`
 	// SecretsChanged names the secrets this save changes (audit only).
 	SecretsChanged []string  `json:"-"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -730,6 +733,9 @@ var migrations = []string{
 		result        text NOT NULL DEFAULT ''
 	);
 	CREATE INDEX change_requests_status_idx ON change_requests (status, id DESC);`,
+	// 15: a webhook with a signing token takes signed deliveries only,
+	// unless this is on (issue #86).
+	`ALTER TABLE webhook_endpoints ADD COLUMN accept_secret_token boolean NOT NULL DEFAULT false;`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -1207,11 +1213,11 @@ func (p *Postgres) DeleteHost(ctx context.Context, id int64, actor string) error
 	return tx.Commit(ctx)
 }
 
-const endpointCols = `id::text, host_id, name, enabled, secrets, created_at, created_by, updated_at, updated_by`
+const endpointCols = `id::text, host_id, name, enabled, secrets, created_at, created_by, updated_at, updated_by, accept_secret_token`
 
 func scanEndpoint(row pgx.Row) (*WebhookEndpoint, error) {
 	var e WebhookEndpoint
-	err := row.Scan(&e.ID, &e.HostID, &e.Name, &e.Enabled, &e.Secrets, &e.CreatedAt, &e.CreatedBy, &e.UpdatedAt, &e.UpdatedBy)
+	err := row.Scan(&e.ID, &e.HostID, &e.Name, &e.Enabled, &e.Secrets, &e.CreatedAt, &e.CreatedBy, &e.UpdatedAt, &e.UpdatedBy, &e.AcceptSecretToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1222,7 +1228,7 @@ func endpointAudit(e *WebhookEndpoint) map[string]any {
 	if e == nil {
 		return nil
 	}
-	return map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled}
+	return map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "accept_secret_token": e.AcceptSecretToken}
 }
 
 func (p *Postgres) ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error) {
@@ -1253,11 +1259,11 @@ func (p *Postgres) PutWebhookEndpoint(ctx context.Context, in WebhookEndpoint, a
 		return nil, err
 	}
 	e, err := scanEndpoint(tx.QueryRow(ctx, `
-		INSERT INTO webhook_endpoints (id, host_id, name, enabled, secrets, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)
+		INSERT INTO webhook_endpoints (id, host_id, name, enabled, secrets, created_by, updated_by, accept_secret_token) VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, secrets = EXCLUDED.secrets,
-			updated_by = EXCLUDED.updated_by, updated_at = now()
+			accept_secret_token = EXCLUDED.accept_secret_token, updated_by = EXCLUDED.updated_by, updated_at = now()
 		WHERE webhook_endpoints.host_id = EXCLUDED.host_id
-		RETURNING `+endpointCols, in.ID, in.HostID, in.Name, in.Enabled, in.Secrets, actor))
+		RETURNING `+endpointCols, in.ID, in.HostID, in.Name, in.Enabled, in.Secrets, actor, in.AcceptSecretToken))
 	if err != nil {
 		return nil, err
 	}
@@ -1370,7 +1376,7 @@ func (p *Postgres) HookStats(ctx context.Context) ([]HostHookStats, error) {
 	rows, err := p.pool.Query(ctx, `SELECT platform, host, count(*),
 		count(*) FILTER (WHERE kind = ANY($1) OR event = 'Note Hook'),
 		count(*) FILTER (WHERE event = 'System Hook')
-		FROM webhook_events WHERE auth IN ('signature', 'token') AND host <> '' GROUP BY platform, host ORDER BY platform, host`, CommentKinds)
+		FROM webhook_events WHERE auth IN ('signature', 'token', 'token-unsigned') AND host <> '' GROUP BY platform, host ORDER BY platform, host`, CommentKinds)
 	if err != nil {
 		return nil, err
 	}

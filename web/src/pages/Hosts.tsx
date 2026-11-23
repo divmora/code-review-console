@@ -22,6 +22,7 @@ type Host = {
 type Hook = {
   id: string; host_id: number; name: string; enabled: boolean; url: string;
   secrets: { webhook_secret: boolean; signing_tokens: number }; created_at: string; created_by: string;
+  accept_secret_token?: boolean; accepts?: string;
 };
 
 const names = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
@@ -111,7 +112,11 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
       <div className="flex flex-wrap items-center gap-2">
         <Input className="h-8 max-w-64" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() !== hook.name && update({ name }, "Renamed")} />
         <StateBadge kind={hook.enabled ? "on" : "idle"}>{hook.enabled ? "Enabled" : "Disabled"}</StateBadge>
-        {platform === "gitlab" && hook.secrets.signing_tokens > 0 && <Badge variant="outline" className="font-normal text-muted-foreground">signing token set</Badge>}
+        {platform === "gitlab" && hook.accepts && (
+          <Badge variant="outline" className={hook.accepts === "signature" ? "font-normal text-muted-foreground" : "font-normal text-warning"} title="What this webhook accepts">
+            accepts: {hook.accepts}
+          </Badge>
+        )}
         <span className="flex-1" />
         <Button variant="ghost" size="sm" onClick={() => update({ enabled: !hook.enabled }, hook.enabled ? "Disabled " + hook.name : "Enabled " + hook.name)}>
           {hook.enabled ? "Disable" : "Enable"}
@@ -141,6 +146,15 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
               </Button>
             )}
           </div>
+        </Field>
+      )}
+      {platform === "gitlab" && hook.secrets.signing_tokens > 0 && (
+        <Field label="Unsigned deliveries with the secret token" hint={<Sub>With a signing token, only signed deliveries are accepted, so the old secret token alone can't be used to send events. Accept both only while hooks still send unsigned events.</Sub>}>
+          <NativeSelect className="max-w-sm" value={String(!!hook.accept_secret_token)}
+            onChange={(e) => update({ accept_secret_token: e.target.value === "true" }, e.target.value === "true" ? "Also accepting the secret token" : "Signed deliveries only")}>
+            <option value="false">Reject (signed deliveries only)</option>
+            <option value="true">Accept too (while migrating)</option>
+          </NativeSelect>
         </Field>
       )}
       <Sub>
@@ -317,16 +331,16 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
       </Section>
       <Separator />
       <Section title="Shared URL secrets (optional)">
-        <Sub>Only for hooks on the shared {"/webhooks/" + plat} URL. Webhooks added under Webhooks have their own URL and secret.</Sub>
+        <Sub>The secrets are only for hooks on the shared {"/webhooks/" + plat} URL; webhooks added under Webhooks have their own URL and secrets.</Sub>
         <div className="grid gap-4">
           {plat === "gitlab" ? (
             <>
               <Secret label="Signing tokens (whsec_…)" multi list set={sec.signing_tokens > 0} help={sec.signing_tokens ? sec.signing_tokens + " set" : "GitLab 19.0+, recommended"} value={v.signing} onChange={set("signing")} />
               <Secret label="Secret tokens" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "older hooks"} value={v.secrets} onChange={set("secrets")} />
-              <Field label="Unsigned webhooks">
+              <Field label="Unsigned deliveries (every URL of this host)" hint={<Sub>Reject applies to the shared URL and to every webhook of this host. A webhook with its own signing token rejects unsigned deliveries either way, unless it is set to accept both.</Sub>}>
                 <NativeSelect value={String(v.reqSig)} onChange={(e) => setV({ ...v, reqSig: e.target.value === "true" })}>
-                  <option value="false">Accept with a secret token</option>
-                  <option value="true">Reject</option>
+                  <option value="false">Accept with a secret token (unless the webhook has a signing token)</option>
+                  <option value="true">Reject everywhere (signed deliveries only)</option>
                 </NativeSelect>
               </Field>
             </>

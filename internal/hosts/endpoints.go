@@ -22,16 +22,23 @@ import (
 // webhook (say, one GitLab group's) can be rotated or revoked on its own.
 // The shared /webhooks/<platform> URL keeps using the host's secrets.
 type Endpoint struct {
-	ID              string    `json:"id"`
-	HostID          int64     `json:"host_id"`
-	Name            string    `json:"name"`
-	Enabled         bool      `json:"enabled"`
-	CreatedAt       time.Time `json:"created_at"`
-	CreatedBy       string    `json:"created_by"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	UpdatedBy       string    `json:"updated_by"`
-	EndpointSecrets `json:"-"`
+	ID        string    `json:"id"`
+	HostID    int64     `json:"host_id"`
+	Name      string    `json:"name"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy string    `json:"updated_by"`
+	// AcceptSecretToken: with a signing token, also take unsigned
+	// deliveries with the secret token (off: signed deliveries only).
+	AcceptSecretToken bool `json:"accept_secret_token"`
+	EndpointSecrets   `json:"-"`
 }
+
+// SignedOnly reports whether the webhook takes signed deliveries only: it
+// has a signing token and the secret token isn't also accepted.
+func (e Endpoint) SignedOnly() bool { return len(e.SigningTokens) > 0 && !e.AcceptSecretToken }
 
 // EndpointSecrets are an endpoint's secret values; they are stored encrypted.
 // WebhookSecrets holds the secret the console generated (GitHub and
@@ -110,6 +117,9 @@ func (r *Registry) Route(platform, id string) (Host, Endpoint, error) {
 	for _, h := range r.Enabled(platform) {
 		if h.ID == e.HostID {
 			h.WebhookSecrets, h.SigningTokens = e.WebhookSecrets, e.SigningTokens
+			// A signing token replaces the secret token unless the webhook
+			// is set to accept both; the host's "reject unsigned" applies too.
+			h.RequireSignature = h.RequireSignature || e.SignedOnly()
 			return h, e, nil
 		}
 	}
@@ -178,7 +188,7 @@ func (r *Registry) SaveEndpoint(ctx context.Context, e Endpoint, actor string) (
 			old = x.EndpointSecrets
 		}
 	}
-	row, err := r.st.PutWebhookEndpoint(ctx, store.WebhookEndpoint{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, Secrets: sealed,
+	row, err := r.st.PutWebhookEndpoint(ctx, store.WebhookEndpoint{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, Secrets: sealed, AcceptSecretToken: e.AcceptSecretToken,
 		SecretsChanged: EndpointSecretChanges(old, e.EndpointSecrets)}, actor)
 	if err != nil {
 		return Endpoint{}, err
@@ -202,7 +212,7 @@ func (r *Registry) DeleteEndpoint(ctx context.Context, id, actor string) error {
 }
 
 func (r *Registry) decodeEndpoint(row store.WebhookEndpoint) (Endpoint, error) {
-	e := Endpoint{ID: strings.ToLower(row.ID), HostID: row.HostID, Name: row.Name, Enabled: row.Enabled,
+	e := Endpoint{ID: strings.ToLower(row.ID), HostID: row.HostID, Name: row.Name, Enabled: row.Enabled, AcceptSecretToken: row.AcceptSecretToken,
 		CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy, UpdatedAt: row.UpdatedAt, UpdatedBy: row.UpdatedBy}
 	if row.Secrets != "" {
 		pt, err := r.box.Open(row.Secrets)
