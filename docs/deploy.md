@@ -231,6 +231,90 @@ only needs your own CAs. No extra RBAC is needed: the kubelet mounts the volume,
 
 Point the Deployment's liveness and readiness probes at `GET /healthz` on the server port.
 
+### Review pods' network access
+
+Review pods hold the code host token (in the job's Secret) and the model credentials, and they read
+untrusted input: diffs, files and comments from any merge request in an enabled repository. The CLI
+has no tool that fetches URLs, but limiting what the pods can reach narrows the impact of any future
+bug in it, a dependency or a provider SDK. Most clusters let pods reach everything by default.
+
+A review pod needs, over HTTPS (443):
+
+- the **code host API** (`gitlab.com` or your GitLab, `api.github.com` or your GitHub Enterprise,
+  `api.bitbucket.org`);
+- the **model endpoint**: Bedrock (`bedrock-runtime.<region>.amazonaws.com`), Anthropic, OpenAI,
+  Gemini, your LLM gateway…;
+- for IRSA or Workload Identity, the token exchange (`sts.<region>.amazonaws.com`,
+  `sts.googleapis.com`);
+
+plus **DNS**. It does **not** need the Kubernetes API (it gets no API token), the cloud metadata
+endpoint (`169.254.169.254`), other services in the cluster or the internal network, or the image
+registry (the kubelet pulls the image, not the pod). EKS Pod Identity is the exception: its agent
+listens on `169.254.170.23:80`, so allow that address if you use it.
+
+Every review pod carries the label `codereview/role: review` (the console never does), for a policy
+to select. A standard `NetworkPolicy` can't match host names, so this one allows HTTPS to public
+addresses only and blocks the metadata endpoint and private ranges:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: codereview-review-pods, namespace: code-review }
+spec:
+  podSelector:
+    matchLabels: { codereview/role: review }
+  policyTypes: [Ingress, Egress]
+  ingress: []                      # nothing connects to a review pod
+  egress:
+    - to:                          # DNS
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - to:                          # HTTPS to public addresses
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+      ports: [{ port: 443, protocol: TCP }]
+    # A self-managed GitLab or an LLM gateway on a private address: allow it alone, e.g.
+    # - to: [{ ipBlock: { cidr: 10.20.30.40/32 } }]
+    #   ports: [{ port: 443, protocol: TCP }]
+    # EKS Pod Identity:
+    # - to: [{ ipBlock: { cidr: 169.254.170.23/32 } }]
+    #   ports: [{ port: 80, protocol: TCP }]
+```
+
+The policy only takes effect with a network plugin that enforces it (Calico, Cilium, the AWS VPC CNI
+with network policies turned on, GKE Dataplane V2…). With Cilium you can allow the exact host names
+instead of all public addresses:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: codereview-review-pods, namespace: code-review }
+spec:
+  endpointSelector:
+    matchLabels: { codereview/role: review }
+  ingress: []
+  egress:
+    - toEndpoints:
+        - matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, k8s-app: kube-dns }
+      toPorts:
+        - ports: [{ port: "53", protocol: ANY }]
+          rules: { dns: [{ matchPattern: "*" }] }
+    - toFQDNs:
+        - matchName: gitlab.example.com
+        - matchName: bedrock-runtime.us-east-1.amazonaws.com
+        - matchName: sts.us-east-1.amazonaws.com
+      toPorts:
+        - ports: [{ port: "443", protocol: TCP }]
+```
+
+Calico Enterprise and Calico Cloud have the same with `destination.domains` in a `NetworkPolicy`.
+
+With the **Docker** executor, run review containers on a network of their own
+(`CODEREVIEW_CONSOLE_DOCKER_NETWORK`) and limit it with the host's firewall the same way. On EC2, set
+the instance's metadata hop limit to 1 so containers can't reach `169.254.169.254`.
+
 ## Config file and admin panel
 
 Outside the panel are only what the console needs to start, and the limits a panel admin must not

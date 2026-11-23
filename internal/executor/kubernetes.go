@@ -82,6 +82,9 @@ func (k *Kubernetes) With(cfg config.KubeExecutor) (*Kubernetes, error) {
 const (
 	DefaultEphemeralStorage = "2Gi"
 	DefaultTmpSizeLimit     = "1Gi"
+	// RoleLabel is on every review Job, pod and Secret, with RoleReview.
+	RoleLabel  = "codereview/role"
+	RoleReview = "review"
 )
 
 // storageQuantity reads a storage setting: "" is the default, "none" no
@@ -242,7 +245,9 @@ func (k *Kubernetes) Run(ctx context.Context, t Task) (*Result, error) {
 
 	name := jobName(t.ID)
 	ns := k.cfg.Namespace
-	labels := map[string]string{"app.kubernetes.io/name": "codereview", "app.kubernetes.io/managed-by": "code-review-console", "codereview/job": name}
+	// codereview/role=review selects review pods (never the console) for a
+	// NetworkPolicy; see docs/deploy.md, "Review pods' network access".
+	labels := map[string]string{"app.kubernetes.io/name": "codereview", "app.kubernetes.io/managed-by": "code-review-console", "codereview/job": name, RoleLabel: RoleReview}
 	data := map[string][]byte{}
 	for key, v := range env {
 		data[key] = []byte(v)
@@ -358,6 +363,7 @@ func (k *Kubernetes) jobSpec(name, ns string, labels map[string]string, args []s
 	for key, v := range labels { // built-in labels win: pods are found by codereview/job
 		podLabels[key] = v
 	}
+	podLabels[RoleLabel] = RoleReview // what a NetworkPolicy selects
 	var annotations map[string]string
 	if len(k.cfg.PodAnnotations) > 0 {
 		annotations = map[string]string{}
