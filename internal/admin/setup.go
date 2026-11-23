@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/ee/license"
+	"github.com/divmora/code-review-console/internal/expiry"
 	"github.com/divmora/code-review-console/internal/hosts"
 	"github.com/divmora/code-review-console/internal/models"
 	"github.com/divmora/code-review-console/internal/store"
@@ -23,6 +24,9 @@ type setupStep struct {
 	// Detail is the current state in a few words ("2 hosts", "last
 	// delivery rejected: ...").
 	Detail string `json:"detail,omitempty"`
+	// Warning is set when a done step needs attention soon (a license or
+	// host token about to expire).
+	Warning string `json:"warning,omitempty"`
 	// Link is the admin section that completes the step ("" = none yet).
 	Link string `json:"link,omitempty"`
 }
@@ -71,6 +75,12 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 		lic.Optional, lic.Done, lic.Detail = false, false, paused
 		lic.Help = "The " + a.ExecutorType + " executor runs reviews only with a Divmora license that includes executors. Paste the key under License: it applies at once, no restart."
 	}
+	warnings := expiry.All(ls, a.Hosts, time.Now())
+	for _, w := range warnings {
+		if w.Kind == "license" {
+			lic.Warning = w.Message
+		}
+	}
 	steps = append(steps, lic)
 
 	// 2. A code host, and 3. a webhook on it.
@@ -82,6 +92,11 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 		Help: "Connect GitHub, GitLab or Bitbucket with a token the bot comments as. Use Test on the host to check the token."}
 	if len(active) > 0 {
 		host.Done, host.Detail = true, plural(len(active), "host")
+	}
+	for _, w := range warnings {
+		if w.Kind == "host" && host.Warning == "" {
+			host.Warning = w.Message
+		}
 	}
 	steps = append(steps, host)
 
