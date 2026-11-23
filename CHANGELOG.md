@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/divmora/code-review-console/compare/v0.12.0...v0.13.0) (2026-11-23)
+
+
+### Features
+
+* bundle code-review-bot 0.5.0 (approvals, steadier scores) ([#108](https://github.com/divmora/code-review-console/issues/108)) ([2c95736](https://github.com/divmora/code-review-console/commit/2c95736786c358cb6685650aaf3ecc9ad2c086f3))
+* the bot can approve merge requests whose review passes ([#106](https://github.com/divmora/code-review-console/issues/106)) ([48930fb](https://github.com/divmora/code-review-console/commit/48930fb1cf06ef4576978e4cf7461f674165a9c2))
+
 ## [0.12.0](https://github.com/divmora/code-review-console/compare/v0.11.0...v0.12.0) (2026-11-23)
 
 
