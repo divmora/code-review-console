@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"html/template"
@@ -20,15 +19,11 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(dashboardHTML)
 
 // dashboardAuthorized checks the optional dashboard token.
 func (s *Server) dashboardAuthorized(r *http.Request) bool {
-	want := s.cfg.Server.Dashboard.Token
-	if want == "" {
-		return true
-	}
 	got := r.URL.Query().Get("token")
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		got = strings.TrimPrefix(h, "Bearer ")
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+	return s.tuning.Get(r.Context()).DashboardTokenOK(got)
 }
 
 func securityHeaders(w http.ResponseWriter, nonce string) {
@@ -97,6 +92,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := s.queue.Snapshot()
+	tn := s.tuning.Get(r.Context())
 	if eff.HideRepos {
 		redact(snap.Running)
 		redact(snap.Pending)
@@ -104,7 +100,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, statusResponse{
 		Title: eff.DashboardTitle, Version: version.Version, Redacted: eff.HideRepos,
-		Workers: s.cfg.Server.Workers, BotName: firstNonEmpty(s.cfg.BotName, "codereview"), Debounced: s.cfg.Server.Debounce.String(),
+		Workers: tn.Workers, BotName: firstNonEmpty(tn.BotName, "codereview"), Debounced: tn.DebounceDuration().String(),
 		Snapshot: snap,
 	})
 }

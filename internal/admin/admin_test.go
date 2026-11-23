@@ -994,3 +994,37 @@ func TestAdminURLsPeopleReach(t *testing.T) {
 		t.Errorf("assets: %d", r.StatusCode)
 	}
 }
+
+func TestTuningAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	t.Setenv("MY_PROXY_CA", "pem")
+
+	code, body := e.do(t, "GET", "/admin/api/tuning", "", nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"workers":4`)) || !bytes.Contains(body, []byte(`"dashboard_token_set":false`)) {
+		t.Fatalf("get: %d %s", code, body)
+	}
+	put := map[string]any{"workers": 6, "queue_size": 50, "job_timeout": "30m", "debounce": "10s", "history": 100,
+		"bot_name": "@acme-bot", "extra_env": []string{"MY_PROXY_CA"}, "engine": map[string]any{"passes": 2, "verify_model": "fast"},
+		"dashboard_token": "a-dashboard-token-of-length"}
+	if code, _ := e.do(t, "PUT", "/admin/api/tuning", "", put); code != 403 {
+		t.Errorf("writes need the CSRF token: %d", code)
+	}
+	code, body = e.do(t, "PUT", "/admin/api/tuning", csrf, put)
+	if code != 200 || !bytes.Contains(body, []byte(`"workers":6`)) || !bytes.Contains(body, []byte(`"bot_name":"acme-bot"`)) ||
+		!bytes.Contains(body, []byte(`"dashboard_token_set":true`)) || !bytes.Contains(body, []byte(`"MY_PROXY_CA":true`)) {
+		t.Fatalf("put: %d %s", code, body)
+	}
+	if bytes.Contains(body, []byte("a-dashboard-token")) || bytes.Contains(body, []byte("dashboard_token_hash")) {
+		t.Errorf("the token (or its hash) is never sent back: %s", body)
+	}
+	put["extra_env"] = []string{"DATABASE_URL"}
+	if code, body := e.do(t, "PUT", "/admin/api/tuning", csrf, put); code != 400 || !bytes.Contains(body, []byte("console's own")) {
+		t.Errorf("the console's secrets can't be passed to jobs: %d %s", code, body)
+	}
+	if !e.adm.tuning().Get(context.Background()).DashboardTokenOK("a-dashboard-token-of-length") {
+		t.Error("token saved")
+	}
+}

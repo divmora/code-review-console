@@ -130,6 +130,8 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/api/webhooks/{wid}", a.requireAPI(a.apiDeleteWebhook))
 	mux.HandleFunc("GET /admin/api/settings", a.requireAPI(a.apiGetSettings))
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
+	mux.HandleFunc("GET /admin/api/tuning", a.requireAPI(a.apiGetTuning))
+	mux.HandleFunc("PUT /admin/api/tuning", a.requireAPI(a.apiPutTuning))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
 	mux.HandleFunc("GET /admin/api/setup", a.requireAPI(a.apiSetup))
 	mux.HandleFunc("GET /admin/api/models", a.requireAPI(a.apiListModels))

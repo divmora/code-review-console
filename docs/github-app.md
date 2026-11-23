@@ -15,7 +15,7 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 The shared URL `https://<your-host>/webhooks/github` keeps working for existing apps, with the webhook secret in the host's settings.
 
-Name the app after your `bot_name` (default `codereview`) so `@codereview` mentions match. If the app slug differs, set `bot_name` to the slug.
+Name the app after your bot name (default `codereview`) so `@codereview` mentions match. If the app slug differs, set the GitHub host's bot name (or the default under Settings) to the slug.
 
 After creating it, note the **App ID** and generate a **private key** (`.pem`).
 

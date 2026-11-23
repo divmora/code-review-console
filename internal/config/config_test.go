@@ -18,7 +18,7 @@ func TestExampleConfigLoads(t *testing.T) {
 	if cfg.Executor.Type != "local" || cfg.Executor.Kubernetes.Namespace != "code-review" || cfg.Executor.Docker.Image == "" {
 		t.Errorf("executor = %+v", cfg.Executor)
 	}
-	if !cfg.Admin.Enabled || cfg.Server.Workers != 4 || cfg.Server.Debounce.Seconds() != 30 || cfg.Database.URL != "postgres://x" {
+	if !cfg.Admin.Enabled || cfg.Server.Addr != ":8080" || cfg.Database.URL != "postgres://x" {
 		t.Errorf("console settings = %+v %+v", cfg.Admin, cfg.Server)
 	}
 	if keys := cfg.RemovedKeys(); len(keys) != 0 {
@@ -49,7 +49,7 @@ executor:
 		t.Fatal(err)
 	}
 	got := strings.Join(cfg.RemovedKeys(), ",")
-	if got != "gitlab,models,server.dashboard.title,executor.kubernetes.cpu,$GITLAB_TOKEN" {
+	if got != "gitlab,models,server.workers,server.dashboard,executor.kubernetes.cpu,$GITLAB_TOKEN" {
 		t.Errorf("removed keys: %s", got)
 	}
 	// Still read, so they can be copied into the database once.

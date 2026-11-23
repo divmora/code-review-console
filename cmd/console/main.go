@@ -26,6 +26,7 @@ import (
 	"github.com/divmora/code-review-console/internal/server"
 	"github.com/divmora/code-review-console/internal/settings"
 	"github.com/divmora/code-review-console/internal/store"
+	"github.com/divmora/code-review-console/internal/tuning"
 	"github.com/divmora/code-review-console/internal/version"
 )
 
@@ -92,11 +93,9 @@ func load(args []string, name string) (*config.Config, *slog.Logger, *flag.FlagS
 // newExecutor builds the configured executor.
 func newExecutor(cfg *config.Config) (executor.Executor, error) {
 	e := cfg.Executor
-	var keyEnvs []string
-	for _, m := range cfg.Models {
-		keyEnvs = append(keyEnvs, m.String("api_key_env"))
-	}
-	pass := executor.PassthroughNames(append(keyEnvs, e.Env...)...)
+	// Model key variables and the extra variables set in the admin panel
+	// are added to each job by the server; these are the provider defaults.
+	pass := executor.PassthroughNames()
 	switch e.Type {
 	case "local":
 		return &executor.Local{Binary: e.Local.Binary, Pass: pass}, nil
@@ -196,6 +195,15 @@ func serve(ctx context.Context, args []string) error {
 		logger.Info(n)
 	}
 	logger.Info("hosts loaded", "count", len(deps.Hosts.All()), "managed_in", deps.Hosts.Mode())
+	deps.Tuning = tuning.New(cfg, deps.Store)
+	if copied, err := deps.Tuning.Import(ctx); err != nil && !copied {
+		return fmt.Errorf("queue and review engine settings: %w", err)
+	} else if copied {
+		logger.Info("queue, review engine, bot name and dashboard token settings copied from the config file into the database; change them in the admin panel (Settings) from now on")
+		if err != nil {
+			logger.Error("part of the config file's review: section was not copied; set it in the admin panel", "error", err)
+		}
+	}
 	deps.Models = models.New(cfg, deps.Store)
 	imported, skipped, err := deps.Models.Import(ctx)
 	if err != nil {
@@ -221,6 +229,7 @@ func serve(ctx context.Context, args []string) error {
 		adm.Hosts = deps.Hosts
 		adm.ExecutorType = cfg.Executor.Type
 		adm.Models = deps.Models
+		adm.Tuning = deps.Tuning
 		adm.Executor = execSvc
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
@@ -269,7 +278,8 @@ func checkConfig(ctx context.Context, args []string) error {
 		fmt.Printf("note: %v\n      (the console still starts; reviews wait until the license is added in the admin panel)\n", err)
 	}
 	rt, rtSource := checkRuntimeSettings(ctx, cfg, st)
-	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v%s\nrequire reviewer: %v%s\ndatabase: %v\n", exec.Name(), cfg.Server.Workers, cfg.Admin.Enabled,
+	tn := tuning.New(cfg, st).Get(ctx)
+	fmt.Printf("executor: %s\nworkers: %d\nadmin: %v\nallowlist: %v%s\nrequire reviewer: %v%s\ndatabase: %v\n", exec.Name(), tn.Workers, cfg.Admin.Enabled,
 		rt.Allowlist, rtSource, rt.RequireReviewer, rtSource, cfg.Database.URL != "")
 	if source != "" {
 		fmt.Printf("executor settings: %s\n", source)
@@ -286,7 +296,7 @@ func checkConfig(ctx context.Context, args []string) error {
 		fmt.Println("models: none yet; add one under Models in the admin panel (skipping the CLI check)")
 		return nil
 	}
-	yml, env, err := server.EngineConfigWith(cfg, profiles, defModel, fallback)
+	yml, env, err := server.EngineConfigWith(tn, profiles, defModel, fallback)
 	if err != nil {
 		return err
 	}

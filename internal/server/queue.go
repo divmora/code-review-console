@@ -95,6 +95,9 @@ type Queue struct {
 	keep    int
 
 	mu      sync.Mutex
+	workers int // target number of workers
+	live    int // workers running now
+	shrink  chan struct{}
 	nextID  int64
 	pending map[string]*pending
 	running map[string]*Record
@@ -120,13 +123,80 @@ func NewQueue(workers, limit int, timeout time.Duration, history int, logger *sl
 	q := &Queue{
 		logger: logger, timeout: timeout, limit: limit, keep: history,
 		pending: map[string]*pending{}, running: map[string]*Record{},
-		ready: make(chan string, limit*2+workers), ctx: ctx, cancel: cancel, started: time.Now(),
+		ready: make(chan string, readyCap), ctx: ctx, cancel: cancel, started: time.Now(),
+		shrink: make(chan struct{}, 64),
 	}
-	for i := 0; i < workers; i++ {
+	q.mu.Lock()
+	q.setWorkers(workers)
+	q.mu.Unlock()
+	return q
+}
+
+// readyCap is the ready channel's size: room for every pending job of the
+// largest queue the admin panel allows (push retries when it is full).
+const readyCap = 1024
+
+// setWorkers starts or stops workers to reach n. mu must be held. A
+// stopped worker finishes the job it runs first.
+func (q *Queue) setWorkers(n int) {
+	if n < 1 {
+		n = 1
+	}
+	q.workers = n
+	for q.live < n {
+		q.live++
 		q.wg.Add(1)
 		go q.worker()
 	}
-	return q
+	for extra := q.live - n; extra > 0; extra-- {
+		select {
+		case q.shrink <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Resize changes the worker count, the pending limit, the job timeout and
+// the history size while the queue runs. Running jobs keep their timeout.
+func (q *Queue) Resize(workers, limit int, timeout time.Duration, history int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return
+	}
+	if limit > 0 {
+		q.limit = limit
+	}
+	if timeout > 0 {
+		q.timeout = timeout
+	}
+	if history > 0 {
+		q.keep = history
+		if len(q.history) > q.keep {
+			q.history = q.history[len(q.history)-q.keep:]
+		}
+	}
+	if workers > 0 && workers != q.workers {
+		q.setWorkers(workers)
+	}
+}
+
+// Workers is the configured number of workers.
+func (q *Queue) Workers() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.workers
+}
+
+// retire stops this worker when there are more than wanted. mu must not be held.
+func (q *Queue) retire() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.live > q.workers {
+		q.live--
+		return true
+	}
+	return false
 }
 
 // Submit enqueues a job, merging with a pending job of the same key.
@@ -201,8 +271,15 @@ func (q *Queue) worker() {
 		select {
 		case <-q.ctx.Done():
 			return
+		case <-q.shrink:
+			if q.retire() {
+				return
+			}
 		case key := <-q.ready:
 			q.runKey(key)
+			if q.retire() {
+				return
+			}
 		}
 	}
 }
@@ -221,9 +298,10 @@ func (q *Queue) runKey(key string) {
 	rec.State = Running
 	rec.Started = time.Now()
 	q.running[key] = rec
+	timeout := q.timeout
 	q.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(q.ctx, q.timeout)
+	ctx, cancel := context.WithTimeout(q.ctx, timeout)
 	var rep Report
 	err := safeRun(ctx, p.job, &rep)
 	cancel()
