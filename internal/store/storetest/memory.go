@@ -919,6 +919,36 @@ func (m *Memory) DecideChangeRequest(ctx context.Context, id int64, status, by s
 	return nil, store.ErrNotFound
 }
 
+func (m *Memory) ClaimChangeRequest(_ context.Context, id int64, by string) (*store.ChangeRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.changes {
+		c := &m.changes[i]
+		if c.ID == id && c.Status == store.ChangePending {
+			c.Status, c.DecidedBy, c.DecidedAt = store.ChangeApplying, by, time.Now()
+			out := *c
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *Memory) FinishChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*store.ChangeRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.changes {
+		c := &m.changes[i]
+		if c.ID == id && c.Status == store.ChangeApplying {
+			c.Status, c.DecidedBy, c.DecidedAt, c.ResultStatus, c.Result, c.Body = status, by, time.Now(), resultStatus, result, ""
+			m.addAudit(by, "change."+status, c.Summary, map[string]any{"id": c.ID, "requested_by": c.RequestedBy, "result_status": resultStatus, "result": result})
+			m.stampAudit(ctx)
+			out := *c
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
 func nonNilList(l []string) []string {
 	if l == nil {
 		return []string{}

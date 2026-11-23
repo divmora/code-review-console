@@ -89,7 +89,7 @@ Approvals before 0.14; `/admin/approvals` redirects there) with secret values
 masked. An admin approves it, which runs the change as the operator through the same checks, or
 rejects it with a reason; the operator can cancel their own. The audit log records the request, the
 decision and the change itself as `operator@example.com (approved by admin@example.com)`. Requests
-expire after 7 days. When an approved change creates a webhook or a new secret, the secret is shown
+expire after 7 days. Approving claims the request first, so it applies once even when two admins approve at the same time, and it can't be cancelled or rejected while it's being applied (it shows as *applying*); a request left applying because the console stopped is marked failed after 10 minutes, with a note to check whether the change took effect. When an approved change creates a webhook or a new secret, the secret is shown
 once to the approving admin.
 
 ## 3. Use it

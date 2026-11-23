@@ -9,10 +9,10 @@ import { NativeSelect } from "../ui";
 
 type Request = {
   id: number; method: string; path: string; summary: string; preview: unknown; requested_by: string; requested_at: string;
-  status: "pending" | "applied" | "failed" | "rejected" | "cancelled" | "expired"; decided_by?: string; decided_at?: string; result?: string;
+  status: "pending" | "applying" | "applied" | "failed" | "rejected" | "cancelled" | "expired"; decided_by?: string; decided_at?: string; result?: string;
 };
 
-const kind = (s: Request["status"]) => (s === "applied" ? "on" : s === "pending" ? "warn" : s === "failed" ? "off" : "idle");
+const kind = (s: Request["status"]) => (s === "applied" ? "on" : s === "pending" || s === "applying" ? "warn" : s === "failed" ? "off" : "idle");
 
 // ChangeRequests lists the changes operators asked for. Admins approve
 // (the change then runs as the operator, approved by them) or reject them;

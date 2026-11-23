@@ -104,6 +104,10 @@ func replaySession(r *http.Request) (*store.Session, bool) {
 // approvalTTL is how long a request waits before it expires.
 const approvalTTL = 7 * 24 * time.Hour
 
+// applyingTTL is how long a request may stay applying: longer means the
+// console stopped while replaying it, and it's marked failed.
+var applyingTTL = 10 * time.Minute
+
 // secretKeys are request fields masked in approval previews.
 var secretKeys = map[string]bool{
 	"token": true, "api_token": true, "app_private_key": true, "private_key": true, "webhook_secrets": true,
@@ -256,6 +260,12 @@ func (a *Admin) apiListApprovals(w http.ResponseWriter, r *http.Request, s *stor
 		return
 	}
 	for i := range list {
+		if list[i].Status == store.ChangeApplying && time.Since(list[i].DecidedAt) > applyingTTL {
+			if c, err := a.store.FinishChangeRequest(r.Context(), list[i].ID, store.ChangeFailed, list[i].DecidedBy, 0,
+				"interrupted: the console stopped while applying it; check whether the change took effect"); err == nil {
+				list[i] = *c
+			}
+		}
 		if list[i].Status == store.ChangePending && time.Since(list[i].RequestedAt) > approvalTTL {
 			if c, err := a.store.DecideChangeRequest(r.Context(), list[i].ID, store.ChangeExpired, "console", 0, "not approved within 7 days"); err == nil {
 				list[i] = *c
@@ -289,6 +299,21 @@ func (a *Admin) changeByID(w http.ResponseWriter, r *http.Request) (*store.Chang
 		return nil, false
 	}
 	return c, true
+}
+
+// notPending answers a decision on a request that stopped being pending
+// meanwhile (another admin approved it, its operator cancelled it): 409
+// with what it is now.
+func (a *Admin) notPending(w http.ResponseWriter, r *http.Request, c *store.ChangeRequest, err error) {
+	if !errors.Is(err, store.ErrNotFound) || c == nil {
+		a.serverError(w, err)
+		return
+	}
+	status := "no longer pending"
+	if now, err := a.store.GetChangeRequest(r.Context(), c.ID); err == nil {
+		status = "already " + now.Status
+	}
+	writeJSON(w, http.StatusConflict, map[string]string{"error": "this request is " + status})
 }
 
 // recorder captures the response of an approved change.
@@ -325,10 +350,18 @@ func (a *Admin) apiApprove(w http.ResponseWriter, r *http.Request, s *store.Sess
 	if !ok {
 		return
 	}
+	// Claim it first: only one approval replays it, and a cancel or
+	// rejection can't land while it's being applied (issue #126).
+	claimed, err := a.store.ClaimChangeRequest(r.Context(), c.ID, s.Email)
+	if err != nil {
+		a.notPending(w, r, c, err)
+		return
+	}
+	c = claimed
 	var body []byte
 	if c.Body != "" {
-		var err error
 		if body, err = a.Box.Open(c.Body); err != nil {
+			_, _ = a.store.FinishChangeRequest(r.Context(), c.ID, store.ChangeFailed, s.Email, 0, "could not decrypt the request (was the secret key changed?)")
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not decrypt the request (was the secret key changed?)"})
 			return
 		}
@@ -336,6 +369,7 @@ func (a *Admin) apiApprove(w http.ResponseWriter, r *http.Request, s *store.Sess
 	as := &store.Session{ID: s.ID, Subject: s.Subject, Email: c.RequestedBy + " (approved by " + s.Email + ")", Name: s.Name, CSRF: s.CSRF, Role: RoleAdmin}
 	req, err := http.NewRequestWithContext(context.WithValue(r.Context(), replayKey{}, as), c.Method, c.Path, bytes.NewReader(body))
 	if err != nil {
+		_, _ = a.store.FinishChangeRequest(r.Context(), c.ID, store.ChangeFailed, s.Email, 0, err.Error())
 		a.serverError(w, err)
 		return
 	}
@@ -350,7 +384,7 @@ func (a *Admin) apiApprove(w http.ResponseWriter, r *http.Request, s *store.Sess
 		_ = json.Unmarshal(rec.body.Bytes(), &e)
 		status, result = store.ChangeFailed, firstNonEmpty(e.Error, "HTTP "+strconv.Itoa(rec.code))
 	}
-	decided, err := a.store.DecideChangeRequest(r.Context(), c.ID, status, s.Email, rec.code, result)
+	decided, err := a.store.FinishChangeRequest(context.WithoutCancel(r.Context()), c.ID, status, s.Email, rec.code, result)
 	if err != nil {
 		a.serverError(w, err)
 		return
@@ -383,7 +417,7 @@ func (a *Admin) apiReject(w http.ResponseWriter, r *http.Request, s *store.Sessi
 	}
 	decided, err := a.store.DecideChangeRequest(r.Context(), c.ID, store.ChangeRejected, s.Email, 0, firstNonEmpty(reason, "rejected"))
 	if err != nil {
-		a.serverError(w, err)
+		a.notPending(w, r, c, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, decided)
@@ -401,7 +435,7 @@ func (a *Admin) apiCancel(w http.ResponseWriter, r *http.Request, s *store.Sessi
 	}
 	decided, err := a.store.DecideChangeRequest(r.Context(), c.ID, store.ChangeCancelled, s.Email, 0, "cancelled")
 	if err != nil {
-		a.serverError(w, err)
+		a.notPending(w, r, c, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, decided)

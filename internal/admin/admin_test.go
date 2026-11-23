@@ -1547,3 +1547,81 @@ func TestNoEmailVerifiedReason(t *testing.T) {
 		t.Errorf("audited reason: %+v", entries)
 	}
 }
+
+// Issue #126: two admins approving at once apply a change once, and a
+// cancel or rejection can't land while it's being applied.
+func TestChangeRequestAppliesOnce(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"admin@example.com"}, OperatorEmails: []string{"op@example.com"}})
+	e.adm.Lic = licensetest.Full(t)
+	as := func(email string) string {
+		e.idp.as(map[string]any{"sub": email, "email": email, "email_verified": true})
+		_ = e.login(t).Body.Close()
+		return e.csrf(t)
+	}
+	ctx := context.Background()
+	request := func(title string) int64 {
+		csrf := as("op@example.com")
+		if code, body := e.do(t, "PUT", "/admin/api/settings", csrf, map[string]any{"dashboard_title": title}); code != 202 {
+			t.Fatalf("request: %d %s", code, body)
+		}
+		list, _ := e.st.ListChangeRequests(ctx, store.ChangePending, 10)
+		return list[0].ID
+	}
+
+	// Concurrent approvals: one applies, the others get 409.
+	id := request("Board A")
+	csrf := as("admin@example.com")
+	codes := make(chan int, 4)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			code, _ := e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/approve", id), csrf, nil)
+			codes <- code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	got := map[int]int{}
+	for c := range codes {
+		got[c]++
+	}
+	if got[200] != 1 || got[409] != 3 {
+		t.Errorf("one approval applies, the rest conflict: %v", got)
+	}
+	if applied, _ := e.st.SearchAudit(ctx, store.AuditFilter{Action: "change.applied"}); len(applied) != 1 {
+		t.Errorf("applied once: %d", len(applied))
+	}
+
+	// While it's being applied: a cancel, a rejection or another approval
+	// is refused, saying it's applying.
+	id = request("Board B")
+	if _, err := e.st.ClaimChangeRequest(ctx, id, "admin@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	opCSRF := as("op@example.com")
+	if code, body := e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/cancel", id), opCSRF, nil); code != 409 || !bytes.Contains(body, []byte("already applying")) {
+		t.Errorf("cancel while applying: %d %s", code, body)
+	}
+	csrf = as("admin@example.com")
+	for _, verb := range []string{"reject", "approve"} {
+		if code, _ := e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/%s", id, verb), csrf, nil); code != 409 {
+			t.Errorf("%s while applying: %d", verb, code)
+		}
+	}
+
+	// A request left applying (the console stopped mid-change) is marked
+	// failed, not left hanging.
+	old := applyingTTL
+	applyingTTL = 0
+	defer func() { applyingTTL = old }()
+	_, body := e.do(t, "GET", "/admin/api/approvals", "", nil)
+	var list []store.ChangeRequest
+	_ = json.Unmarshal(body, &list)
+	for _, c := range list {
+		if c.ID == id && (c.Status != store.ChangeFailed || !strings.Contains(c.Result, "interrupted")) {
+			t.Errorf("stuck applying: %+v", c)
+		}
+	}
+}
