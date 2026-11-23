@@ -31,7 +31,7 @@ func (a *Admin) tuning() *tuning.Service {
 func viewTuning(t tuning.Settings) tuningView {
 	v := tuningView{Settings: t, DashboardTokenSet: t.DashboardTokenHash != "", EnvSet: map[string]bool{}}
 	v.Settings.DashboardTokenHash = ""
-	v.Settings.DashboardAccess = t.Access()
+	v.DashboardAccess = t.Access()
 	v.DashboardTokenExpired = t.DashboardTokenHash != "" && t.TokenExpired(time.Now())
 	if v.ExtraEnv == nil {
 		v.ExtraEnv = []string{}
