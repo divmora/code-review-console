@@ -76,8 +76,8 @@ func TestBuiltInDefaults(t *testing.T) {
 	if got.Workers != 4 || got.QueueSize != 100 || got.JobTimeoutDuration() != 20*time.Minute || got.DebounceDuration() != 30*time.Second || got.History != 200 {
 		t.Errorf("defaults: %+v", got)
 	}
-	if !got.DashboardTokenOK("") {
-		t.Error("no token set: the dashboard is open (it is turned on in Settings)")
+	if got.Access() != AccessAdmins || got.DashboardOpen("", false) || !got.DashboardOpen("", true) {
+		t.Error("no token set: the dashboard is for signed-in admins")
 	}
 }
 
@@ -147,5 +147,45 @@ func TestValidate(t *testing.T) {
 	good.ExtraEnv = []string{"MY_PROXY_CA"}
 	if err := good.Validate(nil); err != nil {
 		t.Errorf("valid settings: %v", err)
+	}
+}
+
+func TestDashboardAccess(t *testing.T) {
+	tok := Settings{DashboardTokenHash: hashToken("the-token-1234567")}
+	if tok.Access() != AccessToken || !tok.DashboardOpen("the-token-1234567", false) || tok.DashboardOpen("nope", false) || tok.DashboardOpen("", false) || !tok.DashboardOpen("", true) {
+		t.Error("a token set before access existed keeps working, and admins always get in")
+	}
+	adminsOnly := tok
+	adminsOnly.DashboardAccess = AccessAdmins
+	if adminsOnly.DashboardOpen("the-token-1234567", false) || !adminsOnly.DashboardOpen("", true) {
+		t.Error("admins only: the token doesn't open it")
+	}
+	public := Settings{DashboardAccess: AccessPublic}
+	if !public.DashboardOpen("", false) {
+		t.Error("public is open to anyone")
+	}
+	bad := Settings{DashboardAccess: AccessToken}.Effective()
+	if err := bad.Validate(nil); err == nil || !strings.Contains(err.Error(), "dashboard token") {
+		t.Errorf("token access needs a token: %v", err)
+	}
+	bad.DashboardAccess = "everyone"
+	if err := bad.Validate(nil); err == nil {
+		t.Error("unknown access refused")
+	}
+}
+
+func TestPutKeepsAccessWithStoredToken(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New()
+	s := New(&config.Config{Server: config.Server{Dashboard: config.Dashboard{Token: "first-token-long-enough"}}}, st)
+	if _, err := s.Import(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cur := s.Get(ctx)
+	cur.DashboardTokenHash = "" // the panel never sees it
+	cur.DashboardAccess = AccessToken
+	got, err := s.Put(ctx, Update{Settings: cur}, nil, "a@x")
+	if err != nil || got.Access() != AccessToken || !got.DashboardOpen("first-token-long-enough", false) {
+		t.Fatalf("saving token access keeps the stored token: %v %+v", err, got)
 	}
 }

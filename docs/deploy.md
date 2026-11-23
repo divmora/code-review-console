@@ -231,7 +231,7 @@ executor's version, resources and scheduling, the license, and under **Settings 
 engine** and **Bot and review jobs**: how many reviews run at once, the queue size, the review
 timeout, the wait after a push, the codereview CLI's review settings (passes, verification, batch
 size, repository defaults…), whether repositories may pick a model, the default bot name, extra
-environment variables for review jobs, and the dashboard token (stored hashed). These apply without
+environment variables for review jobs, and who can open the status dashboard (see below). These apply without
 a restart; another replica picks them up within 30 seconds.
 
 **Upgrading from an older config file.** These keys used to be in the file: `github`, `gitlab`,
@@ -246,6 +246,22 @@ your setup. Model profiles with a literal `api_key` or with `headers` can't be s
 put the key in an environment variable and add the profile under **Models** with that name as its
 key variable. A `review:` key the panel doesn't know is reported in the log and not copied. A future
 release stops reading these keys.
+
+## Status dashboard
+
+When it is on (**Settings → Status dashboard**), the dashboard shows every running, waiting and recent
+review: repository, merge or pull request, errors and token use. **Settings → Status dashboard
+access** decides who can open it:
+
+| Access | Who | Where |
+|---|---|---|
+| Signed-in admins only (default) | admins | `/admin/dashboard`, the sidebar link; `/dashboard` sends others to sign in |
+| Admins, and anyone with the token | admins, and screens or people with the token | `/dashboard?token=…` or `Authorization: Bearer …` |
+| Anyone who can reach the console | everyone | `/dashboard` |
+
+The token is set or generated on the same page, stored as a SHA-256 hash, and never shown again.
+An install that had a token before keeps working with it; one without a token is now for admins
+only, until you choose otherwise. When the dashboard is public, consider hiding repository names.
 
 ## Moving code hosts
 

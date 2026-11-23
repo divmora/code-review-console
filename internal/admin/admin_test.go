@@ -1028,3 +1028,26 @@ func TestTuningAPI(t *testing.T) {
 		t.Error("token saved")
 	}
 }
+
+func TestSignedInForServerPages(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	page, _ := http.NewRequest("GET", e.app.URL+"/admin/dashboard", nil)
+	if e.adm.SignedIn(page) {
+		t.Fatal("no cookie: not signed in")
+	}
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	u, _ := url.Parse(e.app.URL + "/admin/dashboard")
+	for _, c := range e.client.Jar.Cookies(u) {
+		page.AddCookie(c)
+	}
+	if !e.adm.SignedIn(page) {
+		t.Fatal("the admin session cookie reaches /admin/dashboard")
+	}
+	if got := safeNext("/admin/dashboard"); got != "/admin/dashboard" {
+		t.Errorf("sign-in returns to the dashboard: %s", got)
+	}
+	if got := safeNext("/dashboard"); got != "/admin" {
+		t.Errorf("only /admin pages are return targets: %s", got)
+	}
+}

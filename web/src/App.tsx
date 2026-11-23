@@ -224,7 +224,7 @@ function AppSidebar({ me }: { me: Me }) {
       <SidebarFooter>
         <div className="grid gap-1 px-2 pb-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
           <span className="truncate">Signed in as {me.name || me.email}</span>
-          <a className="underline-offset-2 hover:text-foreground hover:underline" href="/dashboard">
+          <a className="underline-offset-2 hover:text-foreground hover:underline" href="/admin/dashboard">
             Status dashboard
           </a>
           {me.version && <span>Version {me.version}</span>}

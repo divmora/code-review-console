@@ -15,7 +15,7 @@ type Engine = {
 type View = {
   workers: number; queue_size: number; job_timeout: string; debounce: string; history: number;
   bot_name?: string; allow_repo_model: boolean; extra_env: string[]; engine: Engine;
-  dashboard_token_set: boolean; env_set: Record<string, boolean>;
+  dashboard_token_set: boolean; dashboard_access: "admins" | "token" | "public"; env_set: Record<string, boolean>;
 };
 
 function Card2({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -36,6 +36,13 @@ function NumField({ label, value, onChange, hint, placeholder, min, max }: { lab
       <Input type="number" min={min} max={max} placeholder={placeholder} value={value || ""} onChange={(e) => onChange(parseInt(e.target.value || "0", 10))} />
     </Field>
   );
+}
+
+// accessNote says who can open the dashboard with the chosen access.
+function accessNote(access: string, hasToken: boolean, clearing: boolean) {
+  if (access === "public") return "Anyone who can reach the console's URL sees it. Hide repository names unless that is intended.";
+  if (access === "token") return clearing || !hasToken ? "Set a token first: without one, only admins can open it." : "Admins at /admin/dashboard, and anyone with the token at /dashboard.";
+  return "Admins open it at /admin/dashboard (the sidebar link). /dashboard sends everyone else to sign in.";
 }
 
 // newToken makes a random dashboard token (32 hex characters).
@@ -174,7 +181,18 @@ export default function Tuning() {
           }>
             <Input placeholder="MY_PROXY_CA, SSL_CERT_DIR" value={env} onChange={(e) => setEnv(e.target.value)} />
           </Field>
-          <Field label="Dashboard token" className="lg:col-span-2" hint={<Sub>Protects /dashboard (?token=… or a Bearer header). It is stored hashed and never shown again: copy a new one before saving.</Sub>}>
+        </FormGrid>
+      </Card2>
+      <Card2 title="Status dashboard access" description="The status dashboard shows every running and recent review, with repository names unless they are hidden under Status dashboard above.">
+        <FormGrid className="lg:grid-cols-2">
+          <Field label="Who can open it" hint={<Sub>{accessNote(v.dashboard_access, v.dashboard_token_set || !!token, clear)}</Sub>}>
+            <NativeSelect value={v.dashboard_access} onChange={(e) => set("dashboard_access")(e.target.value as View["dashboard_access"])}>
+              <option value="admins">Signed-in admins only</option>
+              <option value="token">Admins, and anyone with the token</option>
+              <option value="public">Anyone who can reach the console</option>
+            </NativeSelect>
+          </Field>
+          <Field label="Dashboard token" hint={<Sub>For screens and people without an admin sign-in: /dashboard?token=… or a Bearer header. Stored hashed and never shown again: copy a new one before saving.</Sub>}>
             <div className="flex flex-wrap items-center gap-2">
               <Input className="max-w-sm font-mono" placeholder={v.dashboard_token_set ? "Set (leave empty to keep it)" : "Not set"} value={token} onChange={(e) => { setToken(e.target.value); setClear(false); }} />
               <Button variant="outline" onClick={() => { setToken(newToken()); setClear(false); }}>Generate</Button>

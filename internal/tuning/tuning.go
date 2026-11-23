@@ -71,6 +71,33 @@ type Settings struct {
 	// DashboardTokenHash is the SHA-256 (hex) of the /dashboard token;
 	// empty = no token. The token itself is never stored.
 	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"`
+	// DashboardAccess says who can open the status dashboard: AccessAdmins,
+	// AccessToken or AccessPublic. Empty: see Access.
+	DashboardAccess string `json:"dashboard_access,omitempty"`
+}
+
+// Who can open the status dashboard.
+const (
+	// AccessAdmins: signed-in admins only (at /admin/dashboard).
+	AccessAdmins = "admins"
+	// AccessToken: signed-in admins, and anyone with the dashboard token.
+	AccessToken = "token"
+	// AccessPublic: anyone who can reach the console.
+	AccessPublic = "public"
+)
+
+// Access is who can open the status dashboard. Never chosen: anyone with
+// the token when one is set (so links already shared keep working),
+// otherwise admins only.
+func (s Settings) Access() string {
+	switch s.DashboardAccess {
+	case AccessAdmins, AccessToken, AccessPublic:
+		return s.DashboardAccess
+	}
+	if s.DashboardTokenHash != "" {
+		return AccessToken
+	}
+	return AccessAdmins
 }
 
 // Engine is the codereview CLI's review: section (zero values use the
@@ -175,13 +202,25 @@ func (s Settings) DebounceDuration() time.Duration {
 	return DefaultDebounce
 }
 
-// DashboardTokenOK reports whether token opens /dashboard (always true
-// when no token is set).
+// DashboardTokenOK reports whether token is the dashboard token (false
+// when none is set).
 func (s Settings) DashboardTokenOK(token string) bool {
-	if s.DashboardTokenHash == "" {
-		return true
+	if s.DashboardTokenHash == "" || token == "" {
+		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(hashToken(token)), []byte(s.DashboardTokenHash)) == 1
+}
+
+// DashboardOpen reports whether a request with token (and signed in as an
+// admin or not) may see the status dashboard.
+func (s Settings) DashboardOpen(token string, admin bool) bool {
+	switch s.Access() {
+	case AccessPublic:
+		return true
+	case AccessToken:
+		return admin || s.DashboardTokenOK(token)
+	}
+	return admin
 }
 
 func hashToken(t string) string {
@@ -231,6 +270,14 @@ func (s Settings) Validate(profiles map[string]bool) error {
 	}
 	if s.BotName != "" && !botNameRe.MatchString(s.BotName) {
 		return fmt.Errorf("bot name %q: use the account's username without @", s.BotName)
+	}
+	switch s.DashboardAccess {
+	case "", AccessAdmins, AccessToken, AccessPublic:
+	default:
+		return fmt.Errorf("dashboard access %q: want admins, token or public", s.DashboardAccess)
+	}
+	if s.DashboardAccess == AccessToken && s.DashboardTokenHash == "" {
+		return errors.New("set a dashboard token, or choose another dashboard access")
 	}
 	if len(s.ExtraEnv) > 50 {
 		return errors.New("at most 50 extra environment variables")

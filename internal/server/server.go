@@ -296,6 +296,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /dashboard", s.handleDashboardPage)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	if s.admin != nil {
+		// Admins-only dashboard: under /admin, where the session cookie applies.
+		mux.HandleFunc("GET /admin/dashboard", s.handleAdminDashboardPage)
+		mux.HandleFunc("GET /admin/api/status", s.handleAdminStatus)
+	}
+	if s.admin != nil {
 		s.admin.Register(mux)
 	}
 	return mux
