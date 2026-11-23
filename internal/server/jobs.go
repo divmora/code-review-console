@@ -337,7 +337,7 @@ func (s *Server) enqueueReviewWith(tgt target, ref vcs.Ref, opts reviewOpts, del
 		}
 		rep.Comments, rep.Files, rep.Model = res.Posted, res.Files, res.Model
 		rep.TokensIn, rep.TokensOut = res.TokensIn, res.TokensOut
-		rep.Result = res.Raw
+		rep.Result, rep.Approval = res.Raw, res.Approval
 		if sc := res.Scores; sc != nil {
 			rep.Scores = &store.Scores{Quality: sc.Quality, Security: sc.Security, Maintainability: sc.Maintainability}
 		}
