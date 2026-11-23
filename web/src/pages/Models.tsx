@@ -12,6 +12,7 @@ type Config = Record<string, unknown>;
 type Profile = {
   name: string; config: Config; source: "console";
   key_env?: string; key_set: boolean; updated_at?: string; updated_by?: string;
+  key_env_error?: string; key_host?: string;
 };
 type View = { profiles: Profile[]; default: string; fallback: string[]; choice_source: "console" | ""; providers: string[] };
 
@@ -67,7 +68,7 @@ function ProfileForm({ profile, providers, onSaved, onCancel }: { profile: Profi
           <Input value={f.model} onChange={set("model")} placeholder={f.provider === "ollama" ? "qwen2.5-coder:14b" : ""} />
         </Field>
         {def !== "" && (
-          <Field label="API key: environment variable" className="lg:col-span-2" hint={<Sub>The console never stores API keys. Set the key in this environment variable of the console (for example in its Kubernetes Secret) and restart it once; the console passes it to review jobs. Empty means {def}.</Sub>}>
+          <Field label="API key: environment variable" className="lg:col-span-2" hint={<Sub>The console never stores API keys. Set the key in this environment variable of the console (for example in its Kubernetes Secret) and restart it once; the console passes it to review jobs. Empty means {def}. Only a provider's key variable (such as OPENAI_API_KEY) or one named CODEREVIEW_MODEL_KEY_&lt;NAME&gt; can be used, so no other secret of the console can be sent as a model key.</Sub>}>
             <Input value={f.api_key_env} onChange={set("api_key_env")} placeholder={def} spellCheck={false} />
           </Field>
         )}
@@ -96,7 +97,17 @@ function KeyState({ p }: { p: Profile }) {
   return (
     <span className="grid gap-1">
       <code className="text-xs">{p.key_env}</code>
-      {p.key_set ? <StateBadge kind="on">set</StateBadge> : <StateBadge kind="warn">not set in the console</StateBadge>}
+      {p.key_env_error ? (
+        <StateBadge kind="off" title={p.key_env_error}>
+          not passed on: rename it
+        </StateBadge>
+      ) : p.key_set ? (
+        <StateBadge kind="on">set</StateBadge>
+      ) : (
+        <StateBadge kind="warn">not set in the console</StateBadge>
+      )}
+      {p.key_env_error && <Sub className="max-w-64">{p.key_env_error}</Sub>}
+      {p.key_host && <Sub className="max-w-64">Sent to {p.key_host}, not the provider's own host: check it's yours.</Sub>}
     </span>
   );
 }

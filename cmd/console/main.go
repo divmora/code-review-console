@@ -230,6 +230,10 @@ func serve(ctx context.Context, args []string) error {
 	if len(imported) > 0 {
 		logger.Info("model profiles copied from the config file into the database; manage them in the admin panel (Models) from now on", "imported", imported)
 	}
+	if blocked, err := deps.Models.BlockedKeyEnvs(ctx); err == nil && len(blocked) > 0 {
+		logger.Warn("model profiles whose api_key_env isn't a model key variable get no key: rename the variable to the provider's key name (such as OPENAI_API_KEY) or "+models.ModelKeyPrefix+"<NAME>, and update the profile under Models",
+			"profiles", blocked)
+	}
 	for _, sk := range skipped {
 		logger.Error("model profile not copied from the config file; add it under Models in the admin panel", "problem", sk)
 	}
