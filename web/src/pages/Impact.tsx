@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { get } from "../api";
 import JobsChart, { fillBuckets, Point, Series } from "../Chart";
-import { fmtDate, fmtDur, fmtNum } from "../format";
+import { fmtDayUTC, fmtDur, fmtMonthUTC, fmtNum } from "../format";
 import { avg, ScoreChart, ScoreLegend, ScoreSums, scoreKinds } from "../scores";
 import { Empty, errMsg, Locked, NativeSelect, Note, Panel, Sub, Toolbar, useFeature, useToast } from "../ui";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 type Count = { severity?: string; category?: string; platform?: string; host?: string; repo?: string; count: number };
 type ImpactPoint = { bucket: string; reviews: number; findings: Record<string, number>; scored: number; quality_sum: number; security_sum: number; maintainability_sum: number };
 type Impact = {
-  range: string; from: string; to: string; granularity: string; licensed: boolean;
+  range: string; from: string; to: string; through: string; granularity: string; licensed: boolean;
   prs_reviewed: number; review_runs: number; active_repos: number; findings: number; by_severity: Record<string, number>;
   by_category: Count[]; security_findings: number; comments: number; first_reviews: number; median_first_review_ms: number;
   scored: number; quality_sum: number; security_sum: number; maintainability_sum: number;
@@ -185,7 +185,7 @@ export default function ImpactPage() {
         </NativeSelect>
         {d && (
           <span className="text-sm text-muted-foreground">
-            {d.range === "all" ? "Everything recorded" : fmtDate(d.from) + " – " + fmtDate(new Date(new Date(d.to).getTime() - 1).toISOString())} (UTC)
+            {periodLabel(d)}
           </span>
         )}
         <span className="flex-1" />
@@ -256,4 +256,12 @@ export default function ImpactPage() {
       </Note>
     </section>
   );
+}
+
+// periodLabel names the days (or months) included, in UTC: "to" is the
+// exclusive end, so the label ends on "through", the last day included.
+function periodLabel(d: Impact): string {
+  if (d.range === "all") return "Everything recorded (UTC)";
+  const f = d.granularity === "month" ? fmtMonthUTC : fmtDayUTC;
+  return f(d.from) + " – " + f(d.through) + " (UTC)";
 }
