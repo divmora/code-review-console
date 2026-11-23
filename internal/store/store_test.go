@@ -795,3 +795,61 @@ func TestChangeRequests(t *testing.T) {
 		t.Errorf("audited: %d", len(a))
 	}
 }
+
+func TestQueuedJobsAndClaims(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	if _, err := p.pool.Exec(ctx, `TRUNCATE queued_jobs, queue_owners`); err != nil {
+		t.Fatal(err)
+	}
+	pay := json.RawMessage(`{"kind":"review"}`)
+	_ = p.HeartbeatOwner(ctx, "alive")
+	for _, q := range []QueuedJob{
+		{ID: "a1", Key: "review:a", Owner: "alive", Kind: "review", Payload: pay, ReadyAt: time.Now()},
+		{ID: "g1", Key: "review:g", Owner: "gone", Kind: "review", Payload: pay, ReadyAt: time.Now()},
+		{ID: "g2", Key: "answer:g", Owner: "gone", Kind: "answer", Payload: pay, ReadyAt: time.Now()},
+	} {
+		if err := p.PutQueued(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := p.StartQueued(ctx, "g2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.UpdateQueued(ctx, "g1", json.RawMessage(`{"kind":"review","full":true}`), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.UpdateQueued(ctx, "missing", pay, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_ = p.HeartbeatOwner(ctx, "me")
+	got, err := p.ClaimQueued(ctx, "me", 90*time.Second)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("claims the stopped replica's jobs only: %+v %v", got, err)
+	}
+	for _, q := range got {
+		if q.Owner != "me" || (q.ID == "g2") == q.StartedAt.IsZero() {
+			t.Errorf("claimed: %+v", q)
+		}
+		if q.ID == "g1" && !strings.Contains(string(q.Payload), `"full": true`) && !strings.Contains(string(q.Payload), `"full":true`) {
+			t.Errorf("update kept: %s", q.Payload)
+		}
+	}
+	if again, _ := p.ClaimQueued(ctx, "other", 90*time.Second); len(again) != 0 {
+		t.Errorf("a live replica's jobs (now mine) aren't claimed twice: %+v", again)
+	}
+	_ = p.RemoveOwner(ctx, "me")
+	if handed, _ := p.ClaimQueued(ctx, "next", 90*time.Second); len(handed) != 2 {
+		t.Errorf("a stopped replica hands its jobs over at once: %+v", handed)
+	}
+	_ = p.DeleteQueued(ctx, "g1")
+	var n int
+	_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM queued_jobs`).Scan(&n)
+	if n != 2 {
+		t.Errorf("deleted: %d left", n)
+	}
+	var cnt int
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM queue_owners WHERE owner = 'missing'`).Scan(&cnt); err != nil || cnt != 0 {
+		t.Errorf("owners: %d %v", cnt, err)
+	}
+}

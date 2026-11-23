@@ -94,6 +94,7 @@ func (s *Server) onFinish(r Record) {
 	s.metrics.observeJob(r)
 	if s.store != nil {
 		s.persistJob(r)
+		s.savedDone(r.durable)
 	}
 }
 
