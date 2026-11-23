@@ -85,7 +85,8 @@ the same key in an optional config file.
 | `CODEREVIEW_CONSOLE_SESSION_TTL` | `admin.session_ttl` | default `12h` |
 | `CODEREVIEW_CONSOLE_COOKIE_SECRET` | `admin.cookie_secret` | 32+ random characters, for several replicas |
 | `CODEREVIEW_CONSOLE_OIDC_ISSUER`, `_OIDC_CLIENT_ID`, `_OIDC_CLIENT_SECRET` | `admin.oidc.*` | [admin.md](admin.md) |
-| `CODEREVIEW_CONSOLE_OIDC_SCOPES`, `_OIDC_ALLOWED_EMAILS`, `_OIDC_ALLOWED_DOMAINS`, `_OIDC_ALLOWED_GROUPS` | `admin.oidc.*` | comma-separated |
+| `CODEREVIEW_CONSOLE_OIDC_SCOPES`, `_OIDC_ALLOWED_EMAILS`, `_OIDC_ALLOWED_DOMAINS`, `_OIDC_ALLOWED_GROUPS` | `admin.oidc.*` | comma-separated; the allowed ones are admins |
+| `CODEREVIEW_CONSOLE_OIDC_OPERATOR_EMAILS`, `_OIDC_OPERATOR_GROUPS`, `_OIDC_VIEWER_EMAILS`, `_OIDC_VIEWER_GROUPS` | `admin.oidc.*` | operators and read-only viewers ([roles](admin.md#roles)); license: `sso_rules` |
 | `CODEREVIEW_CONSOLE_OIDC_GROUPS_CLAIM` | `admin.oidc.groups_claim` | default `groups` |
 | `CODEREVIEW_CONSOLE_EXECUTOR` | `executor.type` | `local` (default), `docker` or `kubernetes` |
 | `CODEREVIEW_CONSOLE_IMAGE` | `executor.docker.image`, `executor.kubernetes.image` | review image; its tag is used until a version is saved on the Executor page |

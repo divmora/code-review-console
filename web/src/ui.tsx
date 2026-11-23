@@ -1,4 +1,4 @@
-import { ComponentProps, createContext, ReactNode, useCallback, useContext, useRef, useState } from "react";
+import { ComponentProps, createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CircleAlert, CircleCheck, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -32,10 +32,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [t, setT] = useState<{ msg: string; err: boolean; n: number } | null>(null);
   const timer = useRef<number>();
   const show = useCallback<Toast>((msg, err = false) => {
+    if (!msg) return; // e.g. a change sent for approval: told by crc-notice
     setT((p) => ({ msg, err, n: (p?.n ?? 0) + 1 }));
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setT(null), 4000);
+    timer.current = window.setTimeout(() => setT(null), msg.length > 80 ? 7000 : 4000);
   }, []);
+  useEffect(() => {
+    const onNotice = (e: Event) => show(String((e as CustomEvent).detail || ""));
+    window.addEventListener("crc-notice", onNotice);
+    return () => window.removeEventListener("crc-notice", onNotice);
+  }, [show]);
   return (
     <ToastCtx.Provider value={show}>
       {children}

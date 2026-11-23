@@ -66,6 +66,29 @@ Any one matching rule grants admin access. Email and domain rules only match whe
 
 When you run several instances behind a load balancer, also set `CODEREVIEW_CONSOLE_COOKIE_SECRET` (`admin.cookie_secret`, 32+ random characters) so a sign-in started on one instance can finish on another.
 
+## Roles
+
+Everyone who matches `allowed_emails`, `allowed_domains` or `allowed_groups` is an **admin**, as
+before. With a license that has `sso_rules`, two more roles can sign in:
+
+| Role | Can | Set with |
+|---|---|---|
+| Admin | everything; approves operators' changes | `allowed_emails`, `allowed_domains`, `allowed_groups` |
+| Operator | see every page; change repositories, rules and learnings, run **Review now** and re-runs, test hosts. Changes to code hosts, webhooks, settings, models, the executor and the license are sent to an admin for approval | `CODEREVIEW_CONSOLE_OIDC_OPERATOR_EMAILS`, `..._OPERATOR_GROUPS` (`operator_emails`, `operator_groups`) |
+| Viewer | see every page, the audit log and its export; change nothing | `CODEREVIEW_CONSOLE_OIDC_VIEWER_EMAILS`, `..._VIEWER_GROUPS` (`viewer_emails`, `viewer_groups`) |
+
+Someone in several lists gets the strongest role. The role is worked out on every request from the
+current rules, so moving someone between lists applies at once (after the restart that applies the
+change; group membership comes from the identity provider at sign-in).
+
+**Approvals.** An operator's sensitive change doesn't apply: the console stores the request,
+encrypted with `CODEREVIEW_CONSOLE_SECRET_KEY`, and lists it under **Approvals** with secret values
+masked. An admin approves it, which runs the change as the operator through the same checks, or
+rejects it with a reason; the operator can cancel their own. The audit log records the request, the
+decision and the change itself as `operator@example.com (approved by admin@example.com)`. Requests
+expire after 7 days. When an approved change creates a webhook or a new secret, the secret is shown
+once to the approving admin.
+
 ## 3. Use it
 
 1. Open `https://<base_url>/admin` and sign in. Until reviews can run, the console opens **Setup**: a checklist (license, code host, webhook, a verified delivery, model, an enabled repository, the first review) that is checked against what is configured right now, says what to do next, and shows why a step isn't done (for example the reason the last delivery was rejected).

@@ -323,6 +323,14 @@ type OIDC struct {
 	AllowedEmails  []string `yaml:"allowed_emails"`
 	AllowedDomains []string `yaml:"allowed_domains"`
 	AllowedGroups  []string `yaml:"allowed_groups"`
+	// Operators and viewers (license: sso_rules). The allowed_* rules
+	// above are admins. An operator changes repositories, rules and
+	// learnings and runs reviews; other changes wait for an admin's
+	// approval. A viewer sees everything and changes nothing.
+	OperatorEmails []string `yaml:"operator_emails"`
+	OperatorGroups []string `yaml:"operator_groups"`
+	ViewerEmails   []string `yaml:"viewer_emails"`
+	ViewerGroups   []string `yaml:"viewer_groups"`
 	// GroupsClaim names the ID-token claim holding group names. Default "groups".
 	GroupsClaim string `yaml:"groups_claim"`
 }

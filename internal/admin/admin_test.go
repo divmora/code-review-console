@@ -156,6 +156,7 @@ func setup(t *testing.T, oidcCfg config.OIDC) *env {
 	if _, skipped, err := a.Models.Import(context.Background()); err != nil || len(skipped) > 0 {
 		t.Fatal(err, skipped)
 	}
+	a.Box = box
 	a.Hosts = hosts.New(&config.Config{}, st, box, quiet)
 	a.Hosts.Lic = a.Lic
 	if _, err := a.Hosts.Init(context.Background()); err != nil {
@@ -1204,5 +1205,105 @@ func TestHostSaveNamesChangedSecrets(t *testing.T) {
 		if bytes.Contains(p.Detail, []byte("glpat-")) || bytes.Contains(p.Detail, []byte("whsec_")) {
 			t.Errorf("never the values: %s", p.Detail)
 		}
+	}
+}
+
+func TestRolesAndApprovals(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"admin@example.com"}, OperatorEmails: []string{"op@example.com"}, ViewerEmails: []string{"view@example.com"}})
+	e.adm.Lic = licensetest.Full(t)
+	as := func(email string) string {
+		e.idp.as(map[string]any{"sub": email, "email": email, "email_verified": true})
+		_ = e.login(t).Body.Close()
+		return e.csrf(t)
+	}
+
+	// A viewer reads everything and changes nothing.
+	csrf := as("view@example.com")
+	if _, body := e.do(t, "GET", "/admin/api/me", "", nil); !bytes.Contains(body, []byte(`"role":"viewer"`)) {
+		t.Fatalf("me: %s", body)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/settings", "", nil); code != 200 {
+		t.Errorf("viewers read: %d", code)
+	}
+	if code, body := e.do(t, "PUT", "/admin/api/settings", csrf, map[string]any{"allowlist": true}); code != 403 || !bytes.Contains(body, []byte("read-only")) {
+		t.Errorf("viewers can't change settings: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "POST", "/admin/api/repos", csrf, map[string]any{"platform": "gitlab", "host": "g.example", "path": "a/b", "mode": "enabled"}); code != 403 {
+		t.Errorf("nor repositories: %d", code)
+	}
+
+	// An operator changes repositories directly; settings wait for approval.
+	csrf = as("op@example.com")
+	if code, body := e.do(t, "POST", "/admin/api/repos", csrf, map[string]any{"platform": "gitlab", "host": "g.example", "path": "a/b", "mode": "enabled"}); code != 201 {
+		t.Errorf("operators change repositories: %d %s", code, body)
+	}
+	code, body := e.do(t, "PUT", "/admin/api/settings", csrf, map[string]any{"allowlist": true, "dashboard_title": "Ops board"})
+	if code != 202 || !bytes.Contains(body, []byte(`"pending":true`)) {
+		t.Fatalf("an operator's settings change waits: %d %s", code, body)
+	}
+	if e.adm.settings().Get(context.Background()).DashboardTitle == "Ops board" {
+		t.Fatal("not applied before approval")
+	}
+	code, body = e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://gitlab.ops.example", "token": "glpat-operator-secret",
+		"signing_tokens": []string{randomSigningToken(t)}})
+	if code != 202 {
+		t.Fatalf("an operator's host waits: %d %s", code, body)
+	}
+	var list []store.ChangeRequest
+	_, body = e.do(t, "GET", "/admin/api/approvals?status=pending", "", nil)
+	_ = json.Unmarshal(body, &list)
+	if len(list) != 2 || bytes.Contains(body, []byte("glpat-operator-secret")) || !bytes.Contains(body, []byte(`"token":"(set)"`)) {
+		t.Fatalf("pending requests, secrets masked: %s", body)
+	}
+	if code, _ := e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/approve", list[0].ID), csrf, nil); code != 403 {
+		t.Errorf("operators can't approve: %d", code)
+	}
+	if _, body := e.do(t, "GET", "/admin/api/me", "", nil); !bytes.Contains(body, []byte(`"pending_approvals":2`)) {
+		t.Errorf("operators see their pending requests: %s", body)
+	}
+	hostReq := list[0].ID
+	settingsReq := list[1].ID
+
+	// An admin approves: the change runs as the operator, approved by the admin.
+	csrf = as("admin@example.com")
+	code, body = e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/approve", settingsReq), csrf, nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"status":"applied"`)) {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	if e.adm.settings().Get(context.Background()).DashboardTitle != "Ops board" {
+		t.Error("applied after approval")
+	}
+	if code, _ := e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/approve", settingsReq), csrf, nil); code != 409 {
+		t.Errorf("a request applies once: %d", code)
+	}
+	code, body = e.do(t, "POST", fmt.Sprintf("/admin/api/approvals/%d/reject", hostReq), csrf, map[string]any{"reason": "use the shared GitLab"})
+	if code != 200 || !bytes.Contains(body, []byte(`"status":"rejected"`)) {
+		t.Errorf("reject: %d %s", code, body)
+	}
+	if hostsList := e.adm.Hosts.All(); len(hostsList) != 0 {
+		t.Errorf("a rejected host isn't added: %v", hostsList)
+	}
+	puts, _ := e.st.SearchAudit(context.Background(), store.AuditFilter{Action: "setting.put"})
+	if len(puts) == 0 || puts[0].Actor != "op@example.com (approved by admin@example.com)" {
+		t.Errorf("the change names both: %+v", puts)
+	}
+	for _, action := range []string{"change.requested", "change.applied", "change.rejected"} {
+		if got, _ := e.st.SearchAudit(context.Background(), store.AuditFilter{Action: action}); len(got) == 0 {
+			t.Errorf("audited: %s", action)
+		}
+	}
+	if code, _ := e.do(t, "PUT", "/admin/api/settings", csrf, map[string]any{"allowlist": false}); code != 200 {
+		t.Errorf("admins change directly: %d", code)
+	}
+}
+
+func TestOperatorsNeedTheLicense(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"admin@example.com"}, OperatorEmails: []string{"op@example.com"}})
+	e.adm.Lic = nil // the free core
+	e.idp.as(map[string]any{"sub": "op", "email": "op@example.com", "email_verified": true})
+	resp := e.login(t)
+	_ = resp.Body.Close()
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Errorf("without sso_rules, operators can't sign in: %d", code)
 	}
 }

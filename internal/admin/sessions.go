@@ -45,6 +45,10 @@ func (a *Admin) apiDeleteSession(w http.ResponseWriter, r *http.Request, s *stor
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
+	if id != s.ID && s.Role != RoleAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only an admin can sign other people out"})
+		return
+	}
 	gone, err := a.store.DeleteSessionByID(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such session (signed out or expired)"})
