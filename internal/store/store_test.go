@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -762,6 +763,48 @@ func TestAuditBeforeAfterAndSearch(t *testing.T) {
 		t.Errorf("date range: %d", len(got))
 	}
 	_ = h
+}
+
+// Issue #126: a request is claimed once, its body kept while it's
+// applied, and only an applying request can be finished.
+func TestClaimChangeRequest(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	c, err := p.CreateChangeRequest(ctx, ChangeRequest{Method: "PUT", Path: "/admin/api/settings", Summary: "s", Body: "sealed", RequestedBy: "op@x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var won atomic.Int32
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if got, err := p.ClaimChangeRequest(ctx, c.ID, "admin@x"); err == nil && got.Status == ChangeApplying && got.Body == "sealed" {
+				won.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if won.Load() != 1 {
+		t.Fatalf("claimed %d times", won.Load())
+	}
+	if _, err := p.DecideChangeRequest(ctx, c.ID, ChangeCancelled, "op@x", 0, "cancelled"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no cancel while applying: %v", err)
+	}
+	if _, err := p.FinishChangeRequest(ctx, 999999, ChangeApplied, "admin@x", 200, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("finish needs an applying request: %v", err)
+	}
+	d, err := p.FinishChangeRequest(ctx, c.ID, ChangeApplied, "admin@x", 200, "applied (200)")
+	if err != nil || d.Status != ChangeApplied || d.Body != "" {
+		t.Fatalf("finish: %v %+v", err, d)
+	}
+	if _, err := p.FinishChangeRequest(ctx, c.ID, ChangeFailed, "admin@x", 0, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("finished once: %v", err)
+	}
+	if got, _ := p.SearchAudit(ctx, AuditFilter{Action: "change.applied"}); len(got) != 1 {
+		t.Errorf("audited once: %d", len(got))
+	}
 }
 
 func TestChangeRequests(t *testing.T) {

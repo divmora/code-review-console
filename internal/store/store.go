@@ -378,6 +378,7 @@ type QueuedJob struct {
 // Change request statuses.
 const (
 	ChangePending   = "pending"
+	ChangeApplying  = "applying" // claimed by the approving admin, being replayed
 	ChangeApplied   = "applied"
 	ChangeFailed    = "failed"
 	ChangeRejected  = "rejected"
@@ -576,6 +577,14 @@ type Store interface {
 	// DecideChangeRequest moves a pending request to status, once: it
 	// returns ErrNotFound when the request isn't pending any more.
 	DecideChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*ChangeRequest, error)
+	// ClaimChangeRequest moves a pending request to applying for by, once,
+	// keeping its body: only the claimer replays it (issue #126). It
+	// returns ErrNotFound when the request isn't pending any more.
+	ClaimChangeRequest(ctx context.Context, id int64, by string) (*ChangeRequest, error)
+	// FinishChangeRequest records how an applying request ended (applied
+	// or failed), drops its body and audits it; ErrNotFound when it isn't
+	// applying.
+	FinishChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*ChangeRequest, error)
 
 	Close()
 }
@@ -1784,6 +1793,28 @@ func (p *Postgres) DecideChangeRequest(ctx context.Context, id int64, status, by
 	c, err := scanChange(tx.QueryRow(ctx, `UPDATE change_requests SET status = $2, decided_by = $3, decided_at = now(), result_status = $4, result = $5,
 		body = CASE WHEN $2 = 'pending' THEN body ELSE '' END
 		WHERE id = $1 AND status = 'pending' RETURNING `+changeCols, id, status, by, resultStatus, result))
+	if err != nil {
+		return nil, err
+	}
+	if err := audit(ctx, tx, by, "change."+status, c.Summary, map[string]any{"id": c.ID, "requested_by": c.RequestedBy, "result_status": resultStatus, "result": result}); err != nil {
+		return nil, err
+	}
+	return c, tx.Commit(ctx)
+}
+
+func (p *Postgres) ClaimChangeRequest(ctx context.Context, id int64, by string) (*ChangeRequest, error) {
+	return scanChange(p.pool.QueryRow(ctx, `UPDATE change_requests SET status = 'applying', decided_by = $2, decided_at = now()
+		WHERE id = $1 AND status = 'pending' RETURNING `+changeCols, id, by))
+}
+
+func (p *Postgres) FinishChangeRequest(ctx context.Context, id int64, status, by string, resultStatus int, result string) (*ChangeRequest, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	c, err := scanChange(tx.QueryRow(ctx, `UPDATE change_requests SET status = $2, decided_by = $3, decided_at = now(), result_status = $4, result = $5, body = ''
+		WHERE id = $1 AND status = 'applying' RETURNING `+changeCols, id, status, by, resultStatus, result))
 	if err != nil {
 		return nil, err
 	}
