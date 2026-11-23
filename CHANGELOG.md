@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.0](https://github.com/divmora/code-review-console/compare/v0.9.0...v0.10.0) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* database.url and CODEREVIEW_CONSOLE_SECRET_KEY are required. Model profiles from the config file are copied into the admin panel once and ignored afterwards; move a literal api_key to an environment variable first.
+
+### Features
+
+* **audit:** search, paging and export; before/after and named secret changes ([#80](https://github.com/divmora/code-review-console/issues/80)) ([6c4c8be](https://github.com/divmora/code-review-console/commit/6c4c8be0042bebbdf38bb2a77728de1ece17569c)), closes [#65](https://github.com/divmora/code-review-console/issues/65) [#67](https://github.com/divmora/code-review-console/issues/67)
+* keep configuration in the admin panel; require a database and secret key ([#64](https://github.com/divmora/code-review-console/issues/64)) ([efd703f](https://github.com/divmora/code-review-console/commit/efd703f27378cea027aa9fc5aae58e78df0ac5e0))
+* manage the queue, review engine, bot name and dashboard token in the admin panel ([#74](https://github.com/divmora/code-review-console/issues/74)) ([05a62b1](https://github.com/divmora/code-review-console/commit/05a62b135a0a82a2fc4f0ba4f0918ab6d399793f))
+* Prometheus /metrics, with access chosen in the admin panel ([#79](https://github.com/divmora/code-review-console/issues/79)) ([f23530d](https://github.com/divmora/code-review-console/commit/f23530db9d1c1de11198721264dbff14515a3238))
+* record client IP and browser on sign-ins, changes, sessions and webhooks ([#78](https://github.com/divmora/code-review-console/issues/78)) ([966234e](https://github.com/divmora/code-review-console/commit/966234e606e5475b399585db52f5688c258c512d)), closes [#66](https://github.com/divmora/code-review-console/issues/66)
+* run without a config file; startup settings from environment variables ([#75](https://github.com/divmora/code-review-console/issues/75)) ([7d077b1](https://github.com/divmora/code-review-console/commit/7d077b16b77bbc0a4d26871bde7869b789299928))
+* warn before the license or a code host token expires ([#77](https://github.com/divmora/code-review-console/issues/77)) ([6713fd5](https://github.com/divmora/code-review-console/commit/6713fd5c00597ead4563ce8fd0c740ab4534bf9b)), closes [#72](https://github.com/divmora/code-review-console/issues/72)
+
+
+### Bug Fixes
+
+* **dashboard:** admins only by default; choose token or public access in the panel ([#76](https://github.com/divmora/code-review-console/issues/76)) ([d995872](https://github.com/divmora/code-review-console/commit/d995872f73cc51ee82221d753ccd8b3e2c394134))
+* **ui:** Code hosts check results that fit and don't look verified; polish ([#81](https://github.com/divmora/code-review-console/issues/81)) ([a1d817e](https://github.com/divmora/code-review-console/commit/a1d817eff5831f527036b14a93a9a439fe8d4df7)), closes [#70](https://github.com/divmora/code-review-console/issues/70) [#71](https://github.com/divmora/code-review-console/issues/71)
+
 ## [0.9.0](https://github.com/divmora/code-review-console/compare/v0.8.0...v0.9.0) (2026-11-23)
 
 
