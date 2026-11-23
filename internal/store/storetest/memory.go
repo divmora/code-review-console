@@ -881,3 +881,27 @@ func (m *Memory) ListAudit(_ context.Context, limit int) ([]store.AuditEntry, er
 func (m *Memory) Close() {}
 
 var _ store.Store = (*Memory)(nil)
+
+// AgeSessions moves every session's last request d into the past (tests
+// of the idle timeout).
+func (m *Memory) AgeSessions(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, s := range m.sessions {
+		s.LastSeen = s.LastSeen.Add(-d)
+		m.sessions[k] = s
+	}
+}
+
+// LastSeen returns the newest session's last request (tests).
+func (m *Memory) LastSeen() time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var t time.Time
+	for _, s := range m.sessions {
+		if s.LastSeen.After(t) {
+			t = s.LastSeen
+		}
+	}
+	return t
+}

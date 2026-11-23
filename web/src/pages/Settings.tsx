@@ -14,7 +14,7 @@ type Eff = {
   allowlist: boolean; require_reviewer: boolean; skip_branch_sync: boolean; sync_source_branches: string[];
   score_labels: boolean; commit_status: boolean; review_retention_days: number; webhook_retention_days: number;
   learnings_enabled: boolean; learnings_auto_activate: boolean; daily_token_budget: number; repo_daily_token_budget: number;
-  dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; command_access: "write" | "anyone"; review_defaults: Overrides; source?: Record<string, string>;
+  dashboard_enabled: boolean; hide_repos: boolean; dashboard_title: string; command_access: "write" | "anyone"; session_idle_minutes: number; review_defaults: Overrides; source?: Record<string, string>;
 };
 
 type SessionRow = { id: number; email: string; name: string; created: string; expires: string; current: boolean; ip?: string; user_agent?: string; last_seen?: string };
@@ -30,6 +30,7 @@ const settingLabel: Record<string, string> = {
   repo_daily_token_budget: "Daily tokens, per repository", review_retention_days: "Keep reviews",
   webhook_retention_days: "Keep webhook deliveries", dashboard_enabled: "Dashboard", hide_repos: "Repository names",
   dashboard_title: "Dashboard title",
+  session_idle_minutes: "Sign out after inactivity",
 };
 
 // Sessions lists who is signed in to the admin panel and signs sessions
@@ -236,6 +237,12 @@ export default function Settings() {
               note={!has.metrics && v.review_retention_days > me.free_retention_days ? <span className="locknote text-xs text-warning">Without a license with metrics and long history, reviews are kept {me.free_retention_days} days.</span> : null}
             />
             <Num label="Keep webhook deliveries (days)" min={1} max={3650} value={v.webhook_retention_days} onChange={set("webhook_retention_days")} />
+          </FormGrid>
+        </Group>
+        <Group title="Admin sessions" description="Every admin session also ends after session_ttl (12 hours by default), whatever happens.">
+          <FormGrid>
+            <Num label="Sign out after inactivity (minutes)" min={0} max={1440} placeholder="0 = never" value={v.session_idle_minutes} onChange={set("session_idle_minutes")}
+              note={<Note className="text-xs">A session that makes no request for this long is signed out, so a browser left open on a shared machine doesn't keep admin rights. The panel's own refreshes (Setup, the dashboard) don't count as activity. 5 to 1440, or 0 for never.</Note>} />
           </FormGrid>
         </Group>
         <Group title="Status dashboard" description="Who can open it is set under Status dashboard access, further down.">

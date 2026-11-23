@@ -1323,3 +1323,57 @@ func TestAssetsNeverListDirectories(t *testing.T) {
 		t.Errorf("files are still served: %d", code)
 	}
 }
+
+func TestSessionIdleTimeout(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	if _, body := e.do(t, "GET", "/admin/api/settings", "", nil); !bytes.Contains(body, []byte(`"session_idle_minutes":60`)) {
+		t.Fatalf("60 minutes by default: %s", body)
+	}
+
+	// Background refreshes don't count as activity; a real request does.
+	e.st.AgeSessions(10 * time.Minute)
+	before := e.st.LastSeen()
+	req, _ := http.NewRequest("GET", e.app.URL+"/admin/api/setup", nil)
+	req.Header.Set("X-Background", "1")
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 || !e.st.LastSeen().Equal(before) {
+		t.Errorf("a background refresh must not touch the session: %d", resp.StatusCode)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/setup", "", nil); code != 200 || !e.st.LastSeen().After(before) {
+		t.Errorf("a real request counts as activity: %d", code)
+	}
+
+	// An hour without activity signs the session out, background or not.
+	e.st.AgeSessions(61 * time.Minute)
+	req, _ = http.NewRequest("GET", e.app.URL+"/admin/api/setup", nil)
+	req.Header.Set("X-Background", "1")
+	if resp, err = e.client.Do(req); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Errorf("idle session: %d", resp.StatusCode)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/me", "", nil); code != 401 {
+		t.Errorf("and it stays signed out: %d", code)
+	}
+	ended, _ := e.st.SearchAudit(context.Background(), store.AuditFilter{Action: "session.ended"})
+	if len(ended) != 1 || !bytes.Contains(ended[0].Detail, []byte(`"reason":"idle"`)) {
+		t.Errorf("recorded as session.ended, reason idle: %+v", ended)
+	}
+
+	// 0 turns the idle timeout off; out-of-range values are refused.
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	for v, want := range map[int]int{0: 200, 3: 400, 2000: 400, 30: 200} {
+		if code, _ := e.do(t, "PUT", "/admin/api/settings", csrf, map[string]any{"session_idle_minutes": v, "dashboard_title": "x"}); code != want {
+			t.Errorf("idle %d: %d, want %d", v, code, want)
+		}
+	}
+}

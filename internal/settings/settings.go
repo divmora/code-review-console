@@ -62,7 +62,14 @@ type Stored struct {
 	// (review, full review, questions): "write" (authors who can push,
 	// the default) or "anyone" who can comment.
 	CommandAccess string `json:"command_access,omitempty"`
+	// SessionIdleMinutes signs an admin session out after this long
+	// without a request from the person (background refreshes don't
+	// count); 0 = only session_ttl applies.
+	SessionIdleMinutes *int `json:"session_idle_minutes,omitempty"`
 }
+
+// DefaultSessionIdleMinutes is the idle timeout until one is saved.
+const DefaultSessionIdleMinutes = 60
 
 // Command access values.
 const (
@@ -90,6 +97,7 @@ type Effective struct {
 	HideRepos             bool              `json:"hide_repos"`
 	DashboardTitle        string            `json:"dashboard_title"`
 	CommandAccess         string            `json:"command_access"`
+	SessionIdleMinutes    int               `json:"session_idle_minutes"`
 	Source                map[string]string `json:"source"`
 }
 
@@ -124,8 +132,8 @@ func (s *Service) Defaults() Effective {
 		LearningsEnabled:    true, LearningsAutoActivate: false,
 		WebhookRetentionDays: days(s.cfg.Server.WebhookRetention, 14),
 		DashboardEnabled:     d.Enabled, HideRepos: d.HideRepos, DashboardTitle: d.Title,
-		CommandAccess: CommandAccessWrite,
-		Source:        map[string]string{},
+		CommandAccess: CommandAccessWrite, SessionIdleMinutes: DefaultSessionIdleMinutes,
+		Source: map[string]string{},
 	}
 }
 
@@ -207,6 +215,7 @@ func (s *Service) resolve(st Stored) Effective {
 		e.SyncSourceBranches, e.Source["sync_source_branches"] = st.SyncSourceBranches, "database"
 	}
 	pick("hide_repos", &e.HideRepos, st.HideRepos)
+	pickInt("session_idle_minutes", &e.SessionIdleMinutes, st.SessionIdleMinutes)
 	e.Source["command_access"] = "config"
 	if st.CommandAccess != "" {
 		e.CommandAccess, e.Source["command_access"] = st.CommandAccess, "database"
@@ -322,6 +331,9 @@ func (st Stored) Validate(profiles map[string]bool, haveStore bool) error {
 	}
 	if strings.ContainsAny(st.DashboardTitle, "<>") {
 		return errors.New("dashboard title cannot contain < or >")
+	}
+	if v := st.SessionIdleMinutes; v != nil && *v != 0 && (*v < 5 || *v > 1440) {
+		return errors.New("sign out after inactivity: between 5 and 1440 minutes, or 0 for never")
 	}
 	for name, v := range map[string]*int{"review retention": st.ReviewRetentionDays, "webhook retention": st.WebhookRetentionDays} {
 		if v != nil && (*v < 1 || *v > 3650) {

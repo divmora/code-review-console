@@ -15,8 +15,10 @@ export class APIError extends Error {
   }
 }
 
-export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+export async function api<T = any>(method: string, path: string, body?: unknown, background = false): Promise<T> {
   const headers: Record<string, string> = {};
+  // A periodic refresh isn't the person being active (idle sign-out).
+  if (background) headers["X-Background"] = "1";
   if (method !== "GET") headers["X-CSRF-Token"] = csrf;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const r = await fetch(path, { method, headers, cache: "no-store", body: body === undefined ? undefined : JSON.stringify(body) });
@@ -37,6 +39,8 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
 }
 
 export const get = <T = any>(path: string) => api<T>("GET", path);
+// getBackground is a GET the page makes on its own, such as a refresh.
+export const getBackground = <T = any>(path: string) => api<T>("GET", path, undefined, true);
 export const post = <T = any>(path: string, body?: unknown) => api<T>("POST", path, body);
 export const put = <T = any>(path: string, body?: unknown) => api<T>("PUT", path, body);
 export const del = <T = any>(path: string) => api<T>("DELETE", path);
