@@ -330,7 +330,10 @@ engine** and **Bot and review jobs**: how many reviews run at once, the queue si
 timeout, the wait after a push, the codereview CLI's review settings (passes, verification, batch
 size, repository defaults…), whether repositories may pick a model, the default bot name, extra
 environment variables for review jobs, and who can open the status dashboard (see below). These apply without
-a restart; another replica picks them up within 30 seconds.
+a restart; another replica picks them up within 30 seconds. Code hosts and webhooks (added, changed,
+rotated or deleted in the panel or with `console hosts import`) apply on every replica within 5
+seconds, and a delivery to a webhook URL a replica doesn't know yet makes it check the database
+first, so a webhook created a moment ago works on its first delivery.
 
 **Upgrading from an older config file.** These keys used to be in the file: `github`, `gitlab`,
 `bitbucket`, `models`, `model`, `fallback`, `repos`, `license`, `server.review_retention`,
@@ -484,7 +487,8 @@ hosts:
 
 Import creates or updates hosts (matched by platform and URL) and webhooks (matched by id), and
 never deletes. An absent secret keeps the stored value. The whole file is checked before anything is
-written, and unknown fields are rejected. Imports are audited as `cli: hosts import`.
+written, and unknown fields are rejected. Imports are audited as `cli: hosts import`. A running console
+applies the import within 5 seconds, without a restart (versions before 0.12 need a restart).
 
 ## Upgrading
 

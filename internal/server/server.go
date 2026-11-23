@@ -63,6 +63,10 @@ type Server struct {
 	// durableDone is closed when durableLoop has stopped.
 	owner       string
 	durableDone chan struct{}
+	// missRefresh is when a webhook on an unknown URL last made the hosts
+	// reload (see refreshOnMiss); missMu guards it.
+	missMu      sync.Mutex
+	missRefresh time.Time
 	// stopPrune ends the review-history cleanup loop.
 	stopPrune chan struct{}
 	stopOnce  sync.Once
@@ -175,8 +179,60 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		go s.expiryLoop()
 		s.durableDone = make(chan struct{})
 		go s.durableLoop()
+		go s.hostsLoop()
 	}
 	return s, nil
+}
+
+// hostsRefreshEvery is how soon a host or webhook changed elsewhere (another
+// replica, "console hosts import") applies here.
+const hostsRefreshEvery = 5 * time.Second
+
+// hostsLoop reloads the code hosts and webhooks when the database has
+// changed (issue #101).
+func (s *Server) hostsLoop() {
+	tk := time.NewTicker(hostsRefreshEvery)
+	defer tk.Stop()
+	for {
+		select {
+		case <-s.stopPrune:
+			return
+		case <-tk.C:
+		}
+		s.reloadChangedHosts(context.Background())
+	}
+}
+
+func (s *Server) reloadChangedHosts(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	changed, err := s.hosts.Refresh(ctx)
+	if err != nil {
+		s.logger.Warn("could not check for code host changes", "error", err)
+	} else if changed {
+		s.logger.Info("code hosts or webhooks changed elsewhere: reloaded")
+	}
+}
+
+// refreshOnMiss reloads the hosts before a webhook URL is answered as
+// unknown, so a webhook created a moment ago (on another replica, or by an
+// import) works on its first delivery. It checks at most once a second, so
+// requests to made-up URLs can't load the database.
+func (s *Server) refreshOnMiss(ctx context.Context) bool {
+	s.missMu.Lock()
+	if time.Since(s.missRefresh) < time.Second {
+		s.missMu.Unlock()
+		return false
+	}
+	s.missRefresh = time.Now()
+	s.missMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	changed, err := s.hosts.Refresh(ctx)
+	if err != nil {
+		s.logger.Warn("could not check for code host changes", "error", err)
+	}
+	return changed
 }
 
 // applyTuning resizes the queue to the saved settings.

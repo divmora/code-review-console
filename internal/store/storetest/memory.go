@@ -18,24 +18,26 @@ import (
 
 // Memory is a thread-safe in-memory store.Store.
 type Memory struct {
-	mu        sync.Mutex
-	nextID    int64
-	repos     map[int64]*store.Repo
-	rules     map[int64]*store.Rule
-	hooks     []store.WebhookEvent
-	changes   []store.ChangeRequest
-	queued    map[string]store.QueuedJob
-	owners    map[string]time.Time
-	hosts     map[int64]*store.HostRow
-	hooksEP   map[string]*store.WebhookEndpoint
-	learns    []*store.Learning
-	jobs      []store.Job
-	sessions  map[string]store.Session
-	sessionID int64
-	seenKeys  map[string]time.Time
-	audit     []store.AuditEntry
-	models    map[string]store.ModelProfile
-	settings  map[string][]byte
+	mu     sync.Mutex
+	nextID int64
+	// hostsVersion is bumped by every host and webhook write.
+	hostsVersion int64
+	repos        map[int64]*store.Repo
+	rules        map[int64]*store.Rule
+	hooks        []store.WebhookEvent
+	changes      []store.ChangeRequest
+	queued       map[string]store.QueuedJob
+	owners       map[string]time.Time
+	hosts        map[int64]*store.HostRow
+	hooksEP      map[string]*store.WebhookEndpoint
+	learns       []*store.Learning
+	jobs         []store.Job
+	sessions     map[string]store.Session
+	sessionID    int64
+	seenKeys     map[string]time.Time
+	audit        []store.AuditEntry
+	models       map[string]store.ModelProfile
+	settings     map[string][]byte
 }
 
 // New returns an empty store.
@@ -218,6 +220,7 @@ func (m *Memory) ListHosts(context.Context) ([]store.HostRow, error) {
 func (m *Memory) PutHost(_ context.Context, in store.HostRow, actor string) (*store.HostRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.hostsVersion++
 	in.Platform, in.Host = strings.ToLower(in.Platform), strings.ToLower(in.Host)
 	var h *store.HostRow
 	for _, x := range m.hosts {
@@ -244,6 +247,7 @@ func (m *Memory) PutHost(_ context.Context, in store.HostRow, actor string) (*st
 func (m *Memory) DeleteHost(_ context.Context, id int64, actor string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.hostsVersion++
 	h, ok := m.hosts[id]
 	if !ok {
 		return store.ErrNotFound
@@ -277,6 +281,7 @@ func (m *Memory) ListWebhookEndpoints(context.Context) ([]store.WebhookEndpoint,
 func (m *Memory) PutWebhookEndpoint(_ context.Context, in store.WebhookEndpoint, actor string) (*store.WebhookEndpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.hostsVersion++
 	if _, ok := m.hosts[in.HostID]; !ok {
 		return nil, store.ErrNotFound
 	}
@@ -298,6 +303,7 @@ func (m *Memory) PutWebhookEndpoint(_ context.Context, in store.WebhookEndpoint,
 func (m *Memory) DeleteWebhookEndpoint(_ context.Context, id string, actor string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.hostsVersion++
 	e, ok := m.hooksEP[id]
 	if !ok {
 		return store.ErrNotFound
@@ -1051,4 +1057,10 @@ func (m *Memory) Queued() []store.QueuedJob {
 		out = append(out, q)
 	}
 	return out
+}
+
+func (m *Memory) HostsVersion(context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hostsVersion, nil
 }

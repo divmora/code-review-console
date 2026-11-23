@@ -462,6 +462,10 @@ type Store interface {
 	ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error)
 	PutWebhookEndpoint(ctx context.Context, e WebhookEndpoint, actor string) (*WebhookEndpoint, error)
 	DeleteWebhookEndpoint(ctx context.Context, id string, actor string) error
+	// HostsVersion changes whenever a host or webhook endpoint is written
+	// or deleted, by any process, so a running console can tell that its
+	// copy is stale (issue #101).
+	HostsVersion(ctx context.Context) (int64, error)
 
 	// Learnings. CreateLearning ignores a duplicate SourceRef (returns
 	// ErrDuplicate).
@@ -849,6 +853,9 @@ var migrations = []string{
 	CREATE INDEX jobs_scored_idx ON jobs (platform, host, lower(repo), id DESC) WHERE score_quality IS NOT NULL;
 	ALTER TABLE job_metrics ADD COLUMN scored integer NOT NULL DEFAULT 0, ADD COLUMN quality_sum bigint NOT NULL DEFAULT 0,
 		ADD COLUMN security_sum bigint NOT NULL DEFAULT 0, ADD COLUMN maintainability_sum bigint NOT NULL DEFAULT 0;` + backfillScores,
+	// 18: a version that host and webhook writes bump, so every replica
+	// (and changes from "console hosts import") reloads them (issue #101).
+	hostsVersionSQL,
 }
 
 // backfillScores fills in the scores of jobs whose stored result has them
@@ -866,6 +873,21 @@ const backfillScores = `
 			count(*) AS n, sum(score_quality) AS q, sum(score_security) AS sec, sum(score_maintainability) AS mt
 		FROM jobs, unnest(ARRAY['hour', 'day', 'month']) AS g WHERE score_quality IS NOT NULL GROUP BY 1, 2, 3, 4, 5) s
 	WHERE m.granularity = s.g AND m.bucket = s.bucket AND m.platform = s.platform AND m.host = s.host AND m.repo = s.repo;`
+
+// hostsVersionSQL keeps a counter that every write to hosts or
+// webhook_endpoints bumps (migration 18).
+const hostsVersionSQL = `
+	CREATE TABLE hosts_version (id integer PRIMARY KEY CHECK (id = 1), version bigint NOT NULL);
+	INSERT INTO hosts_version VALUES (1, 1);
+	CREATE FUNCTION bump_hosts_version() RETURNS trigger LANGUAGE plpgsql AS $$
+	BEGIN
+		UPDATE hosts_version SET version = version + 1 WHERE id = 1;
+		RETURN NULL;
+	END $$;
+	CREATE TRIGGER hosts_version_bump AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON hosts
+		FOR EACH STATEMENT EXECUTE FUNCTION bump_hosts_version();
+	CREATE TRIGGER webhook_endpoints_version_bump AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON webhook_endpoints
+		FOR EACH STATEMENT EXECUTE FUNCTION bump_hosts_version();`
 
 // migrate applies pending migrations under an advisory lock, so several
 // server instances can start at once.
@@ -1358,6 +1380,12 @@ func endpointAudit(e *WebhookEndpoint) map[string]any {
 		return nil
 	}
 	return map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "accept_secret_token": e.AcceptSecretToken}
+}
+
+func (p *Postgres) HostsVersion(ctx context.Context) (int64, error) {
+	var v int64
+	err := p.pool.QueryRow(ctx, `SELECT version FROM hosts_version WHERE id = 1`).Scan(&v)
+	return v, err
 }
 
 func (p *Postgres) ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error) {
