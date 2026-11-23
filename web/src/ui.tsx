@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import type { Feature, Me, Overrides } from "./types";
+import { diffCount, useUnsaved } from "./unsaved";
 
 // ---- toast ----
 
@@ -256,8 +257,12 @@ const kindClass: Record<Kind, string> = {
   warn: "border-transparent bg-warning-soft text-warning",
 };
 
-export function StateBadge({ kind, children }: { kind: Kind; children: ReactNode }) {
-  return <Badge className={cn("state", kind, kindClass[kind])}>{children}</Badge>;
+export function StateBadge({ kind, children, className, title }: { kind: Kind; children: ReactNode; className?: string; title?: string }) {
+  return (
+    <Badge className={cn("state", kind, kindClass[kind], className)} title={title}>
+      {children}
+    </Badge>
+  );
 }
 
 export function Chips({ items, empty }: { items: string[]; empty?: string }) {
@@ -307,9 +312,11 @@ export function Tri({ value, onChange, on, off, inherit = "Inherit", label, disa
 
 // ---- review settings editor (repositories, rules, global defaults) ----
 
-export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = "Server default", saveLabel = "Save settings", danger }: {
+export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = "Server default", saveLabel = "Save settings", danger, unsaved }: {
   value?: Overrides;
   onSave: (s: Overrides) => void;
+  // unsaved names the form in the unsaved-changes bar (none: not tracked).
+  unsaved?: string;
   onCancel?: () => void;
   extra?: ReactNode;
   inheritModel?: string;
@@ -325,7 +332,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
   const [auto, setAuto] = useState<boolean | null>(st.auto_review ?? null);
   const [drafts, setDrafts] = useState<boolean | null>(st.drafts ?? null);
   const [instr, setInstr] = useState(st.instructions ?? "");
-  const save = () => {
+  const current = (): Overrides => {
     const s: Overrides = {};
     if (profile) s.profile = profile;
     if (max) s.max_comments = parseInt(max, 10);
@@ -334,8 +341,25 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     if (auto !== null) s.auto_review = auto;
     if (drafts !== null) s.drafts = drafts;
     if (instr.trim()) s.instructions = instr.trim();
-    onSave(s);
+    return s;
   };
+  const save = () => onSave(current());
+  const loaded: Overrides = {
+    ...(st.profile ? { profile: st.profile } : {}), ...(st.max_comments ? { max_comments: st.max_comments } : {}),
+    ...(st.min_severity ? { min_severity: st.min_severity } : {}), ...(st.model ? { model: st.model } : {}),
+    ...(st.auto_review != null ? { auto_review: st.auto_review } : {}), ...(st.drafts != null ? { drafts: st.drafts } : {}),
+    ...(st.instructions?.trim() ? { instructions: st.instructions.trim() } : {}),
+  };
+  const discard = () => {
+    setProfile(st.profile ?? "");
+    setMax(st.max_comments ? String(st.max_comments) : "");
+    setSev(st.min_severity ?? "");
+    setModel(st.model ?? "");
+    setAuto(st.auto_review ?? null);
+    setDrafts(st.drafts ?? null);
+    setInstr(st.instructions ?? "");
+  };
+  useUnsaved("editor:" + (unsaved || ""), unsaved ? { label: unsaved, count: diffCount(current(), loaded, ["profile", "max_comments", "min_severity", "model", "auto_review", "drafts", "instructions"]), save, discard } : null);
   return (
     <div className="grid gap-5">
       {extra}

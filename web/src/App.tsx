@@ -25,6 +25,7 @@ import { get, post, setCSRF } from "./api";
 import type { Feature, Me } from "./types";
 import { fmtDate } from "./format";
 import { ConfirmProvider, MeCtx, RefreshMeCtx, Section, ToastProvider } from "./ui";
+import { UnsavedBar } from "./unsaved";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,7 +66,7 @@ import Hosts from "./pages/Hosts";
 import Rules from "./pages/Rules";
 import Webhooks from "./pages/Webhooks";
 import Settings from "./pages/Settings";
-import Approvals from "./pages/Approvals";
+import ChangeRequests from "./pages/ChangeRequests";
 import Audit from "./pages/Audit";
 import License from "./pages/License";
 import Models from "./pages/Models";
@@ -86,7 +87,7 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "rules", title: "Rules", icon: ListChecks, el: <Rules />, paid: "rules" },
   { path: "webhooks", title: "Webhooks", icon: Webhook, el: <Webhooks /> },
   { path: "settings", title: "Settings", icon: SlidersHorizontal, el: <Settings /> },
-  { path: "approvals", title: "Approvals", icon: ClipboardCheck, el: <Approvals /> },
+  { path: "change-requests", title: "Change requests", icon: ClipboardCheck, el: <ChangeRequests /> },
   { path: "audit", title: "Audit log", icon: ScrollText, el: <Audit />, paid: "audit" },
   { path: "license", title: "License", icon: KeyRound, el: <License /> },
 ];
@@ -223,7 +224,7 @@ function AppSidebar({ me }: { me: Me }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="side" aria-label="Sections">
-              {sections.filter((s) => s.path !== "approvals" || me.role === "operator" || (me.role === "admin" && (me.license.features.includes("sso_rules") || !!me.pending_approvals))).map((s) => {
+              {sections.filter((s) => s.path !== "change-requests" || me.role === "operator" || (me.role === "admin" && (me.license.features.includes("sso_rules") || !!me.pending_approvals))).map((s) => {
                 const locked = s.paid && !me.license.features.includes(s.paid);
                 const active = current(loc.pathname)?.path === s.path;
                 return (
@@ -239,8 +240,8 @@ function AppSidebar({ me }: { me: Me }) {
                         <span title={`${me.setup.done} of ${me.setup.total} required setup steps done`}>{me.setup.done}/{me.setup.total}</span>
                       </SidebarMenuBadge>
                     )}
-                    {s.path === "approvals" && !!me.pending_approvals && (
-                      <SidebarMenuBadge className="text-[10px]" title={me.pending_approvals + " waiting for approval"}>{me.pending_approvals}</SidebarMenuBadge>
+                    {s.path === "change-requests" && !!me.pending_approvals && (
+                      <SidebarMenuBadge className="text-[10px]" title={me.pending_approvals + " waiting for an admin"}>{me.pending_approvals}</SidebarMenuBadge>
                     )}
                     {locked && (
                       <SidebarMenuBadge className="paid text-[10px] font-normal text-muted-foreground" title="Needs a license">
@@ -317,10 +318,23 @@ function SignOutPage() {
   );
 }
 
+// SignedInPage is where signing in from another tab lands after a save
+// found the session had ended.
+function SignedInPage() {
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="h2">You're signed in again</CardTitle>
+        <CardDescription>Close this tab and go back to the page with your changes, then save them.</CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
 function Header({ me }: { me: Me }) {
   const loc = useLocation();
   const s = current(loc.pathname);
-  const title = s?.title ?? (loc.pathname === "/logout" ? "Sign out" : "Page not found");
+  const title = s?.title ?? (loc.pathname === "/logout" ? "Sign out" : loc.pathname === "/signed-in" ? "Signed in" : "Page not found");
   useEffect(() => {
     document.title = title + " · Code review admin";
   }, [title]);
@@ -348,13 +362,35 @@ export default function App() {
         setMe(m);
       })
       .catch((e) => setErr(String(e.message || e)));
+  // signedOut: a save found the session ended; the page keeps its edits
+  // until the admin signs in again in another tab and comes back.
+  const [signedOut, setSignedOut] = useState(false);
   useEffect(() => {
     loadMe();
-    // A change sent for approval updates the Approvals count.
+    // A change sent for approval updates the Change requests count.
     const onPending = () => loadMe();
+    const onSignedOut = () => setSignedOut(true);
     window.addEventListener("crc-pending", onPending);
-    return () => window.removeEventListener("crc-pending", onPending);
+    window.addEventListener("crc-signed-out", onSignedOut);
+    return () => {
+      window.removeEventListener("crc-pending", onPending);
+      window.removeEventListener("crc-signed-out", onSignedOut);
+    };
   }, []);
+  useEffect(() => {
+    if (!signedOut) return;
+    // Back from signing in: take the new session (and its CSRF token).
+    const onFocus = () =>
+      get<Me>("/admin/api/me")
+        .then((m) => {
+          setCSRF(m.csrf);
+          setMe(m);
+          setSignedOut(false);
+        })
+        .catch(() => {});
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [signedOut]);
   if (!me) return <div className="grid min-h-svh place-items-center text-sm text-muted-foreground">{err || "Loading…"}</div>;
   return (
     <MeCtx.Provider value={me}>
@@ -367,6 +403,18 @@ export default function App() {
                 <SidebarInset className="min-w-0">
                   <Header me={me} />
                   <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 md:p-6">
+                    {signedOut && (
+                      <Alert role="alert" className="banner border-warning/60">
+                        <AlertDescription className="flex flex-wrap items-center gap-3">
+                          <span>Your session ended. Sign in again in a new tab, then come back here and save: your changes are kept on this page.</span>
+                          <Button size="sm" variant="outline" asChild>
+                            <a href={"/admin/login?next=" + encodeURIComponent("/admin/signed-in")} target="_blank" rel="noopener">
+                              Sign in in a new tab
+                            </a>
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    )}
                     <LicenseBanner me={me} />
                     <ExpiryBanner me={me} />
                     {me.role === "viewer" && (
@@ -379,10 +427,13 @@ export default function App() {
                       {sections.map((s) => (
                         <Route key={s.path} path={"/" + s.path} element={<Section key={s.path} name={s.title}>{s.el}</Section>} />
                       ))}
+                      <Route path="/approvals" element={<Navigate to="/change-requests" replace />} />
                       <Route path="/logout" element={<SignOutPage />} />
+                      <Route path="/signed-in" element={<SignedInPage />} />
                       <Route path="*" element={<NotFoundPage />} />
                     </Routes>
                   </div>
+                  <UnsavedBar />
                 </SidebarInset>
               </SidebarProvider>
             </ConfirmProvider>

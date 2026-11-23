@@ -171,6 +171,13 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
       return el("span", { cls: "sc " + band, title: x[0] + " " + x[1], text: x[0][0] + " " + x[1] });
     }));
   }
+  // approval marks a review that approved the merge request on the code
+  // host (or withdrew the bot's approval).
+  function approval(a) {
+    if (a === "approved" || a === "already_approved") return [" ", el("span", { cls: "sc ok", title: a === "approved" ? "Approved by the bot" : "Already approved by the bot", text: "✓ approved" })];
+    if (a === "withdrawn") return [" ", el("span", { cls: "sc warn", title: "The bot withdrew its approval", text: "approval withdrawn" })];
+    return [];
+  }
   function tile(n, l) { return el("div", { cls: "tile" }, [el("div", { cls: "n", text: n }), el("div", { cls: "l", text: l })]); }
   function set(id, node) { var p = document.getElementById(id); p.replaceChildren(node); }
 
@@ -224,7 +231,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
           var short = r.error.length > 140 ? r.error.slice(0, 140) + "…" : r.error;
           note = el("span", { cls: "err", text: short, title: r.error });
         }
-        var cells = [pr(r), el("td", { text: r.kind }), el("td", null, [badge(r.state)])];
+        var cells = [pr(r), el("td", { text: r.kind }), el("td", null, [badge(r.state)].concat(approval(r.approval)))];
         if (withScores) cells.push(scores(r.scores));
         return el("tr", null, cells.concat([
           el("td", { text: ago(r.finished, now) }), el("td", { cls: "num", text: r.started ? dur(ms(r.finished) - ms(r.started)) : "–" }),

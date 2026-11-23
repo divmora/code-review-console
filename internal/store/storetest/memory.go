@@ -496,6 +496,9 @@ func (m *Memory) InsertJob(_ context.Context, j store.Job) (int64, error) {
 	defer m.mu.Unlock()
 	m.nextID++
 	j.ID = m.nextID
+	if j.Approval == "" {
+		j.Approval = store.ApprovalOf(j.Result)
+	}
 	m.jobs = append(m.jobs, j)
 	return j.ID, nil
 }
@@ -528,7 +531,8 @@ func jobMatches(j store.Job, f store.JobFilter) bool {
 		(f.RepoLike == "" || strings.Contains(strings.ToLower(j.Repo), strings.ToLower(f.RepoLike))) &&
 		(f.State == "" || j.State == f.State) && (f.Kind == "" || j.Kind == f.Kind) && (f.Trigger == "" || j.Trigger == f.Trigger) &&
 		(f.From.IsZero() || !j.Finished.Before(f.From)) && (f.To.IsZero() || j.Finished.Before(f.To)) &&
-		(f.BeforeID == 0 || j.ID < f.BeforeID) && scoreMatches(j, f) && findingMatches(j, f)
+		(f.BeforeID == 0 || j.ID < f.BeforeID) && scoreMatches(j, f) && findingMatches(j, f) &&
+		(f.Approval == "" || j.Approval == f.Approval)
 }
 
 func findingMatches(j store.Job, f store.JobFilter) bool {
@@ -1116,6 +1120,9 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 		}
 		pt := point(j.Finished)
 		out.Comments += j.Comments
+		if j.Approval == "approved" {
+			out.Approvals++
+		}
 		if j.Scores != nil {
 			out.Scored++
 			out.QualitySum += int64(j.Scores.Quality)

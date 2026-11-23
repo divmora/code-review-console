@@ -236,7 +236,10 @@ func (f *fakeReviewer) ReviewNow(_ context.Context, ref vcs.Ref, full bool, by s
 
 func TestSafeNext(t *testing.T) {
 	for in, want := range map[string]string{"/admin/rules": "/admin/rules", "/admin/settings": "/admin/settings",
-		"https://evil.example/admin/rules": "/admin", "//evil.example": "/admin", "/admin/../x": "/admin", "": "/admin", "/admin/nope": "/admin"} {
+		"https://evil.example/admin/rules": "/admin", "//evil.example": "/admin", "/admin/../x": "/admin", "": "/admin", "/admin/nope": "/admin",
+		"/admin/reviews?score_kind=security&score_below=60": "/admin/reviews?score_below=60&score_kind=security",
+		"/admin/reviews?x=1#frag":                           "/admin/reviews?x=1%23frag", "/admin/nope?x=1": "/admin", "/admin/signed-in": "/admin/signed-in",
+		"/admin/reviews?next=//evil.example": "/admin/reviews?next=%2F%2Fevil.example"} {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
 		}
@@ -1443,6 +1446,17 @@ func TestImpactAPI(t *testing.T) {
 	if code != 200 || !bytes.Contains(body, []byte(`"review_runs": 3`)) {
 		t.Errorf("json export: %d %s", code, body)
 	}
+	if _, err := e.st.InsertJob(ctx, store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.com", Repo: "g/web", Number: 9, State: "done",
+		Enqueued: now, Started: now, Finished: now, Result: json.RawMessage(`{"approval":"approved"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var rv struct{ Reviews []store.Job }
+	if code, body := e.do(t, "GET", "/admin/api/reviews?approval=approved", "", nil); json.Unmarshal(body, &rv) != nil || code != 200 || len(rv.Reviews) != 1 || rv.Reviews[0].Approval != "approved" {
+		t.Errorf("reviews the bot approved: %d %s", code, body)
+	}
+	if code, body := e.do(t, "GET", "/admin/api/impact?range=30d", "", nil); code != 200 || !bytes.Contains(body, []byte(`"approvals":1`)) {
+		t.Errorf("approvals on Impact: %d %s", code, body)
+	}
 	if audits, _ := e.st.SearchAudit(ctx, store.AuditFilter{Action: "impact.export"}); len(audits) != 2 {
 		t.Errorf("exports are audited: %d", len(audits))
 	}
@@ -1450,6 +1464,19 @@ func TestImpactAPI(t *testing.T) {
 
 // TestAdminSectionsMatchApp: every page in web/src/App.tsx opens from its
 // own URL (a reload or a shared link), and nothing else does.
+func TestApprovalsPageMoved(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Get(e.app.URL + "/admin/approvals")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPermanentRedirect || resp.Header.Get("Location") != "/admin/change-requests" {
+		t.Errorf("old Approvals URL: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
 func TestAdminSectionsMatchApp(t *testing.T) {
 	src, err := os.ReadFile("../../web/src/App.tsx")
 	if err != nil {

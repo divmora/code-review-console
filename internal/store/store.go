@@ -68,6 +68,11 @@ type Job struct {
 	// Scores are the review's scores (nil for other jobs, skipped
 	// reviews and CLIs that don't score).
 	Scores *Scores `json:"scores,omitempty"`
+	// Approval is what the review did with the bot's approval on the code
+	// host (approved, already_approved, withdrawn, not_approved,
+	// unchanged, failed), or "" when approvals are off. InsertJob reads it
+	// from Result when it is empty.
+	Approval string `json:"approval,omitempty"`
 }
 
 // Scores rate a review's change from 1 (poor) to 100 (excellent), as the
@@ -305,6 +310,8 @@ type JobFilter struct {
 	// Severity "any" means any finding.
 	Severity string
 	Category string
+	// Approval keeps reviews with this approval outcome ("approved", ...).
+	Approval string
 }
 
 // Metric granularities.
@@ -869,6 +876,36 @@ var migrations = []string{
 	impactSQL,
 	// 20: rules can turn the bot's approval on or off.
 	`ALTER TABLE repo_rules ADD COLUMN approve boolean;`,
+	// 21: what each review did with the bot's approval, and approvals
+	// given per bucket for Impact (issue #115).
+	approvalSQL,
+}
+
+// approvalSQL adds jobs.approval and job_metrics.approvals, filled in
+// from stored results (migration 21).
+const approvalSQL = `
+	ALTER TABLE jobs ADD COLUMN approval text NOT NULL DEFAULT '';
+	UPDATE jobs SET approval = result->>'approval'
+	WHERE jsonb_typeof(result) = 'object' AND result->>'approval' IN ('approved', 'already_approved', 'withdrawn', 'not_approved', 'unchanged', 'failed');
+	CREATE INDEX jobs_approval_idx ON jobs (approval, id DESC) WHERE approval <> '';
+	ALTER TABLE job_metrics ADD COLUMN approvals integer NOT NULL DEFAULT 0;
+	UPDATE job_metrics m SET approvals = s.n
+	FROM (SELECT g, date_trunc(g, finished AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket, platform, host, lower(repo) AS repo, count(*) AS n
+		FROM jobs, unnest(ARRAY['hour', 'day', 'month']) AS g WHERE approval = 'approved' GROUP BY 1, 2, 3, 4, 5) s
+	WHERE m.granularity = s.g AND m.bucket = s.bucket AND m.platform = s.platform AND m.host = s.host AND m.repo = s.repo;`
+
+// Approval outcomes the CLI reports (its JSON "approval").
+var approvalOutcomes = map[string]bool{"approved": true, "already_approved": true, "withdrawn": true, "not_approved": true, "unchanged": true, "failed": true}
+
+// ApprovalOf is the approval outcome in a review result, or "".
+func ApprovalOf(result json.RawMessage) string {
+	var r struct {
+		Approval string `json:"approval"`
+	}
+	if len(result) == 0 || json.Unmarshal(result, &r) != nil || !approvalOutcomes[r.Approval] {
+		return ""
+	}
+	return r.Approval
 }
 
 // backfillScores fills in the scores of jobs whose stored result has them
@@ -1836,6 +1873,9 @@ func nullTime(t time.Time) *time.Time {
 }
 
 func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
+	if j.Approval == "" {
+		j.Approval = ApprovalOf(j.Result)
+	}
 	var result any
 	if len(j.Result) > 0 {
 		result = []byte(j.Result)
@@ -1849,12 +1889,12 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
 			merged, error, note, comments, files, tokens_in, tokens_out, model, result, requested_by,
-			score_quality, score_security, score_maintainability)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+			score_quality, score_security, score_maintainability, approval)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		RETURNING id`,
 		j.Kind, j.Platform, j.Host, j.Repo, j.Number, j.URL, j.Trigger, j.State, j.Enqueued, nullTime(j.Started), j.Finished,
 		j.Merged, j.Error, j.Note, j.Comments, j.Files, j.TokensIn, j.TokensOut, j.Model, result, j.RequestedBy,
-		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability")).Scan(&id)
+		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability"), j.Approval).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -1877,11 +1917,15 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	if j.Scores != nil {
 		sc, scored = *j.Scores, 1
 	}
+	approvals := 0
+	if j.Approval == "approved" {
+		approvals = 1
+	}
 	// One row per granularity; buckets are UTC.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO job_metrics (granularity, bucket, platform, host, repo, jobs, done, skipped, failed, comments, files, tokens_in, tokens_out, duration_ms,
-			scored, quality_sum, security_sum, maintainability_sum, reviews)
-		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+			scored, quality_sum, security_sum, maintainability_sum, reviews, approvals)
+		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		FROM unnest(ARRAY['hour', 'day', 'month']) AS g
 		ON CONFLICT (granularity, bucket, platform, host, repo) DO UPDATE SET
 			jobs = job_metrics.jobs + 1, done = job_metrics.done + EXCLUDED.done, skipped = job_metrics.skipped + EXCLUDED.skipped,
@@ -1891,9 +1935,9 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 			scored = job_metrics.scored + EXCLUDED.scored, quality_sum = job_metrics.quality_sum + EXCLUDED.quality_sum,
 			security_sum = job_metrics.security_sum + EXCLUDED.security_sum,
 			maintainability_sum = job_metrics.maintainability_sum + EXCLUDED.maintainability_sum,
-			reviews = job_metrics.reviews + EXCLUDED.reviews`,
+			reviews = job_metrics.reviews + EXCLUDED.reviews, approvals = job_metrics.approvals + EXCLUDED.approvals`,
 		j.Finished, j.Platform, j.Host, j.Repo, is("done"), is("skipped"), is("failed"), j.Comments, j.Files, j.TokensIn, j.TokensOut, durMS,
-		scored, sc.Quality, sc.Security, sc.Maintainability, reviews); err != nil {
+		scored, sc.Quality, sc.Security, sc.Maintainability, reviews, approvals); err != nil {
 		return 0, err
 	}
 	if err := recordImpact(ctx, tx, j); err != nil {
@@ -1960,7 +2004,7 @@ func (p *Postgres) PruneJobs(ctx context.Context, before, hourlyBefore time.Time
 }
 
 const jobCols = `id, kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
-	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by, score_quality, score_security, score_maintainability`
+	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by, score_quality, score_security, score_maintainability, approval`
 
 // scoreArg is one score for an insert (NULL without scores).
 func scoreArg(s *Scores, kind string) any {
@@ -1975,7 +2019,7 @@ func scanJob(row pgx.Row, withResult bool) (*Job, error) {
 	var started *time.Time
 	var q, sec, mt *int
 	dest := []any{&j.ID, &j.Kind, &j.Platform, &j.Host, &j.Repo, &j.Number, &j.URL, &j.Trigger, &j.State, &j.Enqueued, &started, &j.Finished,
-		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy, &q, &sec, &mt}
+		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy, &q, &sec, &mt, &j.Approval}
 	var result []byte
 	if withResult {
 		dest = append(dest, &result)
@@ -2049,6 +2093,9 @@ func (p *Postgres) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 		default: // any
 			add("least(score_quality, score_security, score_maintainability) < $%d", f.ScoreBelow)
 		}
+	}
+	if f.Approval != "" {
+		add("approval = $%d", f.Approval)
 	}
 	if f.Severity != "" || f.Category != "" {
 		cond := `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(result->'findings') = 'array' THEN result->'findings' ELSE '[]'::jsonb END) AS fd
