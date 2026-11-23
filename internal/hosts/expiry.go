@@ -2,13 +2,14 @@ package hosts
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/divmora/code-review-console/internal/httpx"
 )
 
 // TokenExpiry is what the console knows about when a host's token stops
@@ -27,7 +28,7 @@ type TokenExpiry struct {
 }
 
 // expiryClient bounds lookups; tests replace it.
-var expiryClient = &http.Client{Timeout: 10 * time.Second}
+var expiryClient = httpx.Client(10*time.Second, false)
 
 // LookupTokenExpiry asks the code host when h's token expires:
 //   - GitLab: GET /api/v4/personal_access_tokens/self (personal, group
@@ -64,7 +65,7 @@ func gitlabExpiry(ctx context.Context, h Host) (time.Time, bool, error) {
 	req.Header.Set("PRIVATE-TOKEN", h.Token)
 	c := expiryClient
 	if h.SkipTLSVerify {
-		c = &http.Client{Timeout: expiryClient.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // the host's own setting
+		c = httpx.Client(expiryClient.Timeout, true)
 	}
 	resp, err := c.Do(req)
 	if err != nil {

@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/executor"
 	"github.com/divmora/code-review-console/internal/hosts"
+	"github.com/divmora/code-review-console/internal/httpx"
 	"github.com/divmora/code-review-console/internal/store"
 )
 
@@ -286,11 +286,7 @@ func (s *Server) hostGET(ctx context.Context, h hosts.Host, tgt target, rawURL s
 			req.SetBasicAuth(h.Email, h.APIToken)
 		}
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
-	if h.SkipTLSVerify {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // opted in per host
-	}
-	resp, err := client.Do(req)
+	resp, err := httpx.Client(15*time.Second, h.SkipTLSVerify).Do(req)
 	if err != nil {
 		return err
 	}
@@ -437,7 +433,7 @@ func (s *Server) hostPOST(ctx context.Context, tgt target, rawURL string, body a
 	req.Header.Set("Authorization", "Bearer "+env["GITHUB_TOKEN"])
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := httpx.Client(15*time.Second, false).Do(req)
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/divmora/code-review-console/internal/config"
+	"github.com/divmora/code-review-console/internal/httpx"
 )
 
 // Registry credentials for listing tags of a private image repository
@@ -49,7 +50,7 @@ type tagsEntry struct {
 
 // NewTags returns a Tags with a short timeout and a 10 minute cache.
 func NewTags() *Tags {
-	return &Tags{Client: &http.Client{Timeout: 8 * time.Second}, TTL: 10 * time.Minute, Getenv: os.Getenv}
+	return &Tags{Client: httpx.Client(8*time.Second, false), TTL: 10 * time.Minute, Getenv: os.Getenv}
 }
 
 var releaseTag = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
