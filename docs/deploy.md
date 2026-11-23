@@ -487,5 +487,11 @@ written, and unknown fields are rejected. Imports are audited as `cli: hosts imp
 3. Run `check-config`.
 4. Restart. Database migrations apply automatically. On SIGTERM the console stops taking work and
    gives running reviews up to 2 minutes to finish; give the container at least that long
-   (Kubernetes `terminationGracePeriodSeconds: 150`). The queue is in memory: reviews still
-   waiting are dropped, and the next push, `@bot review` or **Review now** queues them again.
+   (Kubernetes `terminationGracePeriodSeconds: 150`). Reviews, answers and help replies
+   that are still waiting (including pushes inside the wait-after-push window) are saved in the
+   database and queued again when the console is back, with the wait they had left. A review that
+   was running when the console stopped isn't run again on its own (it could post its comments
+   twice): it shows on **Reviews** as interrupted, with **Re-run**. With several replicas, a replica
+   that stops hands its waiting jobs to another (at once on a clean shutdown, within 90 seconds if it
+   was killed), and each job runs once. Learnings saved from replies (`@bot remember`, replies to the
+   bot) are not kept across a restart: ask again.

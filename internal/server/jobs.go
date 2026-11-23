@@ -27,6 +27,9 @@ type target struct {
 	// botName is the mention handle on this host; reviewer the username
 	// that counts as the bot (empty: the token's user).
 	botName, reviewer string
+	// installation is the GitHub App installation (0 otherwise), saved
+	// with queued jobs so they can be rebuilt after a restart.
+	installation int64
 }
 
 func (s *Server) githubTarget(h hosts.Host, installation int64) target {
@@ -45,9 +48,10 @@ func (s *Server) githubTarget(h hosts.Host, installation int64) target {
 			}
 			return map[string]string{"GITHUB_TOKEN": tok, "GITHUB_API_URL": h.BaseURL}, nil
 		},
-		host:     h,
-		botName:  s.mention(h.BotName, h.Host),
-		reviewer: h.Reviewer,
+		host:         h,
+		botName:      s.mention(h.BotName, h.Host),
+		reviewer:     h.Reviewer,
+		installation: installation,
 	}
 }
 
@@ -245,6 +249,16 @@ func (s *Server) newTask(ctx context.Context, tgt target, ref vcs.Ref, kind stri
 
 // enqueueReview schedules a review, merging with a pending one for the PR.
 func (s *Server) enqueueReview(tgt target, ref vcs.Ref, opts reviewOpts, debounce bool) error {
+	var delay time.Duration
+	if debounce {
+		delay = s.tuning.Get(context.Background()).DebounceDuration()
+	}
+	return s.enqueueReviewWith(tgt, ref, opts, delay, "")
+}
+
+// enqueueReviewWith queues a review after delay; id is a saved job to
+// reuse (one restored after a restart) or "".
+func (s *Server) enqueueReviewWith(tgt target, ref vcs.Ref, opts reviewOpts, delay time.Duration, id string) error {
 	cur := opts
 	job := &Job{
 		Key:   "review:" + ref.String(),
@@ -265,9 +279,7 @@ func (s *Server) enqueueReview(tgt target, ref vcs.Ref, opts reviewOpts, debounc
 		job.Meta = meta(ref, kind, trigger)
 		job.Meta.RequestedBy = cur.By
 	}
-	if debounce {
-		job.Delay = s.tuning.Get(context.Background()).DebounceDuration()
-	}
+	job.Delay = delay
 	job.Merge = func(older *Job) {
 		if o, ok := older.State.(*reviewOpts); ok {
 			cur.Full = cur.Full || o.Full
@@ -334,11 +346,26 @@ func (s *Server) enqueueReview(tgt target, ref vcs.Ref, opts reviewOpts, debounc
 			"tokens_in", res.TokensIn, "tokens_out", res.TokensOut)
 		return nil
 	}
-	return s.queue.Submit(job)
+	saved := func() queuedPayload {
+		p := payloadFor("review", tgt, ref)
+		p.Full, p.Auto, p.By, p.Overrides, p.Trigger = cur.Full, cur.Auto, cur.By, cur.Overrides, job.Meta.Trigger
+		return p
+	}
+	if err := s.submit(job, saved(), id); err != nil {
+		return err
+	}
+	s.updateSaved(job, saved()) // a merge with a waiting review may have changed the options
+	return nil
 }
 
 func (s *Server) enqueueAnswer(tgt target, ref vcs.Ref, question string, ov *config.Overrides) error {
-	return s.queue.Submit(&Job{
+	return s.enqueueAnswerWith(tgt, ref, question, ov, "")
+}
+
+func (s *Server) enqueueAnswerWith(tgt target, ref vcs.Ref, question string, ov *config.Overrides, id string) error {
+	p := payloadFor("answer", tgt, ref)
+	p.Question, p.Overrides, p.Trigger = question, ov, "command"
+	return s.submit(&Job{
 		Key:   fmt.Sprintf("answer:%s:%d", ref.String(), time.Now().UnixNano()),
 		Label: "answer " + ref.String(),
 		Meta:  meta(ref, "answer", "command"),
@@ -355,17 +382,23 @@ func (s *Server) enqueueAnswer(tgt target, ref vcs.Ref, question string, ov *con
 			_, err = s.exec.Run(ctx, t)
 			return err
 		},
-	})
+	}, p, id)
 }
 
 func (s *Server) postHelp(tgt target, ref vcs.Ref) error {
-	return s.queue.Submit(&Job{
+	return s.postHelpWith(tgt, ref, "")
+}
+
+func (s *Server) postHelpWith(tgt target, ref vcs.Ref, id string) error {
+	p := payloadFor("help", tgt, ref)
+	p.Trigger = "command"
+	return s.submit(&Job{
 		Key: fmt.Sprintf("help:%s:%d", ref.String(), time.Now().UnixNano()), Label: "help " + ref.String(),
 		Meta: meta(ref, "help", "command"),
 		Run: func(ctx context.Context, rep *Report) error {
 			return tgt.client.PostComment(ctx, &vcs.PR{Ref: ref}, helpText(firstNonEmpty(tgt.botName, s.tuning.Get(ctx).BotName)))
 		},
-	})
+	}, p, id)
 }
 
 func (s *Server) dispatch(tgt target, ref vcs.Ref, cmd command, ov *config.Overrides) error {
@@ -409,20 +442,12 @@ func tail(s string, n int) string {
 // or a re-run). It is an explicit request, so the allowlist, reviewer and
 // branch-sync rules do not apply; the repository's settings still do.
 func (s *Server) ReviewNow(ctx context.Context, ref vcs.Ref, full bool, by string) error {
-	h, ok := s.hosts.Find(ref.Platform, ref.Host)
-	if !ok {
+	if _, ok := s.hosts.Find(ref.Platform, ref.Host); !ok {
 		return fmt.Errorf("no enabled %s host for %s: add it under Code hosts", ref.Platform, ref.Host)
 	}
-	var tgt target
-	switch ref.Platform {
-	case hosts.GitHub:
-		tgt = s.githubTarget(h, 0)
-	case hosts.GitLab:
-		tgt = s.gitlabTarget(h)
-	case hosts.Bitbucket:
-		tgt = s.bitbucketTarget(h)
-	default:
-		return fmt.Errorf("unsupported platform %q", ref.Platform)
+	tgt, err := s.targetFor(ref.Platform, ref.Host, 0)
+	if err != nil {
+		return err
 	}
 	acc := s.access(ctx, ref)
 	return s.enqueueReview(tgt, ref, reviewOpts{Full: full, By: by, Overrides: s.overrides(acc)}, false)

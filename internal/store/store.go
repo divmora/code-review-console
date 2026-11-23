@@ -290,6 +290,19 @@ type ModelProfile struct {
 }
 
 // AuditEntry records an admin action.
+// QueuedJob is a waiting (or running) job's saved copy, so it survives a
+// restart. Owner is the replica that has it queued.
+type QueuedJob struct {
+	ID        string          `json:"id"`
+	Key       string          `json:"key"`
+	Owner     string          `json:"owner"`
+	Kind      string          `json:"kind"`
+	Payload   json.RawMessage `json:"payload"`
+	ReadyAt   time.Time       `json:"ready_at"`
+	CreatedAt time.Time       `json:"created_at"`
+	StartedAt time.Time       `json:"started_at,omitzero"`
+}
+
 // Change request statuses.
 const (
 	ChangePending   = "pending"
@@ -459,6 +472,20 @@ type Store interface {
 	ListAudit(ctx context.Context, limit int) ([]AuditEntry, error)
 	// SearchAudit returns entries matching f, newest first.
 	SearchAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error)
+	// Saved copies of queued jobs (survive restarts; see QueuedJob).
+	PutQueued(ctx context.Context, q QueuedJob) error
+	// UpdateQueued changes a saved job's payload and ready time, if it
+	// still exists (it never inserts).
+	UpdateQueued(ctx context.Context, id string, payload json.RawMessage, readyAt time.Time) error
+	StartQueued(ctx context.Context, id string) error
+	DeleteQueued(ctx context.Context, id string) error
+	// ClaimQueued gives owner the saved jobs of replicas not seen for
+	// stale (their heartbeat stopped), once: each job goes to one replica.
+	ClaimQueued(ctx context.Context, owner string, stale time.Duration) ([]QueuedJob, error)
+	// HeartbeatOwner records that owner is alive; RemoveOwner that it
+	// stopped (its jobs can be claimed at once).
+	HeartbeatOwner(ctx context.Context, owner string) error
+	RemoveOwner(ctx context.Context, owner string) error
 	// Change requests (operators' changes waiting for an admin).
 	CreateChangeRequest(ctx context.Context, c ChangeRequest) (*ChangeRequest, error)
 	GetChangeRequest(ctx context.Context, id int64) (*ChangeRequest, error)
@@ -736,6 +763,23 @@ var migrations = []string{
 	// 15: a webhook with a signing token takes signed deliveries only,
 	// unless this is on (issue #86).
 	`ALTER TABLE webhook_endpoints ADD COLUMN accept_secret_token boolean NOT NULL DEFAULT false;`,
+	// 16: waiting jobs survive restarts; replicas take over a stopped
+	// replica's jobs (issue #88).
+	`CREATE TABLE queued_jobs (
+		id         text PRIMARY KEY,
+		key        text NOT NULL,
+		owner      text NOT NULL,
+		kind       text NOT NULL,
+		payload    jsonb NOT NULL,
+		ready_at   timestamptz NOT NULL,
+		created_at timestamptz NOT NULL DEFAULT now(),
+		started_at timestamptz
+	);
+	CREATE INDEX queued_jobs_owner_idx ON queued_jobs (owner);
+	CREATE TABLE queue_owners (
+		owner   text PRIMARY KEY,
+		seen_at timestamptz NOT NULL DEFAULT now()
+	);`,
 }
 
 // migrate applies pending migrations under an advisory lock, so several
@@ -1443,6 +1487,70 @@ func previousAfter(detail json.RawMessage) any {
 		}
 	}
 	return detail
+}
+
+func (p *Postgres) PutQueued(ctx context.Context, q QueuedJob) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO queued_jobs (id, key, owner, kind, payload, ready_at) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, ready_at = EXCLUDED.ready_at, owner = EXCLUDED.owner`,
+		q.ID, q.Key, q.Owner, q.Kind, q.Payload, q.ReadyAt)
+	return err
+}
+
+func (p *Postgres) UpdateQueued(ctx context.Context, id string, payload json.RawMessage, readyAt time.Time) error {
+	_, err := p.pool.Exec(ctx, `UPDATE queued_jobs SET payload = $2, ready_at = $3 WHERE id = $1`, id, payload, readyAt)
+	return err
+}
+
+func (p *Postgres) StartQueued(ctx context.Context, id string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE queued_jobs SET started_at = now() WHERE id = $1`, id)
+	return err
+}
+
+func (p *Postgres) DeleteQueued(ctx context.Context, id string) error {
+	_, err := p.pool.Exec(ctx, `DELETE FROM queued_jobs WHERE id = $1`, id)
+	return err
+}
+
+func (p *Postgres) ClaimQueued(ctx context.Context, owner string, stale time.Duration) ([]QueuedJob, error) {
+	rows, err := p.pool.Query(ctx, `
+		WITH c AS (
+			SELECT id FROM queued_jobs q
+			WHERE q.owner <> $1
+			  AND NOT EXISTS (SELECT 1 FROM queue_owners o WHERE o.owner = q.owner AND o.seen_at > now() - make_interval(secs => $2))
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE queued_jobs SET owner = $1 FROM c WHERE queued_jobs.id = c.id
+		RETURNING queued_jobs.id, key, owner, kind, payload, ready_at, created_at, started_at`, owner, stale.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []QueuedJob{}
+	for rows.Next() {
+		var q QueuedJob
+		var started *time.Time
+		if err := rows.Scan(&q.ID, &q.Key, &q.Owner, &q.Kind, &q.Payload, &q.ReadyAt, &q.CreatedAt, &started); err != nil {
+			return nil, err
+		}
+		if started != nil {
+			q.StartedAt = *started
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) HeartbeatOwner(ctx context.Context, owner string) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO queue_owners (owner) VALUES ($1) ON CONFLICT (owner) DO UPDATE SET seen_at = now()`, owner)
+	if err == nil {
+		_, err = p.pool.Exec(ctx, `DELETE FROM queue_owners WHERE seen_at < now() - interval '1 day'`)
+	}
+	return err
+}
+
+func (p *Postgres) RemoveOwner(ctx context.Context, owner string) error {
+	_, err := p.pool.Exec(ctx, `DELETE FROM queue_owners WHERE owner = $1`, owner)
+	return err
 }
 
 const changeCols = `id, method, path, summary, preview, body, requested_by, requested_at, status, decided_by, decided_at, result_status, result`

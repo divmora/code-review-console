@@ -24,6 +24,8 @@ type Memory struct {
 	rules     map[int64]*store.Rule
 	hooks     []store.WebhookEvent
 	changes   []store.ChangeRequest
+	queued    map[string]store.QueuedJob
+	owners    map[string]time.Time
 	hosts     map[int64]*store.HostRow
 	hooksEP   map[string]*store.WebhookEndpoint
 	learns    []*store.Learning
@@ -904,4 +906,90 @@ func (m *Memory) LastSeen() time.Time {
 		}
 	}
 	return t
+}
+
+func (m *Memory) PutQueued(_ context.Context, q store.QueuedJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.queued == nil {
+		m.queued = map[string]store.QueuedJob{}
+	}
+	if old, ok := m.queued[q.ID]; ok {
+		q.CreatedAt, q.StartedAt = old.CreatedAt, old.StartedAt
+	} else {
+		q.CreatedAt = time.Now()
+	}
+	m.queued[q.ID] = q
+	return nil
+}
+
+func (m *Memory) UpdateQueued(_ context.Context, id string, payload json.RawMessage, readyAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if q, ok := m.queued[id]; ok {
+		q.Payload, q.ReadyAt = payload, readyAt
+		m.queued[id] = q
+	}
+	return nil
+}
+
+func (m *Memory) StartQueued(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if q, ok := m.queued[id]; ok {
+		q.StartedAt = time.Now()
+		m.queued[id] = q
+	}
+	return nil
+}
+
+func (m *Memory) DeleteQueued(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.queued, id)
+	return nil
+}
+
+func (m *Memory) ClaimQueued(_ context.Context, owner string, stale time.Duration) ([]store.QueuedJob, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.QueuedJob{}
+	for id, q := range m.queued {
+		if seen, ok := m.owners[q.Owner]; q.Owner == owner || (ok && time.Since(seen) <= stale) {
+			continue
+		}
+		q.Owner = owner
+		m.queued[id] = q
+		out = append(out, q)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (m *Memory) HeartbeatOwner(_ context.Context, owner string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.owners == nil {
+		m.owners = map[string]time.Time{}
+	}
+	m.owners[owner] = time.Now()
+	return nil
+}
+
+func (m *Memory) RemoveOwner(_ context.Context, owner string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.owners, owner)
+	return nil
+}
+
+// Queued lists the saved jobs (tests).
+func (m *Memory) Queued() []store.QueuedJob {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.QueuedJob{}
+	for _, q := range m.queued {
+		out = append(out, q)
+	}
+	return out
 }

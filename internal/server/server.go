@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/divmora/code-review-bot/pkg/vcs"
 	"github.com/divmora/code-review-console/internal/admin"
 	"github.com/divmora/code-review-console/internal/config"
@@ -57,6 +59,10 @@ type Server struct {
 	tuning   *tuning.Service
 	// metrics are the counters behind /metrics.
 	metrics *serverMetrics
+	// owner identifies this replica's saved queued jobs (see durable.go);
+	// durableDone is closed when durableLoop has stopped.
+	owner       string
+	durableDone chan struct{}
 	// stopPrune ends the review-history cleanup loop.
 	stopPrune chan struct{}
 	stopOnce  sync.Once
@@ -163,6 +169,8 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 	s.tuning.OnChange = s.applyTuning
 	s.initMetrics()
 	s.queue.OnFinish = s.onFinish
+	s.owner = uuid.NewString()
+	s.queue.OnStart, s.queue.OnDrop = s.savedStarted, s.savedDone
 	if s.store != nil {
 		s.loadHistory()
 		s.hooks = newHookWriter(s.store, func() time.Duration { return s.settings.Runtime(context.Background()).WebhookRetention() }, logger)
@@ -170,6 +178,8 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		go s.pruneLoop()
 		go s.tuningLoop()
 		go s.expiryLoop()
+		s.durableDone = make(chan struct{})
+		go s.durableLoop()
 	}
 	return s, nil
 }
@@ -390,7 +400,22 @@ func (s *Server) Close() {
 		s.hooks.close()
 	}
 	if s.stopPrune != nil {
-		s.stopOnce.Do(func() { close(s.stopPrune) })
+		s.stopOnce.Do(func() {
+			close(s.stopPrune)
+			// Hand this replica's waiting jobs over at once: the next
+			// replica (or this one after the restart) takes them. Wait for
+			// the heartbeat loop first, or a late beat would bring the
+			// owner back and delay the hand-over by ownerStale.
+			if s.durableDone != nil {
+				select {
+				case <-s.durableDone:
+				case <-time.After(5 * time.Second):
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.store.RemoveOwner(ctx, s.owner)
+		})
 	}
 }
 

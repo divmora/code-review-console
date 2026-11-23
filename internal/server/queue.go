@@ -57,8 +57,10 @@ type Record struct {
 	Started  time.Time `json:"started,omitzero"`
 	Finished time.Time `json:"finished,omitzero"`
 	// Merged counts later events folded into this job (debounced pushes).
-	Merged int    `json:"merged"`
-	Error  string `json:"error,omitempty"`
+	Merged int `json:"merged"`
+	// durable is the saved copy's ID (see Job.Durable).
+	durable string
+	Error   string `json:"error,omitempty"`
 	Report
 }
 
@@ -76,6 +78,9 @@ type Job struct {
 	Run   func(ctx context.Context, rep *Report) error
 	Delay time.Duration
 	Label string
+	// Durable is the ID of the job's saved copy in the database, so a
+	// waiting job survives a restart ("" = not saved).
+	Durable string
 }
 
 // ErrQueueFull is returned when too many jobs are pending.
@@ -112,6 +117,10 @@ type Queue struct {
 	// OnFinish, when set, is called (outside the lock) with every finished
 	// job, e.g. to persist it.
 	OnFinish func(Record)
+	// OnStart is called (outside the lock) when a job starts running;
+	// OnDrop with the saved copy's ID of a job a newer one replaced.
+	OnStart func(Record)
+	OnDrop  func(durable string)
 }
 
 // NewQueue starts workers. history is how many finished jobs to keep.
@@ -201,6 +210,12 @@ func (q *Queue) retire() bool {
 
 // Submit enqueues a job, merging with a pending job of the same key.
 func (q *Queue) Submit(j *Job) error {
+	var dropped string
+	defer func() { // after the unlock below
+		if dropped != "" && q.OnDrop != nil {
+			q.OnDrop(dropped)
+		}
+	}()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
@@ -211,7 +226,11 @@ func (q *Queue) Submit(j *Job) error {
 		if j.Merge != nil {
 			j.Merge(p.job)
 		}
+		if p.job.Durable != j.Durable {
+			dropped = p.job.Durable
+		}
 		p.job = j
+		p.rec.durable = j.Durable
 		p.readyAt = now.Add(j.Delay)
 		p.rec.Meta = j.Meta
 		p.rec.ReadyAt = p.readyAt
@@ -223,7 +242,7 @@ func (q *Queue) Submit(j *Job) error {
 		return ErrQueueFull
 	}
 	q.nextID++
-	rec := &Record{ID: q.nextID, Meta: j.Meta, State: Pending, Enqueued: now, ReadyAt: now.Add(j.Delay)}
+	rec := &Record{ID: q.nextID, Meta: j.Meta, State: Pending, Enqueued: now, ReadyAt: now.Add(j.Delay), durable: j.Durable}
 	q.pending[j.Key] = &pending{job: j, readyAt: rec.ReadyAt, rec: rec}
 	q.schedule(j.Key, j.Delay)
 	return nil
@@ -299,7 +318,11 @@ func (q *Queue) runKey(key string) {
 	rec.Started = time.Now()
 	q.running[key] = rec
 	timeout := q.timeout
+	started := *rec
 	q.mu.Unlock()
+	if q.OnStart != nil {
+		q.OnStart(started)
+	}
 
 	ctx, cancel := context.WithTimeout(q.ctx, timeout)
 	var rep Report
