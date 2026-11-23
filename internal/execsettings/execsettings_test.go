@@ -209,3 +209,50 @@ func TestExecutorAppliesChanges(t *testing.T) {
 		t.Errorf("the next review uses the new version, built once: %s %s %d", r.SkipReason, r2.SkipReason, builds)
 	}
 }
+
+// Issue #128: from the panel, the CA bundle is a ConfigMap or the Secret
+// the config file names (with its key), never another Secret of the
+// namespace, such as the console's own.
+func TestCABundleSecret(t *testing.T) {
+	ctx := context.Background()
+	cfgFile := kube()
+	cfgFile.Kubernetes.CABundle = config.KubeCABundle{Secret: "corp-ca", Key: "ca.crt"}
+	s := New(cfgFile, storetest.New())
+	base := FromConfig(cfgFile)
+	for name, c := range map[string]struct {
+		b  CABundle
+		ok bool
+	}{
+		"the console's own Secret":     {CABundle{Secret: "code-review-console", Key: "CODEREVIEW_CONSOLE_SECRET_KEY"}, false},
+		"another Secret":               {CABundle{Secret: "other"}, false},
+		"the config file's, other key": {CABundle{Secret: "corp-ca", Key: "tls.key"}, false},
+		"the config file's Secret":     {CABundle{Secret: "corp-ca", Key: "ca.crt"}, true},
+		"default key":                  {CABundle{Secret: "corp-ca"}, true},
+		"a ConfigMap":                  {CABundle{ConfigMap: "corp-ca-certs", Key: "ca.crt"}, true},
+		"none":                         {CABundle{}, true},
+	} {
+		x := base
+		x.CABundle = c.b
+		err := s.Put(ctx, x, "a@x")
+		if (err == nil) != c.ok || (err != nil && !strings.Contains(err.Error(), "ConfigMap")) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Without a Secret in the config file, the panel can't name any.
+	if err := New(kube(), storetest.New()).Put(ctx, func() Settings { x := FromConfig(kube()); x.CABundle = CABundle{Secret: "corp-ca"}; return x }(), "a@x"); err == nil {
+		t.Error("no Secret in the config file: none allowed")
+	}
+
+	// Saved before the rule: not mounted, and named for a warning.
+	saved := base
+	saved.CABundle = CABundle{Secret: "code-review-console", Key: "DATABASE_URL"}
+	if e := Apply(cfgFile, saved); e.Kubernetes.CABundle.Enabled() {
+		t.Errorf("a disallowed saved Secret isn't applied: %+v", e.Kubernetes.CABundle)
+	}
+	if IgnoredCASecret(cfgFile, saved) != "code-review-console" || IgnoredCASecret(cfgFile, base) != "" {
+		t.Error("IgnoredCASecret")
+	}
+	if e := Apply(cfgFile, base); e.Kubernetes.CABundle.Secret != "corp-ca" {
+		t.Errorf("the config file's Secret still applies: %+v", e.Kubernetes.CABundle)
+	}
+}
