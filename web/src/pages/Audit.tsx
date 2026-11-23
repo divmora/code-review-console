@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { get } from "../api";
+import { useQueryState } from "../urlstate";
 import { fmtDateTime, utcTitle } from "../format";
 import { Empty, errMsg, Field, Locked, Panel, shortAgent, Sub, useFeature, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
@@ -93,8 +94,9 @@ export function Changes({ detail }: { detail: unknown }) {
 export default function Audit() {
   const toast = useToast();
   const licensed = useFeature("audit");
-  const [form, setForm] = useState<Filter>(empty);
-  const [applied, setApplied] = useState<Filter>(empty);
+  // The applied filter lives in the URL (/admin/audit?action=host.*).
+  const [applied, setApplied] = useQueryState<Filter>(empty);
+  const [form, setForm] = useState<Filter>(applied);
   const [list, setList] = useState<Entry[] | null>(null);
   const [next, setNext] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -109,8 +111,10 @@ export default function Audit() {
       .finally(() => setLoading(false));
   };
   useEffect(() => {
-    if (licensed) load(empty);
-  }, [licensed]);
+    if (!licensed) return;
+    setForm(applied);
+    load(applied);
+  }, [licensed, query(applied)]);
   if (!licensed)
     return (
       <section>
@@ -120,13 +124,14 @@ export default function Audit() {
   const set = (k: keyof Filter) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
   const apply = (e?: FormEvent) => {
     e?.preventDefault();
-    setApplied(form);
-    load(form);
+    const f = Object.fromEntries(Object.entries(form).map(([k, v]) => [k, v.trim()])) as Filter;
+    if (query(f) === query(applied)) load(f); // same filter: search again
+    else setApplied(f);
   };
   const clear = () => {
     setForm(empty);
-    setApplied(empty);
-    load(empty);
+    if (query(applied)) setApplied(empty);
+    else load(empty);
   };
   const exportURL = (format: string) => "/admin/api/audit/export?" + query(applied) + (query(applied) ? "&" : "") + "format=" + format;
   return (
