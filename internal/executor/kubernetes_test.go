@@ -114,7 +114,7 @@ pod_annotations: {karpenter.sh/do-not-disrupt: "true"}
 	if spec.Spec.PriorityClassName != "batch-low" {
 		t.Errorf("priorityClassName = %q", spec.Spec.PriorityClassName)
 	}
-	if spec.Labels["team"] != "platform" || spec.Labels["codereview/job"] != "crb-x" {
+	if spec.Labels["team"] != "platform" || spec.Labels["codereview/job"] != "crb-x" || spec.Labels["codereview/role"] != "review" {
 		t.Errorf("pod labels = %v (built-in labels must win)", spec.Labels)
 	}
 	if spec.Annotations["karpenter.sh/do-not-disrupt"] != "true" {
