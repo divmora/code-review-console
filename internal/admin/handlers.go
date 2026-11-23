@@ -107,6 +107,9 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	// Sign-out is POST only (CSRF); a typed or bookmarked GET /admin/logout
 	// shows a page with a Sign out button.
 	mux.HandleFunc("GET /admin/logout", a.handlePage)
+	// signed-in is where signing in from another tab lands, after a save
+	// found the session had ended (the first tab keeps its edits).
+	mux.HandleFunc("GET /admin/signed-in", a.handlePage)
 	mux.HandleFunc("GET /admin/assets/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", uiCSP)
 		w.Header().Set("X-Content-Type-Options", "nosniff")

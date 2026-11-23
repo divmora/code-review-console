@@ -236,7 +236,10 @@ func (f *fakeReviewer) ReviewNow(_ context.Context, ref vcs.Ref, full bool, by s
 
 func TestSafeNext(t *testing.T) {
 	for in, want := range map[string]string{"/admin/rules": "/admin/rules", "/admin/settings": "/admin/settings",
-		"https://evil.example/admin/rules": "/admin", "//evil.example": "/admin", "/admin/../x": "/admin", "": "/admin", "/admin/nope": "/admin"} {
+		"https://evil.example/admin/rules": "/admin", "//evil.example": "/admin", "/admin/../x": "/admin", "": "/admin", "/admin/nope": "/admin",
+		"/admin/reviews?score_kind=security&score_below=60": "/admin/reviews?score_below=60&score_kind=security",
+		"/admin/reviews?x=1#frag":                           "/admin/reviews?x=1%23frag", "/admin/nope?x=1": "/admin", "/admin/signed-in": "/admin/signed-in",
+		"/admin/reviews?next=//evil.example": "/admin/reviews?next=%2F%2Fevil.example"} {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
 		}

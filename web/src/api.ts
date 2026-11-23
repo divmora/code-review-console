@@ -1,5 +1,8 @@
 // API client for /admin/api. Writes carry the session's CSRF token; a 401
-// sends the browser to sign-in and back to the current page.
+// sends the browser to sign-in and back to the current page, unless the
+// page has unsaved changes: then they are kept, and the page says to sign
+// in again (in another tab) and save.
+import { hasUnsaved } from "./unsaved";
 
 let csrf = "";
 
@@ -23,7 +26,11 @@ export async function api<T = any>(method: string, path: string, body?: unknown,
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const r = await fetch(path, { method, headers, cache: "no-store", body: body === undefined ? undefined : JSON.stringify(body) });
   if (r.status === 401) {
-    location.href = "/admin/login?next=" + encodeURIComponent(location.pathname);
+    if (method !== "GET" || hasUnsaved()) {
+      window.dispatchEvent(new Event("crc-signed-out"));
+      throw new APIError("Your session ended: sign in again to save. Your changes are kept on this page.", 401);
+    }
+    location.href = "/admin/login?next=" + encodeURIComponent(location.pathname + location.search);
     throw new APIError("signed out", 401);
   }
   const data = await r.json().catch(() => ({}));

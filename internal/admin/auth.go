@@ -161,10 +161,21 @@ type flowState struct {
 // safeNext keeps only known admin pages, so the return target can never
 // send someone off-site.
 func safeNext(next string) string {
-	if sec, ok := strings.CutPrefix(next, "/admin/"); ok && (adminSections[sec] || sec == "dashboard") {
-		return next
+	path, query, hasQuery := strings.Cut(next, "?")
+	sec, ok := strings.CutPrefix(path, "/admin/")
+	if !ok || !(adminSections[sec] || sec == "dashboard" || sec == "signed-in") {
+		return "/admin"
 	}
-	return "/admin"
+	if !hasQuery {
+		return path
+	}
+	// A page's filters (/admin/reviews?score_kind=security) come back too,
+	// re-encoded so nothing but a query string follows the path.
+	q, err := url.ParseQuery(query)
+	if err != nil || len(q) == 0 {
+		return path
+	}
+	return path + "?" + q.Encode()
 }
 
 func randToken(n int) string {
