@@ -31,7 +31,9 @@ import (
 	"github.com/divmora/code-review-console/internal/version"
 )
 
-// ui is the admin single-page app, built from web/ by `make web`.
+// ui is the admin single-page app, built from web/ by `make web` before
+// `go build` (the Dockerfile, GoReleaser and CI do). It isn't committed:
+// a fresh checkout has only ui/.keep, and the panel then says to build it.
 //
 //go:embed all:ui
 var uiFS embed.FS
@@ -66,10 +68,17 @@ func (f filesOnly) Open(name string) (fs.File, error) {
 func mustRead(name string) []byte {
 	b, err := uiFS.ReadFile(name)
 	if err != nil {
-		panic("admin UI not built: " + err.Error() + " (run make web)")
+		return uiMissing
 	}
 	return b
 }
+
+// uiMissing is served for the panel when the binary was built without the
+// admin UI (go build from a checkout, before make web).
+var uiMissing = []byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Admin UI not built</title></head>
+<body><h1>The admin UI isn't in this build</h1><p>This binary was built without the admin panel's web app.
+Run <code>make web</code> (needs Node.js) and then <code>make build</code>, or use a release binary or the Docker image.
+The API and webhooks work without it.</p></body></html>`)
 
 // uiCSP allows only the app's own files: no inline scripts or styles.
 const uiCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
