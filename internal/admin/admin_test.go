@@ -1426,6 +1426,14 @@ func TestImpactAPI(t *testing.T) {
 	if want := time.Now().UTC().Format(time.DateOnly); v.Through != want || !v.To.Equal(v.From.AddDate(0, 0, 90)) {
 		t.Errorf("through is today, the last day included (to is the exclusive end): %s %s %s", v.From, v.To, v.Through)
 	}
+	// Impact's numbers open Reviews with these filters (issue #114).
+	for q, want := range map[string]int{"category=security": 3, "severity=critical&repo=g/web": 1, "severity=minor&category=security": 0, "severity=any": 3} {
+		var rv struct{ Reviews []store.Job }
+		code, body := e.do(t, "GET", "/admin/api/reviews?"+q, "", nil)
+		if _ = json.Unmarshal(body, &rv); code != 200 || len(rv.Reviews) != want {
+			t.Errorf("reviews?%s: %d %d, want %d", q, code, len(rv.Reviews), want)
+		}
+	}
 	if code, _ := e.do(t, "GET", "/admin/api/impact?range=7d", "", nil); code != 400 {
 		t.Errorf("unknown range: %d", code)
 	}

@@ -1215,6 +1215,9 @@ func (a *Admin) apiListReviews(w http.ResponseWriter, r *http.Request, s *store.
 	if n, err := strconv.Atoi(q.Get("score_below")); err == nil && n > 0 && n <= 101 {
 		f.ScoreBelow, f.ScoreKind = n, q.Get("score_kind")
 	}
+	// severity=critical, category=security: reviews with such a finding
+	// (severity=any: with any finding), as counted on the Impact page.
+	f.Severity, f.Category = strings.TrimSpace(q.Get("severity")), strings.TrimSpace(q.Get("category"))
 	jobs, err := a.store.ListJobs(r.Context(), f)
 	if err != nil {
 		a.serverError(w, err)

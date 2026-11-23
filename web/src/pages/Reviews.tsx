@@ -124,10 +124,14 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
   );
 }
 
+// Finding categories the CLI uses, for the category filter (a link from
+// Impact may add another).
+const findingCategories = ["bug", "security", "performance", "reliability", "maintainability", "style", "docs", "tests"];
+
 // The query-string names match /admin/api/reviews.
-const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below"] as const;
+const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below", "severity", "category"] as const;
 const reviewView = {
-  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "",
+  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "", severity: "", category: "",
   sort: "", granularity: "day", review: "",
 };
 
@@ -324,6 +328,22 @@ export default function Reviews() {
         </NativeSelect>
         <Input type="date" className="w-auto" aria-label="From" value={f.from} onChange={set("from")} />
         <Input type="date" className="w-auto" aria-label="To" value={f.to} onChange={set("to")} />
+        <NativeSelect className="w-auto" aria-label="Finding severity" value={f.severity} onChange={set("severity")}>
+          <option value="">Any findings</option>
+          <option value="any">With findings</option>
+          <option value="critical">Critical finding</option>
+          <option value="major">Major finding</option>
+          <option value="minor">Minor finding</option>
+          <option value="nitpick">Nitpick</option>
+        </NativeSelect>
+        <NativeSelect className="w-auto" aria-label="Finding category" value={f.category} onChange={set("category")}>
+          <option value="">Any category</option>
+          {Array.from(new Set([...findingCategories, ...(f.category ? [f.category] : [])])).map((c) => (
+            <option key={c} value={c} className="capitalize">
+              {c[0].toUpperCase() + c.slice(1)}
+            </option>
+          ))}
+        </NativeSelect>
         <NativeSelect className="w-auto" aria-label="Score" value={f.score_kind} onChange={set("score_kind")}>
           <option value="">Any score</option>
           <option value="any">Lowest score</option>
