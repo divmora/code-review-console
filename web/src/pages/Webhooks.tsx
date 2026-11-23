@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { get, qs } from "../api";
-import { ago } from "../format";
+import { ago, fmtDateTime, utcTitle } from "../format";
 import { Empty, errMsg, NativeSelect, Note, Panel, StateBadge, Sub, Toolbar, useToast } from "../ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,7 +85,7 @@ export default function Webhooks() {
                 const what = [e.kind || e.event, e.action].filter(Boolean).join(" · ") + (e.number ? " · !" + e.number : "");
                 return (
                   <TableRow key={e.id}>
-                    <TableCell className="pl-4 align-top text-muted-foreground" title={new Date(e.received_at).toLocaleString()}>
+                    <TableCell className="pl-4 align-top text-muted-foreground" title={fmtDateTime(e.received_at, true) + " · " + utcTitle(e.received_at)}>
                       {ago(e.received_at)}
                     </TableCell>
                     <TableCell className="align-top">

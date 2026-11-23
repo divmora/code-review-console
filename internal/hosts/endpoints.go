@@ -172,7 +172,14 @@ func (r *Registry) SaveEndpoint(ctx context.Context, e Endpoint, actor string) (
 	if err != nil {
 		return Endpoint{}, err
 	}
-	row, err := r.st.PutWebhookEndpoint(ctx, store.WebhookEndpoint{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, Secrets: sealed}, actor)
+	var old EndpointSecrets
+	for _, x := range r.Endpoints(e.HostID) {
+		if x.ID == e.ID {
+			old = x.EndpointSecrets
+		}
+	}
+	row, err := r.st.PutWebhookEndpoint(ctx, store.WebhookEndpoint{ID: e.ID, HostID: e.HostID, Name: e.Name, Enabled: e.Enabled, Secrets: sealed,
+		SecretsChanged: EndpointSecretChanges(old, e.EndpointSecrets)}, actor)
 	if err != nil {
 		return Endpoint{}, err
 	}

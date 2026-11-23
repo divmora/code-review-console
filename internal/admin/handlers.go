@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,6 +135,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/tuning", a.requireAPI(a.apiGetTuning))
 	mux.HandleFunc("PUT /admin/api/tuning", a.requireAPI(a.apiPutTuning))
 	mux.HandleFunc("GET /admin/api/audit", a.requireAPI(a.apiAudit))
+	mux.HandleFunc("GET /admin/api/audit/export", a.requireAPI(a.apiAuditExport))
 	mux.HandleFunc("GET /admin/api/setup", a.requireAPI(a.apiSetup))
 	mux.HandleFunc("GET /admin/api/models", a.requireAPI(a.apiListModels))
 	mux.HandleFunc("PUT /admin/api/models/{name}", a.requireAPI(a.apiPutModel))
@@ -587,20 +589,108 @@ func (a *Admin) apiWebhooks(w http.ResponseWriter, r *http.Request, s *store.Ses
 	writeJSON(w, http.StatusOK, map[string]any{"events": events, "counts_24h": counts})
 }
 
+// auditFilter reads the audit log filters from the query string: actor,
+// action (host.* for a prefix), target, q (search), from and to (dates or
+// RFC 3339 times; a date "to" includes that day), before (an entry ID, to
+// page back) and limit.
+func auditFilter(r *http.Request) store.AuditFilter {
+	q := r.URL.Query()
+	f := store.AuditFilter{Actor: strings.TrimSpace(q.Get("actor")), Action: strings.TrimSpace(q.Get("action")),
+		Target: strings.TrimSpace(q.Get("target")), Query: strings.TrimSpace(q.Get("q")), From: parseDay(q.Get("from")), Limit: 100}
+	if to := parseDay(q.Get("to")); !to.IsZero() {
+		if len(q.Get("to")) == 10 {
+			to = to.Add(24 * time.Hour)
+		}
+		f.To = to
+	}
+	if id, err := strconv.ParseInt(q.Get("before"), 10, 64); err == nil && id > 0 {
+		f.BeforeID = id
+	}
+	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 && n <= 1000 {
+		f.Limit = n
+	}
+	return f
+}
+
+// apiAudit is one page of the audit log, newest first; next is the
+// "before" for the following page (0 at the end).
 func (a *Admin) apiAudit(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	if !a.require(w, license.Audit) {
 		return
 	}
-	limit := 200
-	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
-		limit = n
-	}
-	entries, err := a.store.ListAudit(r.Context(), limit)
+	f := auditFilter(r)
+	entries, err := a.store.SearchAudit(r.Context(), f)
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, entries)
+	var next int64
+	if len(entries) == f.Limit {
+		next = entries[len(entries)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "next": next})
+}
+
+// maxAuditExport bounds one export.
+const maxAuditExport = 100000
+
+// apiAuditExport downloads the filtered audit log as CSV or JSON Lines,
+// newest first, up to maxAuditExport entries.
+func (a *Admin) apiAuditExport(w http.ResponseWriter, r *http.Request, s *store.Session) {
+	if !a.require(w, license.Audit) {
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format != "csv" && format != "jsonl" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format: want csv or jsonl"})
+		return
+	}
+	f := auditFilter(r)
+	f.Limit, f.BeforeID = 1000, 0
+	name := "audit-" + time.Now().UTC().Format("20060102-150405") + "." + format
+	if format == "csv" {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	cw := csv.NewWriter(w)
+	if format == "csv" {
+		_ = cw.Write([]string{"id", "at", "actor", "action", "target", "ip", "user_agent", "detail"})
+	}
+	enc := json.NewEncoder(w)
+	written := 0
+	for written < maxAuditExport {
+		page, err := a.store.SearchAudit(r.Context(), f)
+		if err != nil {
+			a.logger.Error("audit export failed", "error", err)
+			return // headers are sent: the download ends short
+		}
+		for _, e := range page {
+			if format == "csv" {
+				_ = cw.Write([]string{strconv.FormatInt(e.ID, 10), e.At.UTC().Format(time.RFC3339), csvSafe(e.Actor), csvSafe(e.Action), csvSafe(e.Target), e.IP, csvSafe(e.UserAgent), csvSafe(string(e.Detail))})
+			} else {
+				_ = enc.Encode(e)
+			}
+		}
+		written += len(page)
+		if len(page) < f.Limit {
+			break
+		}
+		f.BeforeID = page[len(page)-1].ID
+	}
+	cw.Flush()
+	_ = a.store.Audit(r.Context(), s.Email, "audit.export", "admin", map[string]any{"format": format, "entries": written,
+		"filter": map[string]any{"actor": f.Actor, "action": f.Action, "target": f.Target, "q": f.Query}})
+}
+
+// csvSafe keeps a spreadsheet from running a value as a formula.
+func csvSafe(v string) string {
+	if v != "" && strings.ContainsRune("=+-@\t\r", rune(v[0])) {
+		return "'" + v
+	}
+	return v
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

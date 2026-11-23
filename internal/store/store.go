@@ -81,6 +81,9 @@ type HostRow struct {
 	Secrets   string          `json:"-"`
 	UpdatedAt time.Time       `json:"updated_at"`
 	UpdatedBy string          `json:"updated_by"`
+	// SecretsChanged names the secrets this save changes, for the audit
+	// log (never stored with the host; see hosts.SecretChanges).
+	SecretsChanged []string `json:"-"`
 }
 
 // WebhookEndpoint is a webhook URL of a host, /webhooks/<platform>/<id>,
@@ -89,15 +92,17 @@ type HostRow struct {
 // console (see internal/hosts); deliveries on its URL are verified against
 // them only.
 type WebhookEndpoint struct {
-	ID        string    `json:"id"`
-	HostID    int64     `json:"host_id"`
-	Name      string    `json:"name"`
-	Enabled   bool      `json:"enabled"`
-	Secrets   string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	CreatedBy string    `json:"created_by"`
-	UpdatedAt time.Time `json:"updated_at"`
-	UpdatedBy string    `json:"updated_by"`
+	ID      string `json:"id"`
+	HostID  int64  `json:"host_id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	Secrets string `json:"-"`
+	// SecretsChanged names the secrets this save changes (audit only).
+	SecretsChanged []string  `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	CreatedBy      string    `json:"created_by"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	UpdatedBy      string    `json:"updated_by"`
 }
 
 // Learning statuses.
@@ -279,6 +284,30 @@ type ModelProfile struct {
 }
 
 // AuditEntry records an admin action.
+// AuditFilter narrows SearchAudit. Zero values match everything.
+type AuditFilter struct {
+	Actor  string // substring, case-insensitive
+	Action string // exact, or a prefix when it ends in "*" or "." (host.*)
+	Target string // substring, case-insensitive
+	// Query is a case-insensitive substring of the target or the details.
+	Query    string
+	From, To time.Time // at within [From, To)
+	// BeforeID pages back: only entries older than this one.
+	BeforeID int64
+	Limit    int // default 100, at most 1000
+}
+
+// Prefix reports whether the action filter is a prefix, and returns it.
+func (f AuditFilter) Prefix() (string, bool) {
+	if p, ok := strings.CutSuffix(f.Action, "*"); ok {
+		return p, true
+	}
+	if strings.HasSuffix(f.Action, ".") {
+		return f.Action, true
+	}
+	return f.Action, false
+}
+
 type AuditEntry struct {
 	ID     int64           `json:"id"`
 	At     time.Time       `json:"at"`
@@ -390,6 +419,8 @@ type Store interface {
 
 	Audit(ctx context.Context, actor, action, target string, detail any) error
 	ListAudit(ctx context.Context, limit int) ([]AuditEntry, error)
+	// SearchAudit returns entries matching f, newest first.
+	SearchAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error)
 
 	Close()
 }
@@ -1039,7 +1070,20 @@ func scanHost(row pgx.Row) (*HostRow, error) {
 }
 
 func hostAudit(h *HostRow) map[string]any {
-	return map[string]any{"base_url": h.BaseURL, "name": h.Name, "enabled": h.Enabled, "config": h.Config, "secrets_set": h.Secrets != ""}
+	if h == nil {
+		return nil
+	}
+	return map[string]any{"base_url": h.BaseURL, "name": h.Name, "enabled": h.Enabled, "config": h.Config}
+}
+
+// changeDetail is an audit detail with the state before and after a save,
+// and the names of the secrets it changed.
+func changeDetail(before, after any, secrets []string) map[string]any {
+	d := map[string]any{"before": before, "after": after}
+	if secrets != nil {
+		d["secrets_changed"] = secrets
+	}
+	return d
 }
 
 func (p *Postgres) ListHosts(ctx context.Context) ([]HostRow, error) {
@@ -1068,6 +1112,11 @@ func (p *Postgres) PutHost(ctx context.Context, in HostRow, actor string) (*Host
 		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	old, err := scanHost(tx.QueryRow(ctx, `SELECT `+hostCols+` FROM hosts WHERE platform = $1 AND host = $2 FOR UPDATE`,
+		strings.ToLower(in.Platform), strings.ToLower(in.Host)))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
 	h, err := scanHost(tx.QueryRow(ctx, `
 		INSERT INTO hosts (platform, host, base_url, name, enabled, config, secrets, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (platform, host) DO UPDATE SET base_url = EXCLUDED.base_url, name = EXCLUDED.name, enabled = EXCLUDED.enabled,
@@ -1076,7 +1125,7 @@ func (p *Postgres) PutHost(ctx context.Context, in HostRow, actor string) (*Host
 	if err != nil {
 		return nil, err
 	}
-	if err := audit(ctx, tx, actor, "host.put", h.Platform+":"+h.Host, hostAudit(h)); err != nil {
+	if err := audit(ctx, tx, actor, "host.put", h.Platform+":"+h.Host, changeDetail(hostAudit(old), hostAudit(h), nonNil(in.SecretsChanged))); err != nil {
 		return nil, err
 	}
 	return h, tx.Commit(ctx)
@@ -1092,7 +1141,7 @@ func (p *Postgres) DeleteHost(ctx context.Context, id int64, actor string) error
 	if err != nil {
 		return err
 	}
-	if err := audit(ctx, tx, actor, "host.delete", h.Platform+":"+h.Host, map[string]any{}); err != nil {
+	if err := audit(ctx, tx, actor, "host.delete", h.Platform+":"+h.Host, map[string]any{"before": hostAudit(h)}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -1110,7 +1159,10 @@ func scanEndpoint(row pgx.Row) (*WebhookEndpoint, error) {
 }
 
 func endpointAudit(e *WebhookEndpoint) map[string]any {
-	return map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled, "secrets_set": e.Secrets != ""}
+	if e == nil {
+		return nil
+	}
+	return map[string]any{"host_id": e.HostID, "name": e.Name, "enabled": e.Enabled}
 }
 
 func (p *Postgres) ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error) {
@@ -1136,6 +1188,10 @@ func (p *Postgres) PutWebhookEndpoint(ctx context.Context, in WebhookEndpoint, a
 		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	old, err := scanEndpoint(tx.QueryRow(ctx, `SELECT `+endpointCols+` FROM webhook_endpoints WHERE id::text = $1 FOR UPDATE`, in.ID))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
 	e, err := scanEndpoint(tx.QueryRow(ctx, `
 		INSERT INTO webhook_endpoints (id, host_id, name, enabled, secrets, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)
 		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, secrets = EXCLUDED.secrets,
@@ -1145,7 +1201,7 @@ func (p *Postgres) PutWebhookEndpoint(ctx context.Context, in WebhookEndpoint, a
 	if err != nil {
 		return nil, err
 	}
-	if err := audit(ctx, tx, actor, "webhook.put", e.ID, endpointAudit(e)); err != nil {
+	if err := audit(ctx, tx, actor, "webhook.put", e.ID, changeDetail(endpointAudit(old), endpointAudit(e), nonNil(in.SecretsChanged))); err != nil {
 		return nil, err
 	}
 	return e, tx.Commit(ctx)
@@ -1161,7 +1217,7 @@ func (p *Postgres) DeleteWebhookEndpoint(ctx context.Context, id string, actor s
 	if err != nil {
 		return err
 	}
-	if err := audit(ctx, tx, actor, "webhook.delete", e.ID, endpointAudit(e)); err != nil {
+	if err := audit(ctx, tx, actor, "webhook.delete", e.ID, map[string]any{"before": endpointAudit(e)}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -1302,6 +1358,80 @@ func (p *Postgres) Audit(ctx context.Context, actor, action, target string, deta
 	c := clientip.From(ctx)
 	_, err = p.pool.Exec(ctx, auditInsert, actor, action, target, js, c.IP, c.UserAgent)
 	return err
+}
+
+// previousAfter is the state an earlier audit detail ended in: its
+// "after", or the whole detail for entries from before before/after were
+// recorded. The detail was already redacted by whoever wrote it, so no
+// secret comes back this way.
+func previousAfter(detail json.RawMessage) any {
+	if len(detail) == 0 {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(detail, &m); err == nil {
+		if a, ok := m["after"]; ok {
+			if _, hasBefore := m["before"]; hasBefore {
+				return a
+			}
+		}
+	}
+	return detail
+}
+
+func (p *Postgres) SearchAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 100
+	}
+	q := `SELECT id, at, actor, action, target, detail, ip, user_agent FROM audit_log WHERE true`
+	var args []any
+	add := func(cond string, v any) {
+		args = append(args, v)
+		q += fmt.Sprintf(" AND "+cond, len(args))
+	}
+	like := func(s string) string { return "%" + likeEscape(s) + "%" }
+	if f.Actor != "" {
+		add("actor ILIKE $%d", like(f.Actor))
+	}
+	if a, prefix := f.Prefix(); a != "" {
+		if prefix {
+			add("action LIKE $%d", likeEscape(a)+"%")
+		} else {
+			add("action = $%d", a)
+		}
+	}
+	if f.Target != "" {
+		add("target ILIKE $%d", like(f.Target))
+	}
+	if f.Query != "" {
+		args = append(args, like(f.Query))
+		q += fmt.Sprintf(" AND (target ILIKE $%d OR detail::text ILIKE $%d OR actor ILIKE $%d)", len(args), len(args), len(args))
+	}
+	if !f.From.IsZero() {
+		add("at >= $%d", f.From)
+	}
+	if !f.To.IsZero() {
+		add("at < $%d", f.To)
+	}
+	if f.BeforeID > 0 {
+		add("id < $%d", f.BeforeID)
+	}
+	args = append(args, f.Limit)
+	q += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
+	rows, err := p.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AuditEntry{}
+	for rows.Next() {
+		var a AuditEntry
+		if err := rows.Scan(&a.ID, &a.At, &a.Actor, &a.Action, &a.Target, &a.Detail, &a.IP, &a.UserAgent); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) ListAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
@@ -1559,13 +1689,21 @@ func (p *Postgres) PutModelProfile(ctx context.Context, name string, cfg config.
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	var before json.RawMessage
+	if err := tx.QueryRow(ctx, `SELECT config FROM model_profiles WHERE name = $1 FOR UPDATE`, name).Scan(&before); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO model_profiles (name, config, updated_by) VALUES ($1, $2, $3)
 		ON CONFLICT (name) DO UPDATE SET config = EXCLUDED.config, updated_by = EXCLUDED.updated_by, updated_at = now()`,
 		name, js, actor); err != nil {
 		return err
 	}
-	if err := audit(ctx, tx, actor, "model.put", name, cfg); err != nil {
+	var prev any
+	if before != nil {
+		prev = before
+	}
+	if err := audit(ctx, tx, actor, "model.put", name, changeDetail(prev, cfg, nil)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -1645,7 +1783,11 @@ func (p *Postgres) PutSettingAudited(ctx context.Context, key string, value, det
 		key, js, actor); err != nil {
 		return err
 	}
-	if err := audit(ctx, tx, actor, "setting.put", key, detail); err != nil {
+	var last json.RawMessage
+	if err := tx.QueryRow(ctx, `SELECT detail FROM audit_log WHERE action = 'setting.put' AND target = $1 ORDER BY id DESC LIMIT 1`, key).Scan(&last); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err := audit(ctx, tx, actor, "setting.put", key, changeDetail(previousAfter(last), detail, nil)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

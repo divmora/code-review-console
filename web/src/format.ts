@@ -20,6 +20,37 @@ export function fmtDur(ms: number): string {
   return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
 }
 
+// Dates are shown the same way on every page, day first with the month as
+// a word so no reader takes 03/04 for 4 March: "23 Nov 2026", and with
+// the time "23 Nov 2026, 09:33 IST" (the browser's time zone, named).
+const dateFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const timeFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const secFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+function zoneName(d: Date): string {
+  const part = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(d).find((p) => p.type === "timeZoneName");
+  return part ? part.value : "";
+}
+
+// fmtDate is "23 Nov 2026".
+export function fmtDate(t: string | Date): string {
+  const d = typeof t === "string" ? new Date(t) : t;
+  return isNaN(d.getTime()) ? "" : dateFmt.format(d);
+}
+
+// fmtDateTime is "23 Nov 2026, 09:33 IST" (with seconds: 09:33:38).
+export function fmtDateTime(t: string | Date, seconds = false): string {
+  const d = typeof t === "string" ? new Date(t) : t;
+  if (isNaN(d.getTime())) return "";
+  return dateFmt.format(d) + ", " + (seconds ? secFmt : timeFmt).format(d) + " " + zoneName(d);
+}
+
+// utcTitle is the UTC time, for a hover title: "2026-11-23 04:03:38 UTC".
+export function utcTitle(t: string | Date): string {
+  const d = typeof t === "string" ? new Date(t) : t;
+  return isNaN(d.getTime()) ? "" : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+}
+
 export function localTime(t: string): string {
-  return new Date(t).toLocaleString();
+  return fmtDateTime(t);
 }
