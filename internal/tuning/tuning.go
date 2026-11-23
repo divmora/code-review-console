@@ -77,6 +77,36 @@ type Settings struct {
 	// DashboardAccess says who can open the status dashboard: AccessAdmins,
 	// AccessToken or AccessPublic. Empty: see Access.
 	DashboardAccess string `json:"dashboard_access,omitempty"`
+	// MetricsAccess says who can read /metrics: MetricsOff (default),
+	// AccessToken (a bearer token) or AccessPublic.
+	MetricsAccess string `json:"metrics_access,omitempty"`
+	// MetricsTokenHash is the SHA-256 (hex) of the /metrics bearer token.
+	MetricsTokenHash string `json:"metrics_token_hash,omitempty"`
+}
+
+// MetricsOff turns /metrics off.
+const MetricsOff = "off"
+
+// Metrics is who can read /metrics (MetricsOff when never chosen).
+func (s Settings) Metrics() string {
+	switch s.MetricsAccess {
+	case AccessToken, AccessPublic:
+		return s.MetricsAccess
+	}
+	return MetricsOff
+}
+
+// MetricsOpen reports whether a request with this bearer token may read
+// /metrics.
+func (s Settings) MetricsOpen(token string) bool {
+	switch s.Metrics() {
+	case AccessPublic:
+		return true
+	case AccessToken:
+		return s.MetricsTokenHash != "" && token != "" &&
+			subtle.ConstantTimeCompare([]byte(hashToken(token)), []byte(s.MetricsTokenHash)) == 1
+	}
+	return false
 }
 
 // Who can open the status dashboard.
@@ -308,6 +338,14 @@ func (s Settings) Validate(profiles map[string]bool) error {
 	if s.DashboardAccess == AccessToken && s.DashboardTokenHash == "" {
 		return errors.New("set a dashboard token, or choose another dashboard access")
 	}
+	switch s.MetricsAccess {
+	case "", MetricsOff, AccessToken, AccessPublic:
+	default:
+		return fmt.Errorf("metrics access %q: want off, token or public", s.MetricsAccess)
+	}
+	if s.MetricsAccess == AccessToken && s.MetricsTokenHash == "" {
+		return errors.New("set a metrics token, or choose another metrics access")
+	}
 	if len(s.ExtraEnv) > 50 {
 		return errors.New("at most 50 extra environment variables")
 	}
@@ -438,6 +476,10 @@ type Update struct {
 	DashboardToken string `json:"dashboard_token"`
 	ClearToken     bool   `json:"clear_dashboard_token"`
 	ValidDays      int    `json:"dashboard_token_valid_days"`
+	// MetricsToken sets the /metrics bearer token ("" keeps it);
+	// ClearMetricsToken removes it.
+	MetricsToken      string `json:"metrics_token"`
+	ClearMetricsToken bool   `json:"clear_metrics_token"`
 }
 
 // Put validates and saves an update, keeping the stored dashboard token
@@ -449,6 +491,16 @@ func (s *Service) Put(ctx context.Context, u Update, profiles map[string]bool, a
 	n := clean(u.Settings)
 	cur := s.Get(ctx)
 	n.DashboardTokenHash, n.DashboardTokenExpires = cur.DashboardTokenHash, cur.DashboardTokenExpires
+	n.MetricsTokenHash = cur.MetricsTokenHash
+	switch t := strings.TrimSpace(u.MetricsToken); {
+	case u.ClearMetricsToken:
+		n.MetricsTokenHash = ""
+	case t != "":
+		if len(t) < 16 {
+			return Settings{}, errors.New("the metrics token needs at least 16 characters")
+		}
+		n.MetricsTokenHash = hashToken(t)
+	}
 	switch t := strings.TrimSpace(u.DashboardToken); {
 	case u.ClearToken:
 		n.DashboardTokenHash, n.DashboardTokenExpires = "", ""
@@ -471,7 +523,7 @@ func (s *Service) Put(ctx context.Context, u Update, profiles map[string]bool, a
 	if err := n.Validate(profiles); err != nil {
 		return Settings{}, err
 	}
-	if err := s.st.PutSettingAudited(ctx, Key, n, auditDetail(n, cur.DashboardTokenHash), actor); err != nil {
+	if err := s.st.PutSettingAudited(ctx, Key, n, auditDetail(n, cur), actor); err != nil {
 		return Settings{}, err
 	}
 	n = n.Effective()
@@ -487,19 +539,24 @@ func (s *Service) Put(ctx context.Context, u Update, profiles map[string]bool, a
 // auditDetail is s for the audit log, which admins can read: the token's
 // hash is replaced by what happened to the token, so a short hand-typed
 // token can't be guessed offline from the log.
-func auditDetail(s Settings, oldHash string) Settings {
-	switch {
-	case s.DashboardTokenHash == "" && oldHash != "":
-		s.DashboardTokenHash = "(removed)"
-	case s.DashboardTokenHash == "":
-	case oldHash == "":
-		s.DashboardTokenHash = "(set)"
-	case s.DashboardTokenHash != oldHash:
-		s.DashboardTokenHash = "(changed)"
-	default:
-		s.DashboardTokenHash = "(unchanged)"
-	}
+func auditDetail(s, old Settings) Settings {
+	s.DashboardTokenHash = tokenChange(s.DashboardTokenHash, old.DashboardTokenHash)
+	s.MetricsTokenHash = tokenChange(s.MetricsTokenHash, old.MetricsTokenHash)
 	return s
+}
+
+func tokenChange(hash, oldHash string) string {
+	switch {
+	case hash == "" && oldHash != "":
+		return "(removed)"
+	case hash == "":
+		return ""
+	case oldHash == "":
+		return "(set)"
+	case hash != oldHash:
+		return "(changed)"
+	}
+	return "(unchanged)"
 }
 
 func clean(s Settings) Settings {
@@ -535,7 +592,7 @@ func (s *Service) Import(ctx context.Context) (imported bool, err error) {
 	}
 	f, ferr := FromConfig(s.cfg)
 	f = clean(f)
-	if err := s.st.PutSettingAudited(ctx, Key, f, auditDetail(f, ""), ImportActor); err != nil {
+	if err := s.st.PutSettingAudited(ctx, Key, f, auditDetail(f, Settings{}), ImportActor); err != nil {
 		return false, err
 	}
 	return true, ferr

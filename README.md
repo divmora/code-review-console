@@ -74,6 +74,7 @@ Rules are managed under *Groups & patterns* in the admin UI:
 
 Deeper rules beat shallower ones and exact groups beat patterns, so `acme` enabled with `acme/legacy-*` disabled reviews everything except the legacy repositories. A repository set to Enabled or Disabled overrides every rule. Settings add up from the broadest matching rule to the most specific, then the repository's own settings; extra instructions are joined.
 - **Status**: running, pending and recent reviews on a status dashboard, for signed-in admins by default; it can also be opened with a token (for a team screen) or made public (Settings → Status dashboard access).
+- **Metrics**: `/metrics` in the Prometheus format (queue, reviews, durations, tokens, webhooks, license and token expiry), off until chosen under Settings.
 
 > The `/api/v1` API, testing a model from the panel, manual actions and the admin-controlled public status page are in progress. See [ROADMAP.md](ROADMAP.md).
 

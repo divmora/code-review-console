@@ -56,6 +56,8 @@ type Server struct {
 	settings *settings.Service
 	models   *models.Service
 	tuning   *tuning.Service
+	// metrics are the counters behind /metrics.
+	metrics *serverMetrics
 	// stopPrune ends the review-history cleanup loop.
 	stopPrune chan struct{}
 	stopOnce  sync.Once
@@ -160,8 +162,9 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 	t := s.tuning.Get(context.Background())
 	s.queue = NewQueue(t.Workers, t.QueueSize, t.JobTimeoutDuration(), t.History, logger)
 	s.tuning.OnChange = s.applyTuning
+	s.initMetrics()
+	s.queue.OnFinish = s.onFinish
 	if s.store != nil {
-		s.queue.OnFinish = s.persistJob
 		s.loadHistory()
 		s.hooks = newHookWriter(s.store, func() time.Duration { return s.settings.Runtime(context.Background()).WebhookRetention() }, logger)
 		s.stopPrune = make(chan struct{})
@@ -329,6 +332,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /dashboard", s.handleDashboardPage)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	if s.admin != nil {
 		// Admins-only dashboard: under /admin, where the session cookie applies.
 		mux.HandleFunc("GET /admin/dashboard", s.handleAdminDashboardPage)
