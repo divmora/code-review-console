@@ -1420,6 +1420,14 @@ func TestImpactAPI(t *testing.T) {
 		v.BySeverity["critical"] != 3 || len(v.TopByReviews) != 2 || len(v.ByCategory) != 2 || v.Granularity != "day" || v.MedianFirstReviewMS != 60000 {
 		t.Fatalf("impact: %d %s", code, body)
 	}
+	// Impact's numbers open Reviews with these filters (issue #114).
+	for q, want := range map[string]int{"category=security": 3, "severity=critical&repo=g/web": 1, "severity=minor&category=security": 0, "severity=any": 3} {
+		var rv struct{ Reviews []store.Job }
+		code, body := e.do(t, "GET", "/admin/api/reviews?"+q, "", nil)
+		if _ = json.Unmarshal(body, &rv); code != 200 || len(rv.Reviews) != want {
+			t.Errorf("reviews?%s: %d %d, want %d", q, code, len(rv.Reviews), want)
+		}
+	}
 	if code, _ := e.do(t, "GET", "/admin/api/impact?range=7d", "", nil); code != 400 {
 		t.Errorf("unknown range: %d", code)
 	}
