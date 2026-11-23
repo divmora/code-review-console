@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.11.0](https://github.com/divmora/code-review-console/compare/v0.10.0...v0.11.0) (2026-11-23)
+
+
+### Features
+
+* admin, operator and viewer roles, with approval for operators' sensitive changes ([#82](https://github.com/divmora/code-review-console/issues/82)) ([a5f3562](https://github.com/divmora/code-review-console/commit/a5f356273b7f5714b3b82f06ee5b46621201c226)), closes [#68](https://github.com/divmora/code-review-console/issues/68)
+
+
+### Bug Fixes
+
+* **admin:** sign sessions out after inactivity ([#94](https://github.com/divmora/code-review-console/issues/94)) ([ac53abc](https://github.com/divmora/code-review-console/commit/ac53abc07733584cedd12a308c57781e00b32922)), closes [#87](https://github.com/divmora/code-review-console/issues/87)
+* **clientip:** count proxy hops; warn on wide trusted ranges; fix the advice ([#85](https://github.com/divmora/code-review-console/issues/85)) ([0743045](https://github.com/divmora/code-review-console/commit/07430456679f5f6b9454068c01bca2e98d0fb598)), closes [#83](https://github.com/divmora/code-review-console/issues/83)
+* no directory listing under /admin/assets/; /healthz shows only the status ([#91](https://github.com/divmora/code-review-console/issues/91)) ([1dff539](https://github.com/divmora/code-review-console/commit/1dff5390eb0466a8d9cb5fdffdcad99b2409c129)), closes [#89](https://github.com/divmora/code-review-console/issues/89)
+* **queue:** waiting jobs survive restarts, upgrades and evictions ([#96](https://github.com/divmora/code-review-console/issues/96)) ([26d1aca](https://github.com/divmora/code-review-console/commit/26d1aca58c42e97a1d3942dc04a0ad1ac59fd77c))
+* **ui:** Settings no longer crashes when no extra job variables are set ([#97](https://github.com/divmora/code-review-console/issues/97)) ([5b41495](https://github.com/divmora/code-review-console/commit/5b41495f22eac2c9a6172b6800dd2790933d920f)), closes [#95](https://github.com/divmora/code-review-console/issues/95)
+* **webhooks:** a signing token makes a GitLab webhook signature-only ([#93](https://github.com/divmora/code-review-console/issues/93)) ([7d05cec](https://github.com/divmora/code-review-console/commit/7d05cec06ff36391d302704c54140df914610c08)), closes [#86](https://github.com/divmora/code-review-console/issues/86)
+
 ## [0.10.0](https://github.com/divmora/code-review-console/compare/v0.9.0...v0.10.0) (2026-11-23)
 
 
