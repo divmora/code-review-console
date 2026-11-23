@@ -59,7 +59,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("import: %+v", res)
 	}
 	h, got, err := dst.Route(GitLab, ep.ID)
-	if err != nil || got.Name != "platform group" || h.WebhookSecrets[0] != secret || h.Token != "glpat-file" {
+	if err != nil || got.Name != "platform group" || h.Hook.WebhookSecrets[0] != secret || h.Token != "glpat-file" {
 		t.Fatalf("moved webhook: %+v %+v %v", h, got, err)
 	}
 
@@ -68,7 +68,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if _, err := dst.Import(ctx, f2, "cli", false); err != nil {
 		t.Fatal(err)
 	}
-	if h, _, _ := dst.Route(GitLab, ep.ID); h.WebhookSecrets[0] != secret || h.Token != "glpat-file" {
+	if h, _, _ := dst.Route(GitLab, ep.ID); h.Hook.WebhookSecrets[0] != secret || h.Token != "glpat-file" {
 		t.Errorf("absent secrets must be kept: %+v", h)
 	}
 }

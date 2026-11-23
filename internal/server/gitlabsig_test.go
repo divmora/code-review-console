@@ -104,20 +104,8 @@ func TestGitLabSigningKeyAndConfig(t *testing.T) {
 	if _, err := gitlabSigningKey("whsec_***"); err == nil {
 		t.Error("bad base64 must fail")
 	}
-	t.Setenv("CODEREVIEW_CONFIG", "")
-	cfg, _ := config.Load("")
-	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
-	cfg.Model = "m"
-	for _, g := range []config.GitLab{
-		{BaseURL: "http://127.0.0.1:1", Token: "t"},
-		{BaseURL: "http://127.0.0.1:1", Token: "t", SigningToken: "bad"},
-		{BaseURL: "http://127.0.0.1:1", Token: "t", WebhookSecret: "x", RequireSignature: true},
-	} {
-		cfg.GitLab = []config.GitLab{g}
-		if _, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)}); err == nil {
-			t.Errorf("config %+v should be rejected", g)
-		}
-	}
+	// Webhook signing tokens are checked when a webhook is saved (see the
+	// hosts package); the config file's are no longer used.
 }
 
 func TestGitLabSignedWebhook(t *testing.T) {
@@ -127,14 +115,14 @@ func TestGitLabSignedWebhook(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(context.Background())
 	body := []byte(`{"object_kind":"merge_request","project":{"path_with_namespace":"g/p"},"object_attributes":{"iid":3,"action":"update","oldrev":"abc"}}`)
 	send := func(h http.Header) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(body))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(body))
 		for k, v := range h {
 			req.Header[k] = v
 		}
@@ -177,7 +165,7 @@ func TestSeveralHooksOneInstance(t *testing.T) {
 	cfg.Models = map[string]config.ModelProfile{"m": {"provider": "ollama", "model": "x"}}
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +174,7 @@ func TestSeveralHooksOneInstance(t *testing.T) {
 	note := []byte(`{"object_kind":"note","user":{"username":"dev"},"project":{"path_with_namespace":"g/p"},"merge_request":{"iid":3},` +
 		`"object_attributes":{"id":99,"note":"@codereview review","noteable_type":"MergeRequest","updated_at":"2026-11-19 10:00:00 UTC"}}`)
 	send := func(h http.Header) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(note))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(note))
 		for k, v := range h {
 			req.Header[k] = v
 		}

@@ -344,10 +344,9 @@ func TestLoginAndManageRepos(t *testing.T) {
 		w.WriteHeader(401)
 	}))
 	defer gl.Close()
-	newHost := map[string]any{"platform": "gitlab", "base_url": gl.URL, "token": "glpat-SECRET",
-		"signing_tokens": []string{randomSigningToken(t)}}
+	newHost := map[string]any{"platform": "gitlab", "base_url": gl.URL, "token": "glpat-SECRET"}
 	code, body = e.do(t, "POST", "/admin/api/hosts", csrf, newHost)
-	if code != 201 || bytes.Contains(body, []byte("glpat-SECRET")) || !bytes.Contains(body, []byte(`"token":true`)) || !bytes.Contains(body, []byte(`/webhooks/gitlab`)) {
+	if code != 201 || bytes.Contains(body, []byte("glpat-SECRET")) || !bytes.Contains(body, []byte(`"token":true`)) || bytes.Contains(body, []byte(`webhook_url`)) {
 		t.Fatalf("create host: %d %s", code, body)
 	}
 	var hv struct{ ID int64 }
@@ -417,7 +416,7 @@ func TestLoginAndManageRepos(t *testing.T) {
 	if len(audited) < 4 {
 		t.Errorf("webhook changes must be audited: %v", audited)
 	}
-	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://other.example", "webhook_secrets": []string{"x"}}); code != 400 {
+	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://other.example"}); code != 400 {
 		t.Errorf("a GitLab host without an access token must be rejected: %d", code)
 	}
 	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, nil); code != 200 {
@@ -1080,8 +1079,7 @@ func TestTokenExpiryWarnings(t *testing.T) {
 		}
 	}))
 	defer gl.Close()
-	code, body := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "name": "Our GitLab", "base_url": gl.URL, "token": "glpat-soon",
-		"signing_tokens": []string{randomSigningToken(t)}})
+	code, body := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "name": "Our GitLab", "base_url": gl.URL, "token": "glpat-soon"})
 	if code != 201 || !bytes.Contains(body, []byte(`"token_expiry":{"expires":"`)) {
 		t.Fatalf("saving a host reads its token's expiry: %d %s", code, body)
 	}
@@ -1188,8 +1186,7 @@ func TestHostSaveNamesChangedSecrets(t *testing.T) {
 	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
 	_ = e.login(t).Body.Close()
 	csrf := e.csrf(t)
-	code, body := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://gitlab.audit.example", "token": "glpat-first",
-		"signing_tokens": []string{randomSigningToken(t)}})
+	code, body := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://gitlab.audit.example", "token": "glpat-first"})
 	if code != 201 {
 		t.Fatalf("create: %d %s", code, body)
 	}
@@ -1202,7 +1199,7 @@ func TestHostSaveNamesChangedSecrets(t *testing.T) {
 	if len(puts) != 2 {
 		t.Fatalf("host.put entries: %d", len(puts))
 	}
-	if !bytes.Contains(puts[0].Detail, []byte(`"secrets_changed":["token:changed"]`)) || !bytes.Contains(puts[1].Detail, []byte(`"token:set","signing_tokens:+1"`)) {
+	if !bytes.Contains(puts[0].Detail, []byte(`"secrets_changed":["token:changed"]`)) || !bytes.Contains(puts[1].Detail, []byte(`"secrets_changed":["token:set"]`)) {
 		t.Errorf("secret changes are named: %s / %s", puts[0].Detail, puts[1].Detail)
 	}
 	for _, p := range puts {
@@ -1248,8 +1245,7 @@ func TestRolesAndApprovals(t *testing.T) {
 	if e.adm.settings().Get(context.Background()).DashboardTitle == "Ops board" {
 		t.Fatal("not applied before approval")
 	}
-	code, body = e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://gitlab.ops.example", "token": "glpat-operator-secret",
-		"signing_tokens": []string{randomSigningToken(t)}})
+	code, body = e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://gitlab.ops.example", "token": "glpat-operator-secret"})
 	if code != 202 {
 		t.Fatalf("an operator's host waits: %d %s", code, body)
 	}

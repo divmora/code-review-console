@@ -13,7 +13,7 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 | Repository permissions | **Pull requests**: Read and write · **Contents**: Read-only · **Metadata**: Read-only |
 | Subscribe to events | **Pull request** · **Issue comment** |
 
-The shared URL `https://<your-host>/webhooks/github` keeps working for existing apps, with the webhook secret in the host's settings.
+The shared URL `https://<your-host>/webhooks/github` was removed in 0.12. If your app still points there, add a webhook in the console and change the app's **Webhook URL** and **Webhook secret** to the ones it shows.
 
 Name the app after your bot name (default `codereview`) so `@codereview` mentions match. If the app slug differs, set the GitHub host's bot name (or the default under Settings) to the slug.
 

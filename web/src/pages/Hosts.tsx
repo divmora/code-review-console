@@ -15,8 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
-  secrets: { token: boolean; app_private_key: boolean; api_token: boolean; webhook_secrets: number; signing_tokens: number };
-  webhook_url: string; webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string; token_expiry?: TokenExpiry; check?: HostCheck;
+  secrets: { token: boolean; app_private_key: boolean; api_token: boolean };
+  webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string; token_expiry?: TokenExpiry; check?: HostCheck;
 };
 
 type Hook = {
@@ -27,10 +27,9 @@ type Hook = {
 
 const names = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
 const defaults = { github: "https://api.github.com", gitlab: "https://gitlab.com", bitbucket: "https://api.bitbucket.org/2.0" };
-const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
 
-function Secret({ label, set, multi, list, help, value, onChange }: { label: string; set: boolean; multi?: boolean; list?: boolean; help?: string; value: string; onChange: (v: string) => void }) {
-  const ph = set ? "Set ✓ — leave blank to keep" : list ? "one per line" : "";
+function Secret({ label, set, multi, help, value, onChange }: { label: string; set: boolean; multi?: boolean; help?: string; value: string; onChange: (v: string) => void }) {
+  const ph = set ? "Set ✓ — leave blank to keep" : "";
   return (
     <Field label={label + (help ? " — " + help : "")}>
       {multi ? (
@@ -186,7 +185,6 @@ function HostWebhooks({ host, managed, onChanged }: { host: Host; managed: boole
         onChanged();
       })
       .catch((e) => toast(errMsg(e), true));
-  const shared = host.secrets.webhook_secrets > 0 || host.secrets.signing_tokens > 0;
   return (
     <div className="grid gap-6">
       {host.comment_warning && <CommentWarning text={host.comment_warning} />}
@@ -216,18 +214,6 @@ function HostWebhooks({ host, managed, onChanged }: { host: Host; managed: boole
           ))
         )}
       </Section>
-      <Separator />
-      <Section title="Shared URL">
-        <div className="flex flex-wrap items-center gap-2">
-          <code className="hosturl min-w-0 flex-1 break-all">{host.webhook_url}</code>
-          <CopyButton text={host.webhook_url} label="Copy URL" />
-        </div>
-        <Sub>
-          {shared
-            ? "Still accepted for existing hooks. It is shared by every " + names[host.platform] + " host and checked with the secrets in the host's settings. Move hooks to their own URL above when you can."
-            : "Shared by every " + names[host.platform] + " host. This host has no secrets of its own for it, so only the webhooks above work."}
-        </Sub>
-      </Section>
     </div>
   );
 }
@@ -245,12 +231,12 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
   const toast = useToast();
   const identity = useFeature("hosts");
   const st = host?.settings ?? {};
-  const sec = host?.secrets ?? { token: false, app_private_key: false, api_token: false, webhook_secrets: 0, signing_tokens: 0 };
+  const sec = host?.secrets ?? { token: false, app_private_key: false, api_token: false };
   const [plat, setPlat] = useState<Host["platform"]>(host?.platform ?? "gitlab");
   const [v, setV] = useState({
     base: host?.base_url ?? "", name: host?.name ?? "", enabled: host ? host.enabled : true,
     token: "", appID: st.app_id ? String(st.app_id) : "", appKey: "", email: st.email ?? "", apiToken: "",
-    secrets: "", signing: "", reqSig: !!st.require_signature, skipTLS: !!st.skip_tls_verify, bot: st.bot_name ?? "", reviewer: st.reviewer ?? "",
+    reqSig: !!st.require_signature, skipTLS: !!st.skip_tls_verify, bot: st.bot_name ?? "", reviewer: st.reviewer ?? "",
   });
   const set = (k: keyof typeof v) => (x: any) => setV({ ...v, [k]: typeof x === "object" && x?.target ? x.target.value : x });
   const save = () => {
@@ -261,8 +247,6 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
     if (v.token.trim()) body.token = v.token.trim();
     if (v.appKey.trim()) body.app_private_key = v.appKey;
     if (v.apiToken.trim()) body.api_token = v.apiToken.trim();
-    if (lines(v.secrets).length) body.webhook_secrets = lines(v.secrets); // blank keeps the current values
-    if (lines(v.signing).length) body.signing_tokens = lines(v.signing);
     (host ? put<Host>("/admin/api/hosts/" + host.id, body) : post<Host>("/admin/api/hosts", body))
       .then((h) => {
         toast("Saved " + h.name);
@@ -330,26 +314,20 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
         </div>
       </Section>
       <Separator />
-      <Section title="Shared URL secrets (optional)">
-        <Sub>The secrets are only for hooks on the shared {"/webhooks/" + plat} URL; webhooks added under Webhooks have their own URL and secrets.</Sub>
-        <div className="grid gap-4">
-          {plat === "gitlab" ? (
-            <>
-              <Secret label="Signing tokens (whsec_…)" multi list set={sec.signing_tokens > 0} help={sec.signing_tokens ? sec.signing_tokens + " set" : "GitLab 19.0+, recommended"} value={v.signing} onChange={set("signing")} />
-              <Secret label="Secret tokens" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "older hooks"} value={v.secrets} onChange={set("secrets")} />
-              <Field label="Unsigned deliveries (every URL of this host)" hint={<Sub>Reject applies to the shared URL and to every webhook of this host. A webhook with its own signing token rejects unsigned deliveries either way, unless it is set to accept both.</Sub>}>
-                <NativeSelect value={String(v.reqSig)} onChange={(e) => setV({ ...v, reqSig: e.target.value === "true" })}>
-                  <option value="false">Accept with a secret token (unless the webhook has a signing token)</option>
-                  <option value="true">Reject everywhere (signed deliveries only)</option>
-                </NativeSelect>
-              </Field>
-            </>
-          ) : (
-            <Secret label="Webhook secrets" multi list set={sec.webhook_secrets > 0} help={sec.webhook_secrets ? sec.webhook_secrets + " set" : "one per hook"} value={v.secrets} onChange={set("secrets")} />
-          )}
-        </div>
-      </Section>
-      <Separator />
+      {plat === "gitlab" && (
+        <>
+          <Section title="Webhooks">
+            <Sub>Each webhook has its own URL and secrets: add them under Manage webhooks once the host is saved.</Sub>
+            <Field label="Unsigned deliveries (every webhook of this host)" hint={<Sub>A webhook with its own signing token rejects unsigned deliveries either way, unless it is set to accept both.</Sub>}>
+              <NativeSelect value={String(v.reqSig)} onChange={(e) => setV({ ...v, reqSig: e.target.value === "true" })}>
+                <option value="false">Accept with a secret token (unless the webhook has a signing token)</option>
+                <option value="true">Reject everywhere (signed deliveries only)</option>
+              </NativeSelect>
+            </Field>
+          </Section>
+          <Separator />
+        </>
+      )}
       <Section title="Bot identity">
         <FormGrid className="lg:grid-cols-2">
           <Field label="Mention name" hint={<LockNote feature="hosts" />}>
@@ -433,8 +411,7 @@ export default function Hosts() {
             <TableBody>
               {data.hosts.map((h) => {
                 const s = h.secrets;
-                const auth = [s.token && "token set", h.settings.app_id && `App ${h.settings.app_id}${s.app_private_key ? ", key set" : " (no key)"}`, s.api_token && "API token set",
-                  s.signing_tokens && `${s.signing_tokens} signing token${s.signing_tokens > 1 ? "s" : ""}`, s.webhook_secrets && `${s.webhook_secrets} webhook secret${s.webhook_secrets > 1 ? "s" : ""}`].filter(Boolean) as string[];
+                const auth = [s.token && "token set", h.settings.app_id && `App ${h.settings.app_id}${s.app_private_key ? ", key set" : " (no key)"}`, s.api_token && "API token set"].filter(Boolean) as string[];
                 const t = tests[h.id] || h.check;
                 return (
                   <TableRow key={h.id}>
@@ -475,7 +452,7 @@ export default function Hosts() {
                           ))}
                         </div>
                       ) : (
-                        <Sub>{h.secrets.webhook_secrets || h.secrets.signing_tokens ? "Shared URL only" : "None yet"}</Sub>
+                        <Sub>None yet</Sub>
                       )}
                       {h.comment_warning && (
                         <div className="mt-1.5">

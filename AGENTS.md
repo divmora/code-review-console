@@ -64,9 +64,9 @@ Changing this contract means changing the bot's CLI too; keep them in step.
   and extracts them (`codereview learn`). The console never calls a model itself.
 - Host secrets are encrypted before the store sees them; APIs and audit entries expose only
   whether a secret is set. A delivery on `/webhooks/<platform>/<uuid>` (a webhook endpoint added in
-  the admin panel) is routed by the URL and verified against that endpoint's secrets only; the shared
-  `/webhooks/<platform>` URL picks the host from headers only (X-Gitlab-Instance,
-  X-GitHub-Enterprise-Host) or tries each enabled host's secrets; it never trusts the payload to choose.
+  the admin panel) is routed by the URL and verified against that endpoint's secrets only (Host.Hook,
+  set by Registry.Route); it never trusts headers or the payload to choose. There is no shared
+  `/webhooks/<platform>` URL and hosts store no webhook secrets of their own (removed in 0.12).
 - Webhooks authenticate before parsing: a delivery without an auth header is rejected before its body
   is read (a GitLab token is checked before reading at all), and a rejected delivery's history record
   holds transport facts only (no project, sender or number). Saved rejections are capped per minute.

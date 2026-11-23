@@ -20,7 +20,8 @@ import (
 // is a random UUID generated when an admin adds the webhook. Deliveries on
 // that URL are verified against the endpoint's own secrets only, so one
 // webhook (say, one GitLab group's) can be rotated or revoked on its own.
-// The shared /webhooks/<platform> URL keeps using the host's secrets.
+// It is the only way deliveries come in (the shared /webhooks/<platform>
+// URL was removed in 0.12).
 type Endpoint struct {
 	ID        string    `json:"id"`
 	HostID    int64     `json:"host_id"`
@@ -116,7 +117,7 @@ func (r *Registry) Route(platform, id string) (Host, Endpoint, error) {
 	}
 	for _, h := range r.Enabled(platform) {
 		if h.ID == e.HostID {
-			h.WebhookSecrets, h.SigningTokens = e.WebhookSecrets, e.SigningTokens
+			h.Hook = e.EndpointSecrets
 			// A signing token replaces the secret token unless the webhook
 			// is set to accept both; the host's "reject unsigned" applies too.
 			h.RequireSignature = h.RequireSignature || e.SignedOnly()

@@ -39,7 +39,7 @@ func preauthServer(t *testing.T) (*Server, *storetest.Memory) {
 	cfg.Model = "m"
 	cfg.Server.Debounce = time.Hour
 	st := storetest.New()
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: licensetest.Full(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +70,10 @@ func TestRejectedDeliveriesRecordNoPayload(t *testing.T) {
 	}
 	b := []byte(forged)
 	codes := []int{
-		do("/webhooks/gitlab", map[string]string{"X-Gitlab-Event": "Merge Request Hook", "X-Gitlab-Token": "wrong"}, b),
-		do("/webhooks/gitlab", map[string]string{"X-Gitlab-Event": "Merge Request Hook"}, b),
-		do("/webhooks/github", map[string]string{"X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sign("wrong", b)}, b),
-		do("/webhooks/bitbucket", map[string]string{"X-Event-Key": "pullrequest:created", "X-Hub-Signature": bbSign("wrong", b)}, b),
+		do(hookPath("gitlab", 1), map[string]string{"X-Gitlab-Event": "Merge Request Hook", "X-Gitlab-Token": "wrong"}, b),
+		do(hookPath("gitlab", 1), map[string]string{"X-Gitlab-Event": "Merge Request Hook"}, b),
+		do(hookPath("github", 1), map[string]string{"X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sign("wrong", b)}, b),
+		do(hookPath("bitbucket", 1), map[string]string{"X-Event-Key": "pullrequest:created", "X-Hub-Signature": bbSign("wrong", b)}, b),
 	}
 	for i, c := range codes {
 		if c != http.StatusUnauthorized {
@@ -100,12 +100,12 @@ func TestBodyNotReadBeforeAuth(t *testing.T) {
 		"github unsigned":    {},
 		"bitbucket unsigned": {},
 	} {
-		path := "/webhooks/gitlab"
+		path := hookPath("gitlab", 1)
 		switch name[:6] {
 		case "github":
-			path = "/webhooks/github"
+			path = hookPath("github", 1)
 		case "bitbuc":
-			path = "/webhooks/bitbucket"
+			path = hookPath("bitbucket", 1)
 		}
 		req := httptest.NewRequest("POST", path, unreadable{t})
 		for k, v := range hdr {
@@ -119,22 +119,35 @@ func TestBodyNotReadBeforeAuth(t *testing.T) {
 	}
 }
 
-// Without X-Gitlab-Instance and with several GitLab hosts, the token picks
-// the host (the payload is not used to choose).
-func TestGitLabTokenPicksHost(t *testing.T) {
+// With several GitLab hosts, the webhook URL picks the host (not the
+// token, X-Gitlab-Instance or the payload), and only its webhook's token
+// gets in.
+func TestGitLabURLPicksHost(t *testing.T) {
 	s, st := preauthServer(t)
 	body := []byte(`{"object_kind":"merge_request","project":{"path_with_namespace":"g/p","web_url":"http://127.0.0.1:1/g/p"},"object_attributes":{"iid":3,"action":"approved"}}`)
-	req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(body))
-	req.Header.Set("X-Gitlab-Event", "Merge Request Hook")
-	req.Header.Set("X-Gitlab-Token", "secret-b")
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("%d %s", w.Code, w.Body)
+	send := func(path, token string) int {
+		req := httptest.NewRequest("POST", path, bytes.NewReader(body))
+		req.Header.Set("X-Gitlab-Event", "Merge Request Hook")
+		req.Header.Set("X-Gitlab-Instance", "http://127.0.0.1:1")
+		req.Header.Set("X-Gitlab-Token", token)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, req)
+		return w.Code
 	}
-	ev := history(t, s, st)
-	if len(ev) != 1 || ev[0].Host != "127.0.0.2:1" || ev[0].Auth != "token" || ev[0].Project != "g/p" {
-		t.Errorf("the second host's token must select it, whatever the payload says: %+v", ev)
+	if c := send(hookPath("gitlab", 1), "secret-b"); c != http.StatusUnauthorized {
+		t.Errorf("another host's token must not get in: %d", c)
+	}
+	if c := send(hookPath("gitlab", 2), "secret-b"); c != http.StatusOK {
+		t.Fatalf("the second host's webhook: %d", c)
+	}
+	var ok []store.WebhookEvent
+	for _, e := range history(t, s, st) {
+		if e.Auth == "token" {
+			ok = append(ok, e)
+		}
+	}
+	if len(ok) != 1 || ok[0].Host != "127.0.0.2:1" || ok[0].Project != "g/p" {
+		t.Errorf("the URL must select the second host, whatever the header and payload say: %+v", ok)
 	}
 }
 
@@ -142,7 +155,7 @@ func TestRejectedDeliveriesAreCapped(t *testing.T) {
 	s, st := preauthServer(t)
 	h := s.Handler()
 	for i := 0; i < 3*maxRejectedPerMinute; i++ {
-		req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader(nil))
+		req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader(nil))
 		req.Header.Set("X-Gitlab-Token", "wrong")
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}

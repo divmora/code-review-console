@@ -33,7 +33,7 @@ func TestFreeCore(t *testing.T) {
 	st := storetest.New()
 	k := licensetest.NewKey(t)
 	lic := k.Manager(t) // nothing installed: the free core
-	s, err := New(cfg, &fakeExec{}, quiet, Deps{Store: st, License: lic})
+	s, err := newHooked(t, cfg, &fakeExec{}, quiet, Deps{Store: st, License: lic})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestFreeCore(t *testing.T) {
 	_, _ = st.UpdateRepo(ctx, repo.ID, store.ModeEnabled, config.Overrides{}, "admin@x")
 	mr := `{"object_kind":"merge_request","project":{"path_with_namespace":"acme/finance","default_branch":"master","web_url":"http://127.0.0.1:1/acme/finance"},` +
 		`"object_attributes":{"iid":1,"action":"open","state":"opened","source_branch":"master","target_branch":"release-1"}}`
-	req := httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(mr)))
+	req := httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(mr)))
 	req.Header.Set("X-Gitlab-Token", "glsecret")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
@@ -80,7 +80,7 @@ func TestFreeCore(t *testing.T) {
 		t.Error("licensed: the group rule enables acme/new")
 	}
 	mr2 := strings.Replace(mr, `"iid":1`, `"iid":2`, 1)
-	req = httptest.NewRequest("POST", "/webhooks/gitlab", bytes.NewReader([]byte(mr2)))
+	req = httptest.NewRequest("POST", hookPath("gitlab", 1), bytes.NewReader([]byte(mr2)))
 	req.Header.Set("X-Gitlab-Token", "glsecret")
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)

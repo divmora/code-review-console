@@ -747,8 +747,6 @@ type hostView struct {
 	Enabled  bool           `json:"enabled"`
 	Settings hosts.Settings `json:"settings"`
 	Secrets  hosts.Status   `json:"secrets"`
-	// WebhookURL is the shared URL, verified with the host's own secrets.
-	WebhookURL string `json:"webhook_url"`
 	// Webhooks have their own URL and secrets (added in the admin panel).
 	Webhooks []webhookView `json:"webhooks"`
 	Events   []string      `json:"events"`
@@ -773,7 +771,7 @@ var hookEvents = map[string][]string{
 
 func (a *Admin) viewHost(h hosts.Host, stats map[string]store.HostHookStats) hostView {
 	v := hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
-		Settings: h.Settings, Secrets: h.SecretStatus(), WebhookURL: a.cfg.BaseURL + "/webhooks/" + h.Platform, Webhooks: []webhookView{},
+		Settings: h.Settings, Secrets: h.SecretStatus(), Webhooks: []webhookView{},
 		Events: hookEvents[h.Platform], Licensed: !h.Enabled || a.Hosts.Active(h)}
 	for _, e := range a.Hosts.Endpoints(h.ID) {
 		v.Webhooks = append(v.Webhooks, a.viewWebhook(h.Platform, e))
@@ -987,16 +985,14 @@ func (a *Admin) apiListHosts(w http.ResponseWriter, r *http.Request, s *store.Se
 // hostReq creates or updates a host. Secret fields: absent (null) keeps
 // the current value, "" or [] clears it, anything else replaces it.
 type hostReq struct {
-	Platform       string         `json:"platform"`
-	BaseURL        string         `json:"base_url"`
-	Name           string         `json:"name"`
-	Enabled        *bool          `json:"enabled"`
-	Settings       hosts.Settings `json:"settings"`
-	Token          *string        `json:"token"`
-	AppPrivateKey  *string        `json:"app_private_key"`
-	APIToken       *string        `json:"api_token"`
-	WebhookSecrets *[]string      `json:"webhook_secrets"`
-	SigningTokens  *[]string      `json:"signing_tokens"`
+	Platform      string         `json:"platform"`
+	BaseURL       string         `json:"base_url"`
+	Name          string         `json:"name"`
+	Enabled       *bool          `json:"enabled"`
+	Settings      hosts.Settings `json:"settings"`
+	Token         *string        `json:"token"`
+	AppPrivateKey *string        `json:"app_private_key"`
+	APIToken      *string        `json:"api_token"`
 }
 
 func (req hostReq) apply(h *hosts.Host) {
@@ -1016,12 +1012,6 @@ func (req hostReq) apply(h *hosts.Host) {
 	}
 	if req.APIToken != nil {
 		h.APIToken = strings.TrimSpace(*req.APIToken)
-	}
-	if req.WebhookSecrets != nil {
-		h.WebhookSecrets = *req.WebhookSecrets
-	}
-	if req.SigningTokens != nil {
-		h.SigningTokens = *req.SigningTokens
 	}
 }
 

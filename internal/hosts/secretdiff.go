@@ -13,8 +13,6 @@ func SecretChanges(old, new Secrets) []string {
 	out = append(out, valueChange("token", old.Token, new.Token)...)
 	out = append(out, valueChange("app_private_key", old.AppPrivateKey, new.AppPrivateKey)...)
 	out = append(out, valueChange("api_token", old.APIToken, new.APIToken)...)
-	out = append(out, listChange("webhook_secrets", old.WebhookSecrets, new.WebhookSecrets)...)
-	out = append(out, listChange("signing_tokens", old.SigningTokens, new.SigningTokens)...)
 	return out
 }
 

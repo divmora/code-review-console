@@ -31,9 +31,11 @@ type FileHost struct {
 	Enabled  *bool    `yaml:"enabled,omitempty"`
 	Settings Settings `yaml:"settings,omitempty"`
 
-	Token          *string   `yaml:"token,omitempty"`
-	AppPrivateKey  *string   `yaml:"app_private_key,omitempty"`
-	APIToken       *string   `yaml:"api_token,omitempty"`
+	Token         *string `yaml:"token,omitempty"`
+	AppPrivateKey *string `yaml:"app_private_key,omitempty"`
+	APIToken      *string `yaml:"api_token,omitempty"`
+	// WebhookSecrets and SigningTokens were the shared webhook URL's
+	// (removed in 0.12): read from older files and ignored.
 	WebhookSecrets *[]string `yaml:"webhook_secrets,omitempty"`
 	SigningTokens  *[]string `yaml:"signing_tokens,omitempty"`
 
@@ -64,7 +66,6 @@ func (r *Registry) Export(withSecrets bool, baseURL string) File {
 		fh := FileHost{Platform: h.Platform, BaseURL: h.BaseURL, Name: h.Name, Enabled: &enabled, Settings: h.Settings}
 		if withSecrets {
 			fh.Token, fh.AppPrivateKey, fh.APIToken = optional(h.Token), optional(h.AppPrivateKey), optional(h.APIToken)
-			fh.WebhookSecrets, fh.SigningTokens = optionalList(h.WebhookSecrets), optionalList(h.SigningTokens)
 		}
 		for _, e := range r.Endpoints(h.ID) {
 			en := e.Enabled
@@ -163,12 +164,6 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 		setStr(&h.Token, fh.Token)
 		setStr(&h.AppPrivateKey, fh.AppPrivateKey)
 		setStr(&h.APIToken, fh.APIToken)
-		if fh.WebhookSecrets != nil {
-			h.WebhookSecrets = *fh.WebhookSecrets
-		}
-		if fh.SigningTokens != nil {
-			h.SigningTokens = *fh.SigningTokens
-		}
 		if err := h.Normalize(); err != nil {
 			return res, fmt.Errorf("%s: %w", key, err)
 		}
@@ -178,7 +173,7 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 		if err := r.importLicense(h, created, stored, plan); err != nil {
 			return res, fmt.Errorf("%s: %w", key, err)
 		}
-		p := planned{host: h, created: created}
+		p := planned{host: h, created: created, sharedSecrets: fh.WebhookSecrets != nil || fh.SigningTokens != nil}
 		for j, fw := range fh.Webhooks {
 			id := strings.ToLower(strings.TrimSpace(fw.ID))
 			var e Endpoint
@@ -250,6 +245,9 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 			h = saved
 		}
 		res.Lines = append(res.Lines, fmt.Sprintf("host %s:%s: %s", h.Platform, h.Host, verb(p.created)))
+		if p.sharedSecrets {
+			res.Lines = append(res.Lines, "  its webhook_secrets/signing_tokens were ignored: the shared webhook URL was removed, so each webhook under webhooks: has its own")
+		}
 		for i, e := range p.webhooks {
 			label := fmt.Sprintf("%s:%s %s (%s)", h.Platform, h.Host, e.Name, e.ID)
 			if len(e.WebhookSecrets) == 0 {
@@ -276,10 +274,12 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 }
 
 type planned struct {
-	host     Host
-	created  bool
-	webhooks []Endpoint
-	newHooks []bool
+	host    Host
+	created bool
+	// sharedSecrets: the file had host-level webhook secrets (ignored).
+	sharedSecrets bool
+	webhooks      []Endpoint
+	newHooks      []bool
 }
 
 // importLicense applies the admin panel's license rules to an import:

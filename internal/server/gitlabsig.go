@@ -82,7 +82,7 @@ func verifyGitLab(h http.Header, body []byte, inst config.GitLab, now time.Time)
 	}
 	secrets := inst.AllSecrets()
 	if len(secrets) == 0 {
-		return "", "", errors.New("unsigned webhook and no webhook_secret configured")
+		return "", "", errors.New("unsigned delivery, and this webhook has no secret token")
 	}
 	got := []byte(h.Get("X-Gitlab-Token"))
 	for _, sec := range secrets {
