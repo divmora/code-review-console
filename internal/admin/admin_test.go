@@ -16,6 +16,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1397,5 +1398,66 @@ func TestReviewScoresAPI(t *testing.T) {
 	}
 	if _ = json.Unmarshal(body, &rs); code != 200 || rs.Days != 7 || len(rs.Repos) != 1 || rs.Repos[0].Latest.Quality != 92 || len(rs.Repos[0].Trend) != 1 || rs.Repos[0].Trend[0].Scored != 2 {
 		t.Errorf("latest scores and trend per repository: %d %s", code, body)
+	}
+}
+
+func TestImpactAPI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	ctx := context.Background()
+	now := time.Now()
+	res := json.RawMessage(`{"findings":[{"severity":"critical","category":"security"},{"severity":"minor","category":"style"}]}`)
+	for i, repo := range []string{"g/api", "g/api", "g/web"} {
+		if _, err := e.st.InsertJob(ctx, store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.com", Repo: repo, Number: 1 + i%2,
+			State: "done", Enqueued: now.Add(-time.Minute), Started: now, Finished: now, Result: res}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var v impactView
+	code, body := e.do(t, "GET", "/admin/api/impact?range=90d", "", nil)
+	if _ = json.Unmarshal(body, &v); code != 200 || !v.Licensed || v.ReviewRuns != 3 || v.Findings != 6 || v.SecurityFindings != 3 ||
+		v.BySeverity["critical"] != 3 || len(v.TopByReviews) != 2 || len(v.ByCategory) != 2 || v.Granularity != "day" || v.MedianFirstReviewMS != 60000 {
+		t.Fatalf("impact: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "GET", "/admin/api/impact?range=7d", "", nil); code != 400 {
+		t.Errorf("unknown range: %d", code)
+	}
+	code, body = e.do(t, "GET", "/admin/api/impact/export?range=all&format=csv", "", nil)
+	if code != 200 || !bytes.Contains(body, []byte("summary,review_runs,3")) || !bytes.Contains(body, []byte("severity,critical,3")) {
+		t.Errorf("csv export: %d %s", code, body)
+	}
+	code, body = e.do(t, "GET", "/admin/api/impact/export?range=30d&format=json", "", nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"review_runs": 3`)) {
+		t.Errorf("json export: %d %s", code, body)
+	}
+	if audits, _ := e.st.SearchAudit(ctx, store.AuditFilter{Action: "impact.export"}); len(audits) != 2 {
+		t.Errorf("exports are audited: %d", len(audits))
+	}
+}
+
+// TestAdminSectionsMatchApp: every page in web/src/App.tsx opens from its
+// own URL (a reload or a shared link), and nothing else does.
+func TestAdminSectionsMatchApp(t *testing.T) {
+	src, err := os.ReadFile("../../web/src/App.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\{ path: "([a-z-]+)", title:`).FindAllSubmatch(src, -1) {
+		app[string(m[1])] = true
+	}
+	if len(app) == 0 {
+		t.Fatal("no sections found in App.tsx")
+	}
+	for p := range app {
+		if !adminSections[p] {
+			t.Errorf("%s is a page in App.tsx but not in adminSections", p)
+		}
+	}
+	for p := range adminSections {
+		if !app[p] {
+			t.Errorf("%s is in adminSections but not a page in App.tsx", p)
+		}
 	}
 }

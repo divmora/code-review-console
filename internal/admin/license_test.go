@@ -11,6 +11,7 @@ import (
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/ee/license/licensetest"
+	"github.com/divmora/code-review-console/internal/store"
 )
 
 // Without a license the paid admin APIs answer 402; a key pasted in the
@@ -45,6 +46,8 @@ func TestLicenseGates(t *testing.T) {
 		{"GET", "/admin/api/audit"},
 		{"GET", "/admin/api/metrics"},
 		{"GET", "/admin/api/repos/scores"},
+		{"GET", "/admin/api/impact?range=90d"},
+		{"GET", "/admin/api/impact/export?format=csv"},
 		{"POST", "/admin/api/rules"},
 		{"POST", "/admin/api/learnings"},
 	}
@@ -53,6 +56,16 @@ func TestLicenseGates(t *testing.T) {
 		if code != http.StatusPaymentRequired || !bytes.Contains(b, []byte(`"feature"`)) {
 			t.Errorf("free core: %s %s: %d %s", p.method, p.path, code, b)
 		}
+	}
+	// Impact: the last 30 days' headline numbers are free; no trends or breakdowns.
+	now := time.Now()
+	if _, err := e.st.InsertJob(context.Background(), store.Job{Kind: "review", Platform: "gitlab", Host: "gitlab.example.com", Repo: "a/b", Number: 1,
+		State: "done", Enqueued: now, Finished: now, Result: json.RawMessage(`{"findings":[{"severity":"major","category":"bug"}]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if code, b := e.do(t, "GET", "/admin/api/impact", "", nil); code != 200 || !bytes.Contains(b, []byte(`"licensed":false`)) ||
+		!bytes.Contains(b, []byte(`"review_runs":1`)) || !bytes.Contains(b, []byte(`"by_category":[]`)) || !bytes.Contains(b, []byte(`"trend":[]`)) {
+		t.Errorf("free core: impact headline: %d %s", code, b)
 	}
 	// One host per platform is free; a second, or a custom bot name, is not.
 	host := func(base, bot string) (int, []byte) {

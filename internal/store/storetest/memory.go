@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1063,4 +1064,113 @@ func (m *Memory) HostsVersion(context.Context) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.hostsVersion, nil
+}
+
+// Impact computes the Impact summary from the saved jobs (the Postgres
+// store reads its rollups).
+func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := &store.Impact{BySeverity: map[string]int{}, ByCategory: []store.FindingCount{}, TopByReviews: []store.RepoCount{}, TopByFindings: []store.RepoCount{}}
+	bucket := func(t time.Time) time.Time {
+		t = t.UTC()
+		if f.Granularity == store.Monthly {
+			return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		}
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	points := map[time.Time]*store.ImpactPoint{}
+	point := func(t time.Time) *store.ImpactPoint {
+		b := bucket(t)
+		if points[b] == nil {
+			points[b] = &store.ImpactPoint{Bucket: b, Findings: map[string]int{}}
+		}
+		return points[b]
+	}
+	prs, repos, cats := map[string]bool{}, map[string]bool{}, map[string]int{}
+	byRepoReviews, byRepoFindings := map[store.RepoCount]int{}, map[store.RepoCount]int{}
+	first := map[string]store.Job{}
+	for _, j := range m.jobs { // oldest first
+		pr := j.Platform + "|" + strings.ToLower(j.Host) + "|" + strings.ToLower(j.Repo) + "|" + strconv.Itoa(j.Number)
+		if store.IsReview(j) {
+			if _, ok := first[pr]; !ok {
+				first[pr] = j
+			}
+		}
+		b := bucket(j.Finished)
+		if b.Before(f.From) || !b.Before(f.To) {
+			continue
+		}
+		pt := point(j.Finished)
+		out.Comments += j.Comments
+		if j.Scores != nil {
+			out.Scored++
+			out.QualitySum += int64(j.Scores.Quality)
+			out.SecuritySum += int64(j.Scores.Security)
+			out.MaintainabilitySum += int64(j.Scores.Maintainability)
+			pt.Scored++
+			pt.QualitySum += int64(j.Scores.Quality)
+			pt.SecuritySum += int64(j.Scores.Security)
+			pt.MaintainabilitySum += int64(j.Scores.Maintainability)
+		}
+		if !store.IsReview(j) {
+			continue
+		}
+		rc := store.RepoCount{Platform: j.Platform, Host: strings.ToLower(j.Host), Repo: strings.ToLower(j.Repo)}
+		out.ReviewRuns++
+		pt.Reviews++
+		prs[pr], repos[rc.Platform+"|"+rc.Host+"|"+rc.Repo] = true, true
+		byRepoReviews[rc]++
+		for _, fc := range store.CountFindings(j.Result) {
+			out.Findings += fc.Count
+			out.BySeverity[fc.Severity] += fc.Count
+			if fc.Category == "security" {
+				out.SecurityFindings += fc.Count
+			}
+			cats[fc.Category] += fc.Count
+			pt.Findings[fc.Severity] += fc.Count
+			byRepoFindings[rc] += fc.Count
+		}
+	}
+	out.PRsReviewed, out.ActiveRepos = len(prs), len(repos)
+	var lat []int64
+	for _, j := range first {
+		if !j.Finished.Before(f.From) && j.Finished.Before(f.To) {
+			lat = append(lat, max(0, j.Finished.Sub(j.Enqueued).Milliseconds()))
+		}
+	}
+	if out.FirstReviews = len(lat); len(lat) > 0 {
+		sort.Slice(lat, func(i, k int) bool { return lat[i] < lat[k] })
+		if n := len(lat); n%2 == 1 {
+			out.MedianFirstReviewMS = lat[n/2]
+		} else {
+			out.MedianFirstReviewMS = (lat[n/2-1] + lat[n/2]) / 2
+		}
+	}
+	for c, n := range cats {
+		out.ByCategory = append(out.ByCategory, store.FindingCount{Category: c, Count: n})
+	}
+	store.SortCounts(out.ByCategory)
+	out.Trend = store.SortedPoints(points)
+	top := func(by map[store.RepoCount]int) []store.RepoCount {
+		list := []store.RepoCount{}
+		for rc, n := range by {
+			if n > 0 {
+				rc.Count = n
+				list = append(list, rc)
+			}
+		}
+		sort.Slice(list, func(i, k int) bool {
+			if list[i].Count != list[k].Count {
+				return list[i].Count > list[k].Count
+			}
+			return list[i].Repo < list[k].Repo
+		})
+		if len(list) > f.Top {
+			list = list[:f.Top]
+		}
+		return list
+	}
+	out.TopByReviews, out.TopByFindings = top(byRepoReviews), top(byRepoFindings)
+	return out, nil
 }

@@ -73,6 +73,7 @@ Rules are managed under *Groups & patterns* in the admin UI:
 | `acme/svc-*` | matching names in one level (`*` never crosses `/`) |
 
 Deeper rules beat shallower ones and exact groups beat patterns, so `acme` enabled with `acme/legacy-*` disabled reviews everything except the legacy repositories. A repository set to Enabled or Disabled overrides every rule. Settings add up from the broadest matching rule to the most specific, then the repository's own settings; extra instructions are joined.
+- **Impact**: what the console has done for the installation (merge requests reviewed, findings by severity and category, security findings, time to first review, active repositories, scores), with trends, top repositories and a CSV/JSON export, from its own database.
 - **Scores**: each review's quality, security and maintainability scores on Reviews, per repository with trends, on the status dashboard and in `/metrics`.
 - **Status**: running, pending and recent reviews on a status dashboard, for signed-in admins by default; it can also be opened with a token (for a team screen) or made public (Settings → Status dashboard access).
 - **Metrics**: `/metrics` in the Prometheus format (queue, reviews, durations, tokens, webhooks, license and token expiry), off until chosen under Settings.
@@ -141,7 +142,7 @@ You may use, run, modify and distribute the console, including in production, fr
 
 | | Free core | Paid features (license key) |
 |---|---|---|
-| What | Reviews for one GitHub, GitLab and Bitbucket host each; local executor; repository on/off; `@bot` commands; review history for 30 days; status dashboard; admin sign-in by email | More hosts per platform and per-host bot identities; host, group and pattern rules; team learnings; Docker and Kubernetes executors; token budgets; metrics and long history; audit log viewer; branch-sync skip; SSO domain and group rules |
+| What | Reviews for one GitHub, GitLab and Bitbucket host each; local executor; repository on/off; `@bot` commands; review history for 30 days; Impact headline numbers for 30 days; status dashboard; admin sign-in by email | More hosts per platform and per-host bot identities; host, group and pattern rules; team learnings; Docker and Kubernetes executors; token budgets; metrics and long history (including the Impact page's trends, breakdowns and export); audit log viewer; branch-sync skip; SSO domain and group rules |
 | Cost | Free in every environment, production included | A license key from Divmora, in every environment (development, CI, staging and production) |
 
 Install, replace or remove the key under **License** in the admin panel; it applies at once ([docs/deploy.md](docs/deploy.md#license)). Keys are verified offline. Licenses and trials: licensing@divmora.com.

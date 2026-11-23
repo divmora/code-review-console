@@ -503,6 +503,9 @@ type Store interface {
 	// older than hourlyBefore (daily and monthly rollups are kept).
 	PruneJobs(ctx context.Context, before, hourlyBefore time.Time) (int64, error)
 	RecentJobs(ctx context.Context, limit int) ([]Job, error)
+	// Impact summarises what the console did in a period, from rollups
+	// (see impact.go).
+	Impact(ctx context.Context, f ImpactFilter) (*Impact, error)
 	// RepoScores returns each repository's latest scored review, with its
 	// daily score trend since since.
 	RepoScores(ctx context.Context, since time.Time) ([]RepoScore, error)
@@ -856,6 +859,9 @@ var migrations = []string{
 	// 18: a version that host and webhook writes bump, so every replica
 	// (and changes from "console hosts import") reloads them (issue #101).
 	hostsVersionSQL,
+	// 19: Impact page rollups: findings by severity and category, review
+	// runs, reviewed merge requests (issue #102).
+	impactSQL,
 }
 
 // backfillScores fills in the scores of jobs whose stored result has them
@@ -1855,6 +1861,10 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 		}
 		return 0
 	}
+	reviews := 0
+	if IsReview(j) {
+		reviews = 1
+	}
 	var sc Scores
 	scored := 0
 	if j.Scores != nil {
@@ -1863,8 +1873,8 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	// One row per granularity; buckets are UTC.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO job_metrics (granularity, bucket, platform, host, repo, jobs, done, skipped, failed, comments, files, tokens_in, tokens_out, duration_ms,
-			scored, quality_sum, security_sum, maintainability_sum)
-		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+			scored, quality_sum, security_sum, maintainability_sum, reviews)
+		SELECT g, date_trunc(g, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', $2, $3, lower($4), 1, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 		FROM unnest(ARRAY['hour', 'day', 'month']) AS g
 		ON CONFLICT (granularity, bucket, platform, host, repo) DO UPDATE SET
 			jobs = job_metrics.jobs + 1, done = job_metrics.done + EXCLUDED.done, skipped = job_metrics.skipped + EXCLUDED.skipped,
@@ -1873,9 +1883,13 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 			tokens_out = job_metrics.tokens_out + EXCLUDED.tokens_out, duration_ms = job_metrics.duration_ms + EXCLUDED.duration_ms,
 			scored = job_metrics.scored + EXCLUDED.scored, quality_sum = job_metrics.quality_sum + EXCLUDED.quality_sum,
 			security_sum = job_metrics.security_sum + EXCLUDED.security_sum,
-			maintainability_sum = job_metrics.maintainability_sum + EXCLUDED.maintainability_sum`,
+			maintainability_sum = job_metrics.maintainability_sum + EXCLUDED.maintainability_sum,
+			reviews = job_metrics.reviews + EXCLUDED.reviews`,
 		j.Finished, j.Platform, j.Host, j.Repo, is("done"), is("skipped"), is("failed"), j.Comments, j.Files, j.TokensIn, j.TokensOut, durMS,
-		scored, sc.Quality, sc.Security, sc.Maintainability); err != nil {
+		scored, sc.Quality, sc.Security, sc.Maintainability, reviews); err != nil {
+		return 0, err
+	}
+	if err := recordImpact(ctx, tx, j); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit(ctx)
