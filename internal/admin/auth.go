@@ -163,7 +163,7 @@ type flowState struct {
 func safeNext(next string) string {
 	path, query, hasQuery := strings.Cut(next, "?")
 	sec, ok := strings.CutPrefix(path, "/admin/")
-	if !ok || !(adminSections[sec] || sec == "dashboard" || sec == "signed-in") {
+	if !ok || !adminSections[sec] && sec != "dashboard" && sec != "signed-in" {
 		return "/admin"
 	}
 	if !hasQuery {
