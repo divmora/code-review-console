@@ -59,8 +59,10 @@ type Server struct {
 	tuning   *tuning.Service
 	// metrics are the counters behind /metrics.
 	metrics *serverMetrics
-	// owner identifies this replica's saved queued jobs (see durable.go).
-	owner string
+	// owner identifies this replica's saved queued jobs (see durable.go);
+	// durableDone is closed when durableLoop has stopped.
+	owner       string
+	durableDone chan struct{}
 	// stopPrune ends the review-history cleanup loop.
 	stopPrune chan struct{}
 	stopOnce  sync.Once
@@ -176,6 +178,7 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 		go s.pruneLoop()
 		go s.tuningLoop()
 		go s.expiryLoop()
+		s.durableDone = make(chan struct{})
 		go s.durableLoop()
 	}
 	return s, nil
@@ -400,7 +403,15 @@ func (s *Server) Close() {
 		s.stopOnce.Do(func() {
 			close(s.stopPrune)
 			// Hand this replica's waiting jobs over at once: the next
-			// replica (or this one after the restart) takes them.
+			// replica (or this one after the restart) takes them. Wait for
+			// the heartbeat loop first, or a late beat would bring the
+			// owner back and delay the hand-over by ownerStale.
+			if s.durableDone != nil {
+				select {
+				case <-s.durableDone:
+				case <-time.After(5 * time.Second):
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = s.store.RemoveOwner(ctx, s.owner)

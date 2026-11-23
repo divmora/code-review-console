@@ -111,10 +111,16 @@ func (s *Server) savedDone(id string) {
 // durableLoop keeps this replica's heartbeat and takes over the saved jobs
 // of replicas that stopped.
 func (s *Server) durableLoop() {
+	defer close(s.durableDone)
 	beat := time.NewTicker(heartbeatEvery)
 	defer beat.Stop()
 	last := time.Time{}
 	for {
+		select {
+		case <-s.stopPrune: // stopped before this beat: don't bring the owner back
+			return
+		default:
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := s.store.HeartbeatOwner(ctx, s.owner); err != nil {
 			s.logger.Warn("queue heartbeat failed", "error", err)
