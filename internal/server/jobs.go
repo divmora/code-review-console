@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -47,7 +48,7 @@ func (s *Server) githubTarget(h hosts.Host, installation int64) target {
 			if err != nil {
 				return nil, fmt.Errorf("github token: %w", err)
 			}
-			return map[string]string{"GITHUB_TOKEN": tok, "GITHUB_API_URL": h.BaseURL}, nil
+			return s.withStateKey(h, map[string]string{"GITHUB_TOKEN": tok, "GITHUB_API_URL": h.BaseURL}), nil
 		},
 		host:         h,
 		botName:      s.mention(h.BotName, h.Host),
@@ -60,7 +61,7 @@ func (s *Server) gitlabTarget(h hosts.Host) target {
 	return target{
 		client: vcs.NewGitLab(h.BaseURL, h.Token, h.SkipTLSVerify),
 		secrets: func(context.Context) (map[string]string, error) {
-			return map[string]string{"GITLAB_TOKEN": h.Token}, nil
+			return s.withStateKey(h, map[string]string{"GITLAB_TOKEN": h.Token}), nil
 		},
 		host:     h,
 		botName:  s.mention(h.BotName, h.Host),
@@ -78,12 +79,24 @@ func (s *Server) bitbucketTarget(h hosts.Host) target {
 			} else {
 				env["BITBUCKET_API_TOKEN"] = h.APIToken
 			}
-			return env, nil
+			return s.withStateKey(h, env), nil
 		},
 		host:     h,
 		botName:  s.mention(h.BotName, h.Host),
 		reviewer: h.Reviewer,
 	}
+}
+
+// withStateKey adds CODEREVIEW_STATE_KEY, derived per code host from the
+// console's secret key: the CLI (0.6 or later) signs the markers it reads
+// back from its comments, so its earlier comments still count after the
+// host's token changes to another user (code-review-bot#21). Without a
+// secret key nothing is added. Older CLIs ignore the variable.
+func (s *Server) withStateKey(h hosts.Host, env map[string]string) map[string]string {
+	if k := s.box.Derive("state key\x00" + string(h.Platform) + "\x00" + strings.ToLower(h.Host)); k != nil {
+		env["CODEREVIEW_STATE_KEY"] = hex.EncodeToString(k)
+	}
+	return env
 }
 
 var envName = regexp.MustCompile(`[^A-Z0-9_]`)

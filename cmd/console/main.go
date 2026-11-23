@@ -253,6 +253,7 @@ func serve(ctx context.Context, args []string) error {
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
 	}
+	deps.Box = box
 	srv, err := server.New(cfg, exec, logger, deps)
 	if err != nil {
 		return err

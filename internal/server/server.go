@@ -33,6 +33,7 @@ import (
 
 // Server handles webhooks.
 type Server struct {
+	box    *secrets.Box
 	cfg    *config.Config
 	exec   executor.Executor
 	logger *slog.Logger
@@ -116,12 +117,15 @@ type Deps struct {
 	Models *models.Service
 	// Tuning (queue, review engine, bot name, dashboard token) likewise.
 	Tuning *tuning.Service
+	// Box is the console's secret key (nil without one). Jobs get a state
+	// key derived from it, so the CLI signs its markers (see stateKey).
+	Box *secrets.Box
 }
 
 // New validates config and builds a server.
 func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps Deps) (*Server, error) {
 	s := &Server{cfg: cfg, exec: exec, logger: logger, selfLogins: map[string]string{}, ghApps: map[int64]*vcs.GitHubApp{},
-		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts, models: deps.Models}
+		store: deps.Store, admin: deps.Admin, settings: deps.Settings, hosts: deps.Hosts, models: deps.Models, box: deps.Box}
 	if s.models == nil {
 		s.models = models.New(cfg, deps.Store)
 	}
