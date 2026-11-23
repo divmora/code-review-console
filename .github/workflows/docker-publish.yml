@@ -21,9 +21,11 @@ jobs:
   ci-cd:
     uses: divmora/.github/.github/workflows/docker-publish.yml@main
     with:
-      # Lint and tests run in ci.yml, which builds the admin UI first (it
-      # isn't committed); this workflow's own Go job can't, so it's off.
-      enable-go-quality: false
+      enable-go-quality: true
+      # The admin UI isn't committed: build it before lint and tests.
+      node-version: '24'
+      node-cache-dependency-path: web/package-lock.json
+      pre-build-command: make web
       go-version: '1.27'
       sha: ${{ inputs.sha || '' }}
       tag_name: ${{ inputs.tag_name || '' }}
