@@ -43,6 +43,61 @@ type Config struct {
 	// License points at a Divmora license key file. The key can also come
 	// from $CODEREVIEW_CONSOLE_LICENSE, or be pasted in the admin panel.
 	License License `yaml:"license"`
+
+	// removed are the keys set in the file that are managed in the admin
+	// panel now (see RemovedKeys).
+	removed []string
+}
+
+// removedKeys are config file keys (and environment variables) managed in
+// the admin panel now. They are read only to copy them into the database
+// the first time (code hosts, model profiles, settings, executor
+// resources, the license); after that the database is what counts and
+// these are ignored. They will stop being read in a future release.
+var removedKeys = []string{
+	"github", "gitlab", "bitbucket", "model", "fallback", "models", "repos", "license",
+	"server.review_retention", "server.webhook_retention",
+	"server.dashboard.enabled", "server.dashboard.hide_repos", "server.dashboard.title",
+	"executor.docker.cpus", "executor.docker.memory",
+	"executor.kubernetes.cpu", "executor.kubernetes.memory", "executor.kubernetes.ephemeral_storage",
+	"executor.kubernetes.tmp_size_limit", "executor.kubernetes.ttl", "executor.kubernetes.node_selector",
+	"executor.kubernetes.tolerations", "executor.kubernetes.affinity", "executor.kubernetes.priority_class_name",
+	"executor.kubernetes.pod_labels", "executor.kubernetes.pod_annotations", "executor.kubernetes.ca_bundle",
+}
+
+// removedEnv are the environment variables with the same role.
+var removedEnv = []string{"CODEREVIEW_MODEL", "CODEREVIEW_FALLBACK", "GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET",
+	"GITLAB_TOKEN", "GITLAB_URL", "GITLAB_WEBHOOK_SECRET", "GITLAB_WEBHOOK_SIGNING_TOKEN"}
+
+// RemovedKeys lists the keys and environment variables in use that are
+// managed in the admin panel now (only copied into the database on the
+// first start), so the console can say to remove them.
+func (c *Config) RemovedKeys() []string { return append([]string{}, c.removed...) }
+
+// findRemoved returns the removed keys set in the parsed file, and the
+// removed environment variables that are set.
+func findRemoved(doc map[string]any) []string {
+	var out []string
+	for _, k := range removedKeys {
+		var cur any = doc
+		for _, part := range strings.Split(k, ".") {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				cur = nil
+				break
+			}
+			cur = m[part]
+		}
+		if cur != nil {
+			out = append(out, k)
+		}
+	}
+	for _, e := range removedEnv {
+		if os.Getenv(e) != "" {
+			out = append(out, "$"+e)
+		}
+	}
+	return out
 }
 
 // License configures where the license key is read from.
@@ -358,6 +413,11 @@ func Load(path string) (*Config, error) {
 		if err := yaml.Unmarshal(ExpandEnv(data), cfg); err != nil {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
 		}
+		var doc map[string]any
+		_ = yaml.Unmarshal(data, &doc)
+		cfg.removed = findRemoved(doc)
+	} else {
+		cfg.removed = findRemoved(nil)
 	}
 	cfg.applyEnv()
 	cfg.applyDefaults()
@@ -459,6 +519,14 @@ func (c *Config) applyDefaults() {
 	if e.Kubernetes.Namespace == "" {
 		e.Kubernetes.Namespace = "default"
 	}
+	// Starting resources for review containers and pods, copied into the
+	// admin panel (Executor) on the first start.
+	if e.Docker.CPUs == "" && e.Docker.Memory == "" {
+		e.Docker.CPUs, e.Docker.Memory = "1", "1g"
+	}
+	if e.Kubernetes.CPU == "" && e.Kubernetes.Memory == "" {
+		e.Kubernetes.CPU, e.Kubernetes.Memory = "1", "1Gi"
+	}
 	if e.Kubernetes.TTL <= 0 {
 		e.Kubernetes.TTL = 10 * time.Minute
 	}
@@ -489,12 +557,6 @@ func (c *Config) validate() error {
 		}
 	default:
 		return fmt.Errorf("executor.type %q: want local, docker or kubernetes", c.Executor.Type)
-	}
-	if c.Admin.Enabled && c.Database.URL == "" {
-		return errors.New("admin.enabled needs database.url")
-	}
-	if c.Repos.Allowlist && c.Database.URL == "" {
-		return errors.New("repos.allowlist needs database.url")
 	}
 	for name, m := range c.Models {
 		if m.String("provider") == "" || m.String("model") == "" {

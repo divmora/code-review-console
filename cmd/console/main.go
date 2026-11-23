@@ -114,16 +114,27 @@ func serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	var deps server.Deps
-	if cfg.Database.URL != "" {
-		st, err := store.Open(ctx, cfg.Database.URL)
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		deps.Store = st
-		logger.Info("database connected; schema up to date")
+	// The console keeps its configuration (code hosts, models, settings,
+	// executor settings, the license) in the database, with secrets
+	// encrypted by the secret key.
+	if cfg.Database.URL == "" {
+		return errors.New("database.url (or DATABASE_URL) is required: the console keeps its configuration in PostgreSQL")
 	}
+	box, err := secrets.FromEnv()
+	if err != nil {
+		return err
+	}
+	if box == nil {
+		return errors.New(secrets.EnvKey + " is required: it encrypts code host tokens in the database (create one with: openssl rand -base64 32)")
+	}
+	var deps server.Deps
+	st, err := store.Open(ctx, cfg.Database.URL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	deps.Store = st
+	logger.Info("database connected; schema up to date")
 	lic := loadLicense(ctx, cfg, deps.Store, logger)
 	if err := requireExecutor(cfg, lic); err != nil {
 		// Start anyway, so the license can be added in the admin panel;
@@ -175,10 +186,6 @@ func serve(ctx context.Context, args []string) error {
 			logger.Info("config file value ignored: the database value wins (change it in the admin panel)", "setting", d)
 		}
 	}
-	box, err := secrets.FromEnv()
-	if err != nil {
-		return err
-	}
 	deps.Hosts = hosts.New(cfg, deps.Store, box, logger)
 	deps.Hosts.Lic = lic
 	notes, err := deps.Hosts.Init(ctx)
@@ -189,12 +196,22 @@ func serve(ctx context.Context, args []string) error {
 		logger.Info(n)
 	}
 	logger.Info("hosts loaded", "count", len(deps.Hosts.All()), "managed_in", deps.Hosts.Mode())
-	warnConfigHosts(cfg, deps.Hosts.Mode(), logger)
+	deps.Models = models.New(cfg, deps.Store)
+	imported, skipped, err := deps.Models.Import(ctx)
+	if err != nil {
+		return fmt.Errorf("model profiles: %w", err)
+	}
+	if len(imported) > 0 {
+		logger.Info("model profiles copied from the config file into the database; manage them in the admin panel (Models) from now on", "imported", imported)
+	}
+	for _, sk := range skipped {
+		logger.Error("model profile not copied from the config file; add it under Models in the admin panel", "problem", sk)
+	}
+	if keys := cfg.RemovedKeys(); len(keys) > 0 {
+		logger.Warn("these config file keys are managed in the admin panel now: each is copied into the database only while it has no value there yet, and ignored after that; remove them",
+			"keys", keys)
+	}
 	if cfg.Admin.Enabled {
-		if deps.Store == nil {
-			return errors.New("admin.enabled needs database.url")
-		}
-		deps.Models = models.New(cfg, deps.Store)
 		adm, err := admin.New(ctx, cfg.Admin, deps.Store, logger)
 		if err != nil {
 			return err
@@ -227,19 +244,18 @@ func checkConfig(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// With a database, check what reviews will run: the executor settings,
-	// model profiles and license saved in the admin panel. The database is
-	// only read (no migrations, nothing written).
-	var st store.Store
-	if cfg.Database.URL != "" {
-		pg, err := store.Connect(ctx, cfg.Database.URL)
-		if err != nil {
-			fmt.Printf("note: %v\n      checking the config file alone: settings saved in the admin panel are not included\n", err)
-		} else {
-			defer pg.Close()
-			st = readOnlyStore{pg}
-		}
+	// Check what reviews will run: the executor settings, model profiles
+	// and license saved in the admin panel. The database is only read (no
+	// migrations, nothing written).
+	if cfg.Database.URL == "" {
+		return errors.New("database.url (or DATABASE_URL) is required: the console keeps its configuration in PostgreSQL")
 	}
+	pg, err := store.Connect(ctx, cfg.Database.URL)
+	if err != nil {
+		return err
+	}
+	defer pg.Close()
+	var st store.Store = readOnlyStore{pg}
 	lic := loadLicense(ctx, cfg, st, slog.New(slog.DiscardHandler))
 	run, source, err := checkExecutorConfig(ctx, cfg, st)
 	if err != nil {
@@ -258,14 +274,13 @@ func checkConfig(ctx context.Context, args []string) error {
 	if source != "" {
 		fmt.Printf("executor settings: %s\n", source)
 	}
-	if len(hosts.FromConfig(cfg)) > 0 {
-		fmt.Println("note: github:, gitlab: and bitbucket: in the config file are deprecated: manage hosts in the admin panel.\n      With database.url and " + secrets.EnvKey + " set, they are copied into the database on the next start.")
+	if keys := cfg.RemovedKeys(); len(keys) > 0 {
+		fmt.Printf("note: managed in the admin panel now, remove from the config file: %s\n", strings.Join(keys, ", "))
 	}
 	ms := models.New(cfg, st)
 	profiles, defModel, fallback, err := ms.Effective(ctx)
 	if err != nil {
-		fmt.Printf("note: model profiles in the database: %v (using the config file's)\n", err)
-		profiles, defModel, fallback = cfg.Models, cfg.Model, cfg.Fallback
+		return err
 	}
 	if len(profiles) == 0 && defModel == "" {
 		fmt.Println("models: none yet; add one under Models in the admin panel (skipping the CLI check)")

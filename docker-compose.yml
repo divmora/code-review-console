@@ -1,5 +1,6 @@
 # Divmora Code Review Console with PostgreSQL.
-#   cp examples/console.yaml console.yaml   # edit models, github/gitlab, admin
+#   cp examples/console.yaml console.yaml   # edit admin sign-in and the executor
+#   .env needs CODEREVIEW_CONSOLE_SECRET_KEY (openssl rand -base64 32); hosts and models go in the admin panel
 #   docker compose up --build
 services:
   db:
@@ -24,7 +25,7 @@ services:
     environment:
       DATABASE_URL: postgres://console:${POSTGRES_PASSWORD:-change-me}@db:5432/console?sslmode=disable
     env_file:
-      - path: .env           # provider keys, GITHUB_WEBHOOK_SECRET, OIDC_CLIENT_SECRET, ...
+      - path: .env           # CODEREVIEW_CONSOLE_SECRET_KEY, provider keys, OIDC_CLIENT_SECRET, ...
         required: false
     volumes:
       - ./console.yaml:/etc/console/console.yaml:ro

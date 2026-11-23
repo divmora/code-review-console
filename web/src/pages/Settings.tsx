@@ -231,7 +231,7 @@ export default function Settings() {
       <Card className="py-4">
         <CardFooter className="flex flex-wrap items-center gap-3">
           <Button onClick={() => save(eff.review_defaults)}>Save settings</Button>
-          <span className="text-sm text-muted-foreground">{fromFile.length ? "Not saved yet (from the config file): " + fromFile.join(", ") : ""}</span>
+          <span className="text-sm text-muted-foreground">{fromFile.length ? "Not saved yet (using the starting value): " + fromFile.join(", ") : ""}</span>
         </CardFooter>
       </Card>
       <Group title="Default review settings" description="Apply to every repository. Group and pattern rules, then repository settings, override them.">
@@ -239,7 +239,7 @@ export default function Settings() {
       </Group>
       <Sessions />
       <Note>
-        The config file is the initial configuration: on first start its values are copied here, and from then on these settings are kept in the database. Editing the config file later does not change them; the server log notes any difference. Every change is in the audit log.
+        These settings are kept in the database and apply without a restart. Every change is in the audit log.
       </Note>
     </section>
   );

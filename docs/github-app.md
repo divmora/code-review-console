@@ -13,22 +13,15 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 | Repository permissions | **Pull requests**: Read and write · **Contents**: Read-only · **Metadata**: Read-only |
 | Subscribe to events | **Pull request** · **Issue comment** |
 
-Without a database (hosts from the config file), use the shared URL `https://<your-host>/webhooks/github` and a long random secret in `GITHUB_WEBHOOK_SECRET` instead. The shared URL keeps working for existing apps.
+The shared URL `https://<your-host>/webhooks/github` keeps working for existing apps, with the webhook secret in the host's settings.
 
 Name the app after your `bot_name` (default `codereview`) so `@codereview` mentions match. If the app slug differs, set `bot_name` to the slug.
 
 After creating it, note the **App ID** and generate a **private key** (`.pem`).
 
-## 2. Configure the server
+## 2. Add the host
 
-```yaml
-github:
-  app_id: 123456
-  private_key_file: /secrets/github-app.pem   # or private_key: "${GITHUB_APP_PRIVATE_KEY}"
-  webhook_secret: ${GITHUB_WEBHOOK_SECRET}
-  # GitHub Enterprise Server:
-  # api_url: https://ghe.example.com/api/v3
-```
+In the console, **Code hosts** → **Add host** → GitHub: paste the App ID and the private key (stored encrypted). For GitHub Enterprise Server, set the API URL (`https://ghe.example.com/api/v3`).
 
 ## 3. Install the app
 
@@ -36,4 +29,4 @@ Install it on the repositories to review. The first push to an open PR, or openi
 
 ## Token mode (no app)
 
-For a quick trial, set `github.token` (or `GITHUB_TOKEN`) to a bot account's token instead of `app_id`. Comments appear as that account, and the server ignores that account's own comments.
+For a quick trial, give the GitHub host a bot account's token instead of an App ID. Comments appear as that account, and the server ignores that account's own comments.

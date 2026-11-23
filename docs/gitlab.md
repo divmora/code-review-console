@@ -32,17 +32,9 @@ Only pushes trigger reviews (`update` events with new commits). Title, label and
 
 **Shared URL.** `https://<your-host>/webhooks/gitlab` still works for existing hooks. It is shared by every GitLab host: the console matches the instance by the `X-Gitlab-Instance` header, then by the project URL host, and checks the secret tokens or signing tokens in the host's settings. It never accepts a webhook's own secret. The webhook history (**Webhooks** page) shows which URL each delivery used, so you can move hooks over at your own pace.
 
-## 3. Server config
+## 3. Add the host
 
-```yaml
-bot_name: codereview          # mention handle: @codereview review
-gitlab:
-  - base_url: https://gitlab.example.com
-    token: ${GITLAB_TOKEN}
-    webhook_secret: ${GITLAB_WEBHOOK_SECRET}
-```
-
-Add one entry per instance. Secrets in the config file are for the shared URL. With `CODEREVIEW_CONSOLE_SECRET_KEY` and a database, hosts are copied into the admin panel on first start, where you add webhooks with their own URLs.
+In the console, **Code hosts** → **Add host** → GitLab: the instance URL (`https://gitlab.example.com`) and the token from step 1. **Test** checks the token. Add one host per instance; each has its own token, webhooks and, optionally, its own bot name (the mention handle, `@codereview review`) and reviewer username.
 
 ## CI instead of a server
 
