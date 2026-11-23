@@ -25,9 +25,11 @@ Provider notes:
 | Google Workspace | `https://accounts.google.com` | Google Cloud console → APIs & Services → Credentials → OAuth client (Web). Use `allowed_domains` for your Workspace domain. Google doesn't send groups. |
 | Okta | `https://<org>.okta.com` or `https://<org>.okta.com/oauth2/default` | Add a `groups` claim to the ID token to use `allowed_groups`. |
 | Keycloak | `https://<host>/realms/<realm>` | Add a *Group Membership* mapper (claim `groups`, full path off) to use groups. |
-| Microsoft Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Enable *groups claim* in Token configuration. Group values are object IDs unless you configure names. |
+| Microsoft Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Enable *groups claim* in Token configuration. Group values are object IDs unless you configure names. Entra ID sends no `email_verified` claim, and its `email` can be set by users in some tenants: use `allowed_groups`, or `allowed_subjects` with `CODEREVIEW_CONSOLE_OIDC_SUBJECT_CLAIM=oid` (the user's object ID), rather than email rules. |
 | AWS IAM Identity Center | via a customer-managed OIDC app, or front it with Keycloak/Cognito | Identity Center is a SAML IdP for most apps. |
 | GitLab (as IdP) | `https://gitlab.example.com` | Applications → new app with `openid email profile`. Groups appear in the `groups_direct` claim: set `CODEREVIEW_CONSOLE_OIDC_GROUPS_CLAIM=groups_direct`. |
+
+**Email rules need a verified email.** `allowed_emails`, `allowed_domains` and the operator and viewer email lists match only when the ID token says `email_verified: true` (`admin.oidc.require_email_verified`, default true). A provider that leaves the claim out may let a user set any address, including an admin's. There, use group rules, or `allowed_subjects`, `operator_subjects` and `viewer_subjects`, which match `admin.oidc.subject_claim` (default `sub`), an identifier the user can't change. Set `require_email_verified: false` only for a provider you know verifies every email it sends. A sign-in refused for this says so, in the audit log as `login.denied`.
 
 ## 2. Configure the server
 

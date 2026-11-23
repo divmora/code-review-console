@@ -103,6 +103,9 @@ the same key in an optional config file.
 | `CODEREVIEW_CONSOLE_OIDC_SCOPES`, `_OIDC_ALLOWED_EMAILS`, `_OIDC_ALLOWED_DOMAINS`, `_OIDC_ALLOWED_GROUPS` | `admin.oidc.*` | comma-separated; the allowed ones are admins |
 | `CODEREVIEW_CONSOLE_OIDC_OPERATOR_EMAILS`, `_OIDC_OPERATOR_GROUPS`, `_OIDC_VIEWER_EMAILS`, `_OIDC_VIEWER_GROUPS` | `admin.oidc.*` | operators and read-only viewers ([roles](admin.md#roles)); license: `sso_rules` |
 | `CODEREVIEW_CONSOLE_OIDC_GROUPS_CLAIM` | `admin.oidc.groups_claim` | default `groups` |
+| `CODEREVIEW_CONSOLE_OIDC_ALLOWED_SUBJECTS`, `_OIDC_OPERATOR_SUBJECTS`, `_OIDC_VIEWER_SUBJECTS` | `admin.oidc.*_subjects` | match `subject_claim`; operators and viewers need `sso_rules` |
+| `CODEREVIEW_CONSOLE_OIDC_SUBJECT_CLAIM` | `admin.oidc.subject_claim` | default `sub`; Entra ID: `oid` |
+| `CODEREVIEW_CONSOLE_OIDC_REQUIRE_EMAIL_VERIFIED` | `admin.oidc.require_email_verified` | default `true`: email and domain rules need `email_verified: true` |
 | `CODEREVIEW_CONSOLE_EXECUTOR` | `executor.type` | `local` (default), `docker` or `kubernetes` |
 | `CODEREVIEW_CONSOLE_IMAGE` | `executor.docker.image`, `executor.kubernetes.image` | review image; its tag is used until a version is saved on the Executor page |
 | `CODEREVIEW_CONSOLE_CLI_BINARY`, `_DOCKER_BINARY`, `_DOCKER_NETWORK` | `executor.local.binary`, `executor.docker.*` | |

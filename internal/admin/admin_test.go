@@ -518,7 +518,15 @@ func TestLoginDenied(t *testing.T) {
 		{"wrong domain", config.OIDC{AllowedDomains: []string{"divmora.com"}}, map[string]any{"sub": "x", "email": "eve@evil.com", "email_verified": true}, 403},
 		{"unverified email", config.OIDC{AllowedDomains: []string{"divmora.com"}}, map[string]any{"sub": "x", "email": "eve@divmora.com", "email_verified": false}, 403},
 		{"group grants access", config.OIDC{AllowedGroups: []string{"platform-admins"}}, map[string]any{"sub": "x", "email": "g@other.com", "groups": []string{"devs", "platform-admins"}}, 200},
-		{"exact email", config.OIDC{AllowedEmails: []string{"boss@x.io"}}, map[string]any{"sub": "x", "email": "BOSS@x.io"}, 200},
+		{"exact email", config.OIDC{AllowedEmails: []string{"boss@x.io"}}, map[string]any{"sub": "x", "email": "BOSS@x.io", "email_verified": true}, 200},
+		{"verified as a string", config.OIDC{AllowedEmails: []string{"boss@x.io"}}, map[string]any{"sub": "x", "email": "boss@x.io", "email_verified": "true"}, 200},
+		// Issue #125: no email_verified claim (Entra ID and some brokers).
+		{"no email_verified claim", config.OIDC{AllowedEmails: []string{"boss@x.io"}}, map[string]any{"sub": "x", "email": "boss@x.io"}, 403},
+		{"no claim, domain rule", config.OIDC{AllowedDomains: []string{"x.io"}}, map[string]any{"sub": "x", "email": "eve@x.io"}, 403},
+		{"no claim, check off", config.OIDC{AllowedEmails: []string{"boss@x.io"}, RequireEmailVerified: ptrBool(false)}, map[string]any{"sub": "x", "email": "boss@x.io"}, 200},
+		{"subject rule", config.OIDC{AllowedSubjects: []string{"abc-123"}}, map[string]any{"sub": "abc-123", "email": "anything@else.io"}, 200},
+		{"subject_claim oid", config.OIDC{AllowedSubjects: []string{"oid-9"}, SubjectClaim: "oid"}, map[string]any{"sub": "pairwise-x", "oid": "oid-9"}, 200},
+		{"wrong subject", config.OIDC{AllowedSubjects: []string{"abc-123"}}, map[string]any{"sub": "abc-124", "email": "a@b.io", "email_verified": true}, 403},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -541,7 +549,7 @@ func TestLoginDenied(t *testing.T) {
 
 func TestCallbackRejectsForgery(t *testing.T) {
 	e := setup(t, config.OIDC{AllowedDomains: []string{"divmora.com"}})
-	e.idp.as(map[string]any{"sub": "u1", "email": "a@divmora.com"})
+	e.idp.as(map[string]any{"sub": "u1", "email": "a@divmora.com", "email_verified": true})
 
 	// No flow cookie: a forged callback is refused.
 	resp, _ := e.client.Get(e.app.URL + "/admin/callback?code=x&state=y")
@@ -1523,5 +1531,19 @@ func TestApprovalSettingsAPI(t *testing.T) {
 	code, body = e.do(t, "POST", "/admin/api/rules", csrf, map[string]any{"platform": "gitlab", "host": "gitlab.com", "pattern": "acme", "approve": false})
 	if code != 201 || !bytes.Contains(body, []byte(`"approve":false`)) {
 		t.Errorf("a rule can switch approval off: %d %s", code, body)
+	}
+}
+
+func ptrBool(b bool) *bool { return &b }
+
+// The refusal says what to change when the provider sends no
+// email_verified claim (issue #125).
+func TestNoEmailVerifiedReason(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"boss@x.io"}})
+	e.idp.as(map[string]any{"sub": "x", "email": "boss@x.io"})
+	_ = e.login(t).Body.Close()
+	entries, _ := e.st.ListAudit(context.Background(), 10)
+	if len(entries) == 0 || entries[0].Action != "login.denied" || !strings.Contains(fmt.Sprint(entries[0].Detail), "require_email_verified") {
+		t.Errorf("audited reason: %+v", entries)
 	}
 }

@@ -499,7 +499,7 @@ func loadLicenseInto(ctx context.Context, lic *license.Manager, cfg *config.Conf
 // license doesn't cover them, so only allowed_emails can sign in.
 func warnSSORules(cfg *config.Config, lic *license.Manager, logger *slog.Logger) {
 	o := cfg.Admin.OIDC
-	if !cfg.Admin.Enabled || len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups) == 0 || lic.Has(license.SSORules) {
+	if !cfg.Admin.Enabled || len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups)+len(o.OperatorSubjects)+len(o.ViewerSubjects) == 0 || lic.Has(license.SSORules) {
 		return
 	}
 	logger.Warn("admin.oidc allowed_domains, allowed_groups, operators and viewers are ignored until a license with the sso_rules feature is added; only allowed_emails can sign in (as admins)",

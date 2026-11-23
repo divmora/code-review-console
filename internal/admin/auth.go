@@ -108,8 +108,8 @@ func New(ctx context.Context, cfg config.Admin, st store.Store, logger *slog.Log
 		return nil, errors.New("admin: base_url is required (the public URL of this server)")
 	case o.Issuer == "" || o.ClientID == "":
 		return nil, errors.New("admin: oidc.issuer and oidc.client_id are required")
-	case len(o.AllowedEmails)+len(o.AllowedDomains)+len(o.AllowedGroups) == 0:
-		return nil, errors.New("admin: set at least one of oidc.allowed_emails, allowed_domains or allowed_groups")
+	case len(o.AllowedEmails)+len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.AllowedSubjects) == 0:
+		return nil, errors.New("admin: set at least one of oidc.allowed_emails, allowed_domains, allowed_groups or allowed_subjects")
 	}
 	u, err := url.Parse(cfg.BaseURL)
 	if err != nil || u.Host == "" {
@@ -268,8 +268,10 @@ func (a *Admin) handleCallback(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusUnauthorized, "bad claims")
 		return
 	}
-	id := identityFrom(claims, a.cfg.OIDC.GroupsClaim)
-	id.Subject = idt.Subject
+	id := identityFrom(claims, a.cfg.OIDC)
+	if id.Subject == "" {
+		id.Subject = idt.Subject
+	}
 	if reason := a.authorize(id); reason != "" {
 		_ = a.store.Audit(ctx, firstNonEmpty(id.Email, id.Subject), "login.denied", "admin", map[string]any{"reason": reason})
 		fail(http.StatusForbidden, "your account is not allowed to administer this server", "email", id.Email, "why", reason)
@@ -296,22 +298,38 @@ func (a *Admin) handleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 type identity struct {
+	// Subject is the subject_claim's value (default sub): what the
+	// *_subjects rules match.
 	Subject string
 	Email   string
 	Name    string
 	Groups  []string
-	// Verified is false only when the provider says email_verified=false.
+	// Verified: the provider said email_verified: true, or the claim is
+	// missing and require_email_verified is off. Email and domain rules
+	// match only verified addresses.
 	Verified bool
+	// NoVerifiedClaim: the ID token had no email_verified claim (only known
+	// at sign-in, for the refusal message).
+	NoVerifiedClaim bool
 }
 
-func identityFrom(claims map[string]any, groupsClaim string) identity {
-	id := identity{Verified: true}
+func identityFrom(claims map[string]any, o config.OIDC) identity {
+	var id identity
 	id.Email, _ = claims["email"].(string)
 	id.Name, _ = claims["name"].(string)
-	if v, ok := claims["email_verified"].(bool); ok {
-		id.Verified = v
+	if claim := firstNonEmpty(o.SubjectClaim, "sub"); claim != "" {
+		id.Subject, _ = claims[claim].(string)
 	}
-	switch g := claims[groupsClaim].(type) {
+	switch v := claims["email_verified"].(type) {
+	case bool:
+		id.Verified = v
+	case string: // some providers send "true"
+		id.Verified = strings.EqualFold(v, "true")
+	default:
+		id.NoVerifiedClaim = true
+		id.Verified = !o.EmailVerifiedRequired()
+	}
+	switch g := claims[o.GroupsClaim].(type) {
 	case []any:
 		for _, x := range g {
 			if s, ok := x.(string); ok {
@@ -350,6 +368,14 @@ func (a *Admin) roleOf(id identity) (string, string) {
 		}
 		return false
 	}
+	hasSubject := func(list []string) bool {
+		for _, s := range list {
+			if id.Subject != "" && strings.TrimSpace(s) == id.Subject {
+				return true
+			}
+		}
+		return false
+	}
 	inGroup := func(list []string) bool {
 		for _, g := range id.Groups {
 			for _, want := range list {
@@ -360,7 +386,7 @@ func (a *Admin) roleOf(id identity) (string, string) {
 		}
 		return false
 	}
-	if hasEmail(o.AllowedEmails) {
+	if hasEmail(o.AllowedEmails) || hasSubject(o.AllowedSubjects) {
 		return RoleAdmin, ""
 	}
 	if paid {
@@ -374,9 +400,9 @@ func (a *Admin) roleOf(id identity) (string, string) {
 		switch {
 		case inGroup(o.AllowedGroups):
 			return RoleAdmin, ""
-		case hasEmail(o.OperatorEmails) || inGroup(o.OperatorGroups):
+		case hasEmail(o.OperatorEmails) || inGroup(o.OperatorGroups) || hasSubject(o.OperatorSubjects):
 			return RoleOperator, ""
-		case hasEmail(o.ViewerEmails) || inGroup(o.ViewerGroups):
+		case hasEmail(o.ViewerEmails) || inGroup(o.ViewerGroups) || hasSubject(o.ViewerSubjects):
 			return RoleViewer, ""
 		}
 	}
@@ -385,13 +411,16 @@ func (a *Admin) roleOf(id identity) (string, string) {
 
 func (a *Admin) denyReason(id identity, email string) string {
 	o := a.cfg.OIDC
+	if email != "" && !id.Verified && id.NoVerifiedClaim {
+		return "the identity provider sent no email_verified claim, so email and domain rules don't apply: use allowed_subjects or group rules, or set admin.oidc.require_email_verified: false if this provider verifies every email it sends"
+	}
 	if email != "" && !id.Verified {
 		return "email not verified by the identity provider"
 	}
-	if !a.Lic.Has(license.SSORules) && len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups) > 0 {
+	if !a.Lic.Has(license.SSORules) && len(o.AllowedDomains)+len(o.AllowedGroups)+len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups)+len(o.OperatorSubjects)+len(o.ViewerSubjects) > 0 {
 		return "not in allowed_emails (domain and group rules, operators and viewers need a Divmora license with the sso_rules feature)"
 	}
-	if len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups) > 0 {
+	if len(o.OperatorEmails)+len(o.OperatorGroups)+len(o.ViewerEmails)+len(o.ViewerGroups)+len(o.OperatorSubjects)+len(o.ViewerSubjects) > 0 {
 		return "not in allowed_emails, allowed_domains or allowed_groups, nor an operator or viewer"
 	}
 	return "not in allowed_emails, allowed_domains or allowed_groups"

@@ -356,6 +356,26 @@ type OIDC struct {
 	ViewerGroups   []string `yaml:"viewer_groups"`
 	// GroupsClaim names the ID-token claim holding group names. Default "groups".
 	GroupsClaim string `yaml:"groups_claim"`
+	// AllowedSubjects (admins), OperatorSubjects and ViewerSubjects (license:
+	// sso_rules) match the subject_claim of the ID token: an identifier the
+	// user can't change, unlike an email address.
+	AllowedSubjects  []string `yaml:"allowed_subjects"`
+	OperatorSubjects []string `yaml:"operator_subjects"`
+	ViewerSubjects   []string `yaml:"viewer_subjects"`
+	// SubjectClaim names the claim the *_subjects rules match. Default "sub";
+	// with Microsoft Entra ID, "oid" (the object ID).
+	SubjectClaim string `yaml:"subject_claim"`
+	// RequireEmailVerified (default true) lets email and domain rules match
+	// only when the ID token says email_verified: true. A provider that
+	// leaves the claim out may let users set any address (issue #125): use
+	// subject or group rules there, or set false for a provider known to
+	// verify the emails it sends.
+	RequireEmailVerified *bool `yaml:"require_email_verified"`
+}
+
+// EmailVerifiedRequired reports require_email_verified (default true).
+func (o OIDC) EmailVerifiedRequired() bool {
+	return o.RequireEmailVerified == nil || *o.RequireEmailVerified
 }
 
 // Repos controls which repositories are reviewed.
@@ -580,6 +600,9 @@ func (c *Config) applyDefaults() {
 	a := &c.Admin
 	if a.SessionTTL <= 0 {
 		a.SessionTTL = 12 * time.Hour
+	}
+	if a.OIDC.SubjectClaim == "" {
+		a.OIDC.SubjectClaim = "sub"
 	}
 	if a.OIDC.GroupsClaim == "" {
 		a.OIDC.GroupsClaim = "groups"
