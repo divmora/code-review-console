@@ -52,6 +52,9 @@ type Host struct {
 	// Route (never stored on the host: every webhook has its own URL and
 	// secrets).
 	Hook EndpointSecrets `json:"-"`
+	// Credential is the credential this copy of the host acts with for a
+	// repository (see ForRepo); 0 for the host's own.
+	Credential int64 `json:"-"`
 }
 
 // Settings are a host's non-secret settings.
@@ -167,17 +170,16 @@ func clean(in []string) []string {
 // Validate checks that a host can authenticate API calls and webhooks.
 func (h Host) Validate() error {
 	switch h.Platform {
+	// The host's own token is optional: credentials (issue #136) can cover
+	// its repositories instead, and a repository neither covers fails with
+	// a message naming its group. Half-set alternatives are still refused.
 	case GitHub:
-		if h.Token == "" && (h.AppID == 0 || h.AppPrivateKey == "") {
-			return errors.New("github: set a token, or a GitHub App ID and private key")
-		}
-	case GitLab:
-		if h.Token == "" {
-			return errors.New("gitlab: set an access token with api scope")
+		if (h.AppID != 0) != (h.AppPrivateKey != "") {
+			return errors.New("github: a GitHub App needs both its ID and its private key")
 		}
 	case Bitbucket:
-		if h.Token == "" && (h.Email == "" || h.APIToken == "") {
-			return errors.New("bitbucket: set an access token, or an account email and API token")
+		if (h.Email != "") != (h.APIToken != "") {
+			return errors.New("bitbucket: an API token needs the account email, and the email its API token")
 		}
 	}
 	// Webhooks (endpoints, added under Manage webhooks) have their own URL
@@ -205,6 +207,7 @@ type Registry struct {
 	mu        sync.RWMutex
 	list      []Host
 	endpoints []Endpoint
+	creds     []Credential
 	mode      string // "database" or "config"
 	// shared are hosts that still store shared-URL webhook secrets, with
 	// the audit's secrets_changed entries for deleting them (see
@@ -219,6 +222,9 @@ type Registry struct {
 	// checks the last Test result.
 	expiry map[int64]TokenExpiry
 	checks map[int64]Check
+	// credExpiry and credChecks are the same for credentials (by ID).
+	credExpiry map[int64]TokenExpiry
+	credChecks map[int64]Check
 	// OnChange runs after hosts change (e.g. to refresh bot identities).
 	OnChange func()
 	// Lic gates the Hosts feature: without it only the first host of each
@@ -332,6 +338,7 @@ func (r *Registry) Load(ctx context.Context) error {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Platform+list[i].Host < list[j].Platform+list[j].Host })
 	var eps []Endpoint
+	var creds []Credential
 	if r.st != nil && mode == "database" && r.box != nil {
 		rows, err := r.st.ListWebhookEndpoints(ctx)
 		if err != nil {
@@ -344,9 +351,20 @@ func (r *Registry) Load(ctx context.Context) error {
 			}
 			eps = append(eps, e)
 		}
+		crows, err := r.st.ListHostCredentials(ctx)
+		if err != nil {
+			return err
+		}
+		for _, row := range crows {
+			c, err := r.decodeCredential(row)
+			if err != nil {
+				return fmt.Errorf("credential %d: %w", row.ID, err)
+			}
+			creds = append(creds, c)
+		}
 	}
 	r.mu.Lock()
-	r.list, r.mode, r.endpoints, r.shared, r.version = list, mode, eps, shared, version
+	r.list, r.mode, r.endpoints, r.creds, r.shared, r.version = list, mode, eps, creds, shared, version
 	r.mu.Unlock()
 	return nil
 }

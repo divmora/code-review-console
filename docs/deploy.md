@@ -489,7 +489,7 @@ gives a ready-made scrape config:
 | `codereview_webhooks_total` | counter | `platform`, `outcome` (queued, ignored, duplicate, rejected, error) |
 | `codereview_license_state` | gauge | `state` (none, active, grace, expired, invalid) |
 | `codereview_license_expiry_timestamp_seconds` | gauge | |
-| `codereview_host_token_expiry_timestamp_seconds` | gauge | `platform`, `host` |
+| `codereview_host_token_expiry_timestamp_seconds` | gauge | `platform`, `host`, `credential` (a credential's pattern; empty for the host's own token) |
 | `codereview_review_score` | gauge | `kind` (quality, security, maintainability), `platform`, `host`, `repo` |
 
 Counters and the queue are per replica (Prometheus adds them up), and their labels never carry

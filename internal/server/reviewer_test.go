@@ -141,12 +141,12 @@ func TestPerInstanceIdentity(t *testing.T) {
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.2:1"] = "y-token-user"
 
-	x, y := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1")), s.gitlabTarget(mustHost(t, s, "127.0.0.2:1"))
-	if x.botName != "xbot" || s.reviewerFor(x, "127.0.0.1:1") != "x-reviewer" {
-		t.Errorf("instance x identity: %q %q", x.botName, s.reviewerFor(x, "127.0.0.1:1"))
+	x, y := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"), ""), s.gitlabTarget(mustHost(t, s, "127.0.0.2:1"), "")
+	if x.botName != "xbot" || s.reviewerFor(x) != "x-reviewer" {
+		t.Errorf("instance x identity: %q %q", x.botName, s.reviewerFor(x))
 	}
-	if y.botName != "codereview" || s.reviewerFor(y, "127.0.0.2:1") != "y-token-user" {
-		t.Errorf("instance y should default to bot_name and the token user: %q %q", y.botName, s.reviewerFor(y, "127.0.0.2:1"))
+	if y.botName != "codereview" || s.reviewerFor(y) != "y-token-user" {
+		t.Errorf("instance y should default to bot_name and the token user: %q %q", y.botName, s.reviewerFor(y))
 	}
 	yml, _, err := s.jobConfig(context.Background(), x, x.host.Host)
 	if err != nil || !bytes.Contains(yml, []byte("bot_name: xbot")) {
@@ -307,7 +307,7 @@ func TestMentionDefaultsToTokenUser(t *testing.T) {
 	trustAuthors(s)
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.1:1"] = "gitlab-bot"
-	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"))
+	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"), "")
 	if tgt.botName != "gitlab-bot" {
 		t.Errorf("mention should default to the token user: %q", tgt.botName)
 	}
@@ -402,7 +402,7 @@ func TestTokenBudgets(t *testing.T) {
 		t.Fatalf("global budget: %q", why)
 	}
 	// Automatic reviews are skipped; admin requests still run.
-	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"))
+	tgt := s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"), "")
 	_ = s.enqueueReview(tgt, ref, reviewOpts{Auto: true}, false)
 	waitFor(t, func() bool { return len(s.queue.Snapshot().Recent) == 1 })
 	if r := s.queue.Snapshot().Recent; r[len(r)-1].State != Skipped || !strings.Contains(r[len(r)-1].Note, "budget") {
@@ -435,7 +435,7 @@ func TestConsoleModelKeyReachesJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.queue.Shutdown(ctx)
-	task, err := s.newTask(ctx, s.gitlabTarget(mustHost(t, s, "127.0.0.1:1")), vcs.Ref{Repo: "g/p", Number: 1}, "review", nil)
+	task, err := s.newTask(ctx, s.gitlabTarget(mustHost(t, s, "127.0.0.1:1"), ""), vcs.Ref{Repo: "g/p", Number: 1}, "review", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

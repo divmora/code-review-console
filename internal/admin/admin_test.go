@@ -421,8 +421,8 @@ func TestLoginAndManageRepos(t *testing.T) {
 	if len(audited) < 4 {
 		t.Errorf("webhook changes must be audited: %v", audited)
 	}
-	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "gitlab", "base_url": "https://other.example"}); code != 400 {
-		t.Errorf("a GitLab host without an access token must be rejected: %d", code)
+	if code, _ := e.do(t, "POST", "/admin/api/hosts", csrf, map[string]any{"platform": "bitbucket", "settings": map[string]any{"email": "a@x"}}); code != 400 {
+		t.Errorf("a Bitbucket email without its API token must be rejected: %d", code)
 	}
 	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/admin/api/hosts/%d", hv.ID), csrf, nil); code != 200 {
 		t.Errorf("delete host: %d", code)

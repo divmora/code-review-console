@@ -38,18 +38,19 @@ const (
 
 // operateRoutes are the day-to-day changes an operator makes directly.
 var operateRoutes = map[string]bool{
-	"POST /admin/api/repos":              true,
-	"PUT /admin/api/repos/{id}":          true,
-	"DELETE /admin/api/repos/{id}":       true,
-	"POST /admin/api/rules":              true,
-	"PUT /admin/api/rules/{id}":          true,
-	"DELETE /admin/api/rules/{id}":       true,
-	"POST /admin/api/reviews":            true,
-	"POST /admin/api/reviews/{id}/rerun": true,
-	"POST /admin/api/learnings":          true,
-	"PUT /admin/api/learnings/{id}":      true,
-	"DELETE /admin/api/learnings/{id}":   true,
-	"POST /admin/api/hosts/{id}/test":    true,
+	"POST /admin/api/repos":                  true,
+	"PUT /admin/api/repos/{id}":              true,
+	"DELETE /admin/api/repos/{id}":           true,
+	"POST /admin/api/rules":                  true,
+	"PUT /admin/api/rules/{id}":              true,
+	"DELETE /admin/api/rules/{id}":           true,
+	"POST /admin/api/reviews":                true,
+	"POST /admin/api/reviews/{id}/rerun":     true,
+	"POST /admin/api/learnings":              true,
+	"PUT /admin/api/learnings/{id}":          true,
+	"DELETE /admin/api/learnings/{id}":       true,
+	"POST /admin/api/hosts/{id}/test":        true,
+	"POST /admin/api/credentials/{cid}/test": true,
 }
 
 var adminOnlyRoutes = map[string]bool{
@@ -190,6 +191,12 @@ func (a *Admin) summarize(r *http.Request) string {
 		return "Change webhook " + r.PathValue("wid")
 	case "DELETE /admin/api/webhooks/{wid}":
 		return "Delete webhook " + r.PathValue("wid")
+	case "POST /admin/api/hosts/{id}/credentials":
+		return "Add a credential to " + host()
+	case "PUT /admin/api/credentials/{cid}":
+		return "Change credential " + a.credentialSummary(r)
+	case "DELETE /admin/api/credentials/{cid}":
+		return "Delete credential " + a.credentialSummary(r)
 	case "PUT /admin/api/settings":
 		return "Change settings"
 	case "PUT /admin/api/tuning":

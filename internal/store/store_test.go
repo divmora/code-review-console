@@ -438,6 +438,65 @@ func TestTokensUsed(t *testing.T) {
 	}
 }
 
+func TestHostCredentialsStore(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	h, err := p.PutHost(ctx, HostRow{Platform: "gitlab", Host: fmt.Sprintf("cred-%d.example.com", time.Now().UnixNano()), BaseURL: "https://gl.example.com"}, "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v0, _ := p.HostsVersion(ctx)
+	c, err := p.PutHostCredential(ctx, HostCredential{HostID: h.ID, Name: "Acme", Pattern: "acme", Enabled: true, Config: json.RawMessage(`{"bot_name":"acme-bot"}`),
+		Secrets: "v1:sealed", SecretsChanged: []string{"token:set"}}, "a@x")
+	if err != nil || c.ID == 0 || c.CreatedBy != "a@x" {
+		t.Fatalf("create: %+v %v", c, err)
+	}
+	if v1, _ := p.HostsVersion(ctx); v1 <= v0 {
+		t.Errorf("a credential write bumps the hosts version: %d -> %d", v0, v1)
+	}
+	if _, err := p.PutHostCredential(ctx, HostCredential{HostID: h.ID, Pattern: "acme", Secrets: "x"}, "a@x"); !errors.Is(err, ErrDuplicate) {
+		t.Errorf("same pattern twice: %v", err)
+	}
+	if _, err := p.PutHostCredential(ctx, HostCredential{HostID: 0, Pattern: "x", Secrets: "x"}, "a@x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown host: %v", err)
+	}
+	c.Name, c.Enabled, c.SecretsChanged = "Acme group", false, nil
+	up, err := p.PutHostCredential(ctx, *c, "b@x")
+	if err != nil || up.Name != "Acme group" || up.Enabled || up.UpdatedBy != "b@x" || up.CreatedBy != "a@x" {
+		t.Fatalf("update: %+v %v", up, err)
+	}
+	list, _ := p.ListHostCredentials(ctx)
+	found := false
+	for _, x := range list {
+		if x.ID == c.ID {
+			found = x.Secrets == "v1:sealed" && string(x.Config) == `{"bot_name": "acme-bot"}`
+		}
+	}
+	if !found {
+		t.Errorf("list: %+v", list)
+	}
+	entries, _ := p.ListAudit(ctx, 20)
+	var put bool
+	for _, e := range entries {
+		if e.Action == "credential.put" && e.Target == fmt.Sprint(c.ID) && strings.Contains(string(e.Detail), "token:set") {
+			put = true
+		}
+		if strings.Contains(string(e.Detail), "v1:sealed") {
+			t.Errorf("the audit log has the sealed secret: %s", e.Detail)
+		}
+	}
+	if !put {
+		t.Errorf("credential.put audited with secrets_changed: %+v", entries)
+	}
+	// Deleting the host deletes its credentials.
+	if err := p.DeleteHost(ctx, h.ID, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeleteHostCredential(ctx, c.ID, "a@x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("credential should be gone with its host: %v", err)
+	}
+}
+
 func TestWebhookEndpointsStore(t *testing.T) {
 	p := openTest(t)
 	ctx := context.Background()

@@ -118,7 +118,7 @@ func TestImportRejects(t *testing.T) {
 	for name, c := range map[string]string{
 		"unknown field": "hosts:\n  - platform: gitlab\n    tokn: x\n",
 		"bad platform":  "hosts:\n  - platform: svn\n",
-		"no token":      "hosts:\n  - platform: gitlab\n    base_url: https://g.example\n",
+		"half an app":   "hosts:\n  - platform: github\n    app_id: 1\n",
 		"listed twice":  "hosts:\n  - {platform: gitlab, base_url: https://g.example, token: t}\n  - {platform: gitlab, base_url: https://g.example/, token: t}\n",
 		"bad id":        "hosts:\n  - platform: gitlab\n    base_url: https://g.example\n    token: t\n    webhooks: [{id: nope}]\n",
 		"foreign id":    "hosts:\n  - platform: gitlab\n    base_url: https://g.example\n    token: t\n    webhooks: [{id: " + foreign.ID + "}]\n",
@@ -134,9 +134,9 @@ func TestImportRejects(t *testing.T) {
 		}
 	}
 	// A failed import writes nothing: the valid first host is not saved.
-	f, _ := ParseFile([]byte("hosts:\n  - {platform: gitlab, base_url: https://ok.example, token: t}\n  - {platform: bitbucket}\n"))
+	f, _ := ParseFile([]byte("hosts:\n  - {platform: gitlab, base_url: https://ok.example, token: t}\n  - {platform: bitbucket, settings: {email: a@x}}\n"))
 	if _, err := r.Import(ctx, f, "cli", false); err == nil {
-		t.Fatal("want an error for the bitbucket host without credentials")
+		t.Fatal("want an error for the bitbucket host with an email but no API token")
 	}
 	if _, ok := r.Find(GitLab, "ok.example"); ok {
 		t.Error("nothing may be written when any host is invalid")

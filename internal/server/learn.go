@@ -383,8 +383,7 @@ func (s *Server) replyToBot(tgt target, ref vcs.Ref, fetch func(ctx context.Cont
 			s.logger.Debug("could not read the parent comment", "pr", ref.String(), "error", err)
 			return
 		}
-		self := s.self(tgt.host.Host)
-		if !isBotOutput(p.Body) && (self == "" || !strings.EqualFold(p.Author, self)) {
+		if !isBotOutput(p.Body) && !s.isSelf(tgt.host.Host, p.Author) {
 			return // not a reply to the bot
 		}
 		if react != nil {

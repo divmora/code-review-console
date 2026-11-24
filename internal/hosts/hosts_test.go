@@ -104,13 +104,17 @@ func TestValidate(t *testing.T) {
 		h    Host
 		want string
 	}{
-		{Host{Platform: GitHub, Settings: Settings{AppID: 1}}, "token, or a GitHub App"},
-		{Host{Platform: GitLab}, "access token"},
+		{Host{Platform: GitHub, Settings: Settings{AppID: 1}}, "both its ID and its private key"},
+		{Host{Platform: GitHub, Secrets: Secrets{AppPrivateKey: "k"}}, "both its ID and its private key"},
 		{Host{Platform: Bitbucket, Settings: Settings{Email: "a@x"}}, "API token"},
 	} {
 		if err := c.h.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: want %q, got %v", c.h, c.want, err)
 		}
+	}
+	// The host's own token is optional: credentials can cover its repositories (issue #136).
+	if err := (Host{Platform: GitLab}).Validate(); err != nil {
+		t.Errorf("a GitLab host without its own token: %v", err)
 	}
 	if err := (Host{Platform: GitHub, Secrets: Secrets{Token: "t"}}).Validate(); err != nil {
 		t.Errorf("a host managed in the admin panel needs no webhook secret of its own: %v", err)

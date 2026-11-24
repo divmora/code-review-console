@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/divmora/code-review-console/internal/clientip"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -139,6 +141,28 @@ type HostRow struct {
 	// SecretsChanged names the secrets this save changes, for the audit
 	// log (never stored with the host; see hosts.SecretChanges).
 	SecretsChanged []string `json:"-"`
+}
+
+// HostCredential is an extra credential of a code host, used instead of
+// the host's own for the repositories its group or pattern covers (issue
+// #136): a GitLab group access token per group, say, so one token never
+// reaches every group. Config holds its non-secret settings (bot name,
+// reviewer, Bitbucket email); Secrets its token, encrypted by the console
+// (see internal/hosts).
+type HostCredential struct {
+	ID      int64           `json:"id"`
+	HostID  int64           `json:"host_id"`
+	Name    string          `json:"name"`
+	Pattern string          `json:"pattern"`
+	Enabled bool            `json:"enabled"`
+	Config  json.RawMessage `json:"config"`
+	Secrets string          `json:"-"`
+	// SecretsChanged names the secrets this save changes (audit only).
+	SecretsChanged []string  `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	CreatedBy      string    `json:"created_by"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	UpdatedBy      string    `json:"updated_by"`
 }
 
 // WebhookEndpoint is a webhook URL of a host, /webhooks/<platform>/<id>,
@@ -490,7 +514,13 @@ type Store interface {
 	ListWebhookEndpoints(ctx context.Context) ([]WebhookEndpoint, error)
 	PutWebhookEndpoint(ctx context.Context, e WebhookEndpoint, actor string) (*WebhookEndpoint, error)
 	DeleteWebhookEndpoint(ctx context.Context, id string, actor string) error
-	// HostsVersion changes whenever a host or webhook endpoint is written
+	// Host credentials. PutHostCredential creates (ID 0) or updates by ID;
+	// a host's pattern is unique (ErrDuplicate); deleting a host deletes
+	// its credentials. Audit details never include secrets.
+	ListHostCredentials(ctx context.Context) ([]HostCredential, error)
+	PutHostCredential(ctx context.Context, c HostCredential, actor string) (*HostCredential, error)
+	DeleteHostCredential(ctx context.Context, id int64, actor string) error
+	// HostsVersion changes whenever a host, webhook endpoint or credential is written
 	// or deleted, by any process, so a running console can tell that its
 	// copy is stale (issue #101).
 	HostsVersion(ctx context.Context) (int64, error)
@@ -908,6 +938,23 @@ var migrations = []string{
 	approvalSQL,
 	// 22: per-webhook delivery stats on the Code hosts page (issue #131).
 	`CREATE INDEX webhook_events_endpoint_idx ON webhook_events (endpoint, id DESC) WHERE endpoint <> '';`,
+	// 23: credentials per group or pattern under a host (issue #136).
+	`CREATE TABLE host_credentials (
+		id          bigserial PRIMARY KEY,
+		host_id     bigint NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+		name        text NOT NULL DEFAULT '',
+		pattern     text NOT NULL,
+		enabled     boolean NOT NULL DEFAULT true,
+		config      jsonb NOT NULL DEFAULT '{}',
+		secrets     text NOT NULL DEFAULT '',
+		created_at  timestamptz NOT NULL DEFAULT now(),
+		created_by  text NOT NULL DEFAULT '',
+		updated_at  timestamptz NOT NULL DEFAULT now(),
+		updated_by  text NOT NULL DEFAULT '',
+		UNIQUE (host_id, pattern)
+	);
+	CREATE TRIGGER host_credentials_version_bump AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON host_credentials
+		FOR EACH STATEMENT EXECUTE FUNCTION bump_hosts_version();`,
 }
 
 // approvalSQL adds jobs.approval and job_metrics.approvals, filled in
@@ -1520,6 +1567,97 @@ func (p *Postgres) DeleteWebhookEndpoint(ctx context.Context, id string, actor s
 		return err
 	}
 	if err := audit(ctx, tx, actor, "webhook.delete", e.ID, map[string]any{"before": endpointAudit(e)}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const credentialCols = `id, host_id, name, pattern, enabled, config, secrets, created_at, created_by, updated_at, updated_by`
+
+func scanCredential(row pgx.Row) (*HostCredential, error) {
+	var c HostCredential
+	err := row.Scan(&c.ID, &c.HostID, &c.Name, &c.Pattern, &c.Enabled, &c.Config, &c.Secrets, &c.CreatedAt, &c.CreatedBy, &c.UpdatedAt, &c.UpdatedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &c, err
+}
+
+func credentialAudit(c *HostCredential) map[string]any {
+	if c == nil {
+		return nil
+	}
+	return map[string]any{"host_id": c.HostID, "name": c.Name, "pattern": c.Pattern, "enabled": c.Enabled, "config": c.Config}
+}
+
+func (p *Postgres) ListHostCredentials(ctx context.Context) ([]HostCredential, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+credentialCols+` FROM host_credentials ORDER BY host_id, pattern, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []HostCredential{}
+	for rows.Next() {
+		c, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) PutHostCredential(ctx context.Context, in HostCredential, actor string) (*HostCredential, error) {
+	if len(in.Config) == 0 {
+		in.Config = json.RawMessage(`{}`)
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var old *HostCredential
+	var c *HostCredential
+	if in.ID == 0 {
+		c, err = scanCredential(tx.QueryRow(ctx, `INSERT INTO host_credentials (host_id, name, pattern, enabled, config, secrets, created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING `+credentialCols, in.HostID, in.Name, in.Pattern, in.Enabled, in.Config, in.Secrets, actor))
+	} else {
+		old, err = scanCredential(tx.QueryRow(ctx, `SELECT `+credentialCols+` FROM host_credentials WHERE id = $1 AND host_id = $2 FOR UPDATE`, in.ID, in.HostID))
+		if err != nil {
+			return nil, err
+		}
+		c, err = scanCredential(tx.QueryRow(ctx, `UPDATE host_credentials SET name = $2, pattern = $3, enabled = $4, config = $5, secrets = $6,
+			updated_by = $7, updated_at = now() WHERE id = $1 RETURNING `+credentialCols, in.ID, in.Name, in.Pattern, in.Enabled, in.Config, in.Secrets, actor))
+	}
+	if err != nil {
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) {
+			switch pe.Code {
+			case "23505":
+				return nil, ErrDuplicate
+			case "23503":
+				return nil, ErrNotFound
+			}
+		}
+		return nil, err
+	}
+	if err := audit(ctx, tx, actor, "credential.put", strconv.FormatInt(c.ID, 10), changeDetail(credentialAudit(old), credentialAudit(c), nonNil(in.SecretsChanged))); err != nil {
+		return nil, err
+	}
+	return c, tx.Commit(ctx)
+}
+
+func (p *Postgres) DeleteHostCredential(ctx context.Context, id int64, actor string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	c, err := scanCredential(tx.QueryRow(ctx, `DELETE FROM host_credentials WHERE id = $1 RETURNING `+credentialCols, id))
+	if err != nil {
+		return err
+	}
+	if err := audit(ctx, tx, actor, "credential.delete", strconv.FormatInt(c.ID, 10), map[string]any{"before": credentialAudit(c)}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

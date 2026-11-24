@@ -83,7 +83,7 @@ func TestGitHubWebhookCantClaimAnotherHost(t *testing.T) {
 	// Restored, it runs with A's credentials, even when the saved host
 	// name is another configured host's (an older or tampered payload).
 	p.Host = b.Host
-	tgt, err := s.targetByID(p.Platform, p.HostID, p.Installation)
+	tgt, err := s.targetByID(p.Platform, p.HostID, p.Installation, p.Repo)
 	if err != nil || tgt.host.ID != a.ID {
 		t.Fatalf("by ID: %v %+v", err, tgt.host)
 	}
@@ -91,7 +91,7 @@ func TestGitHubWebhookCantClaimAnotherHost(t *testing.T) {
 		t.Errorf("A's token: %v", env)
 	}
 	// Payloads saved before host_id still restore by name.
-	if tgt, err := s.targetFor(p.Platform, b.Host, 0); err != nil || tgt.host.ID != b.ID {
+	if tgt, err := s.targetFor(p.Platform, b.Host, 0, p.Repo); err != nil || tgt.host.ID != b.ID {
 		t.Errorf("by name: %v", err)
 	}
 }

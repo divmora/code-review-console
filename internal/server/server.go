@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -300,44 +301,68 @@ func (s *Server) refreshHosts() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for _, h := range s.hosts.Enabled("") {
-		switch h.Platform {
-		case hosts.GitHub:
-			if h.AppID != 0 {
-				key, err := h.AppKey()
-				if err != nil {
-					return fmt.Errorf("github %s: %w", h.Host, err)
-				}
-				a, err := vcs.NewGitHubApp(h.AppID, key, h.BaseURL)
-				if err != nil {
-					return fmt.Errorf("github %s: %w", h.Host, err)
-				}
-				apps[h.ID] = a
-				continue // the App's identity is its slug; set bot_name
+		creds := s.hosts.ActiveCredentials(h)
+		app := false
+		if h.Platform == hosts.GitHub && h.AppID != 0 {
+			key, err := h.AppKey()
+			if err != nil {
+				return fmt.Errorf("github %s: %w", h.Host, err)
+			}
+			a, err := vcs.NewGitHubApp(h.AppID, key, h.BaseURL)
+			if err != nil {
+				return fmt.Errorf("github %s: %w", h.Host, err)
+			}
+			apps[h.ID], app = a, true // the App's identity is its slug; set bot_name
+		}
+		switch {
+		case app:
+		case h.Token == "" && h.APIToken == "":
+			// No token of its own (issue #136): its credentials cover its repositories.
+			msg := "the host has no token of its own: only repositories a credential covers are reviewed"
+			if len(creds) == 0 {
+				msg = "the host has no token and no credentials: add a token or a credential"
+			}
+			s.hosts.RecordCheck(h.ID, hosts.Check{OK: len(creds) > 0, Summary: map[bool]string{true: "Credentials only", false: "No token"}[len(creds) > 0], Message: msg, At: time.Now(), Source: "startup"})
+		default:
+			if login, ok := s.identify(ctx, h, func(c hosts.Check) { s.hosts.RecordCheck(h.ID, c) }); ok {
+				logins[identityKey(h)] = login
 			}
 		}
-		c := s.apiClient(h)
-		if c == nil {
-			continue
-		}
-		login, err := c.CurrentUser(ctx)
-		if err != nil || login == "" {
-			s.logger.Warn("could not read the token user", "platform", h.Platform, "host", h.Host, "error", err)
-			if err == nil {
-				err = errors.New("the code host returned no user for the token")
+		// Credentials are tokens, so even a GitHub App host's have a user.
+		for _, c := range creds {
+			hc := h.WithCredential(c)
+			if login, ok := s.identify(ctx, hc, func(ch hosts.Check) { s.hosts.RecordCredentialCheck(c.ID, ch) }); ok {
+				logins[identityKey(hc)] = login
 			}
-			// The Code hosts page shows this instead of "Not tested" (issue #131).
-			s.hosts.RecordCheck(h.ID, hosts.Check{Summary: hosts.Summarize(err), Message: err.Error(), At: time.Now(), Source: "startup"})
-			continue
 		}
-		logins[h.Host] = login
-		s.hosts.RecordCheck(h.ID, hosts.Check{OK: true, Summary: "OK as @" + login, Message: "connected as @" + login, At: time.Now(), User: login, Source: "startup"})
-		s.logger.Info(h.Platform+" identity", "host", h.Host, "token_user", login,
-			"reviewer", firstNonEmpty(h.Reviewer, login), "mention", "@"+firstNonEmpty(h.BotName, s.tuning.Get(ctx).BotName, login))
 	}
 	s.idMu.Lock()
 	s.ghApps, s.selfLogins = apps, logins
 	s.idMu.Unlock()
 	return nil
+}
+
+// identify reads the token user h acts as, records the result with record
+// (the Code hosts page shows it instead of "Not tested", issue #131) and
+// logs the identity.
+func (s *Server) identify(ctx context.Context, h hosts.Host, record func(hosts.Check)) (string, bool) {
+	c := s.apiClient(h)
+	if c == nil {
+		return "", false
+	}
+	login, err := c.CurrentUser(ctx)
+	if err != nil || login == "" {
+		s.logger.Warn("could not read the token user", "platform", h.Platform, "host", h.Host, "credential", h.Credential, "error", err)
+		if err == nil {
+			err = errors.New("the code host returned no user for the token")
+		}
+		record(hosts.Check{Summary: hosts.Summarize(err), Message: err.Error(), At: time.Now(), Source: "startup"})
+		return "", false
+	}
+	record(hosts.Check{OK: true, Summary: "OK as @" + login, Message: "connected as @" + login, At: time.Now(), User: login, Source: "startup"})
+	s.logger.Info(h.Platform+" identity", "host", h.Host, "credential", h.Credential, "token_user", login,
+		"reviewer", firstNonEmpty(h.Reviewer, login), "mention", "@"+firstNonEmpty(h.BotName, s.tuning.Get(ctx).BotName, login))
+	return login, true
 }
 
 // userClient is the part of a code host client used for identity.
@@ -361,11 +386,20 @@ func (s *Server) apiClient(h hosts.Host) userClient {
 	return nil
 }
 
-// self returns the bot's login on a web host ("" when unknown).
-func (s *Server) self(host string) string {
+// identityKey keys selfLogins: the web host for the host's own token,
+// "host#<credential ID>" for a credential's (issue #136).
+func identityKey(h hosts.Host) string {
+	if h.Credential != 0 {
+		return h.Host + "#" + strconv.FormatInt(h.Credential, 10)
+	}
+	return h.Host
+}
+
+// self returns the token user h acts as ("" when unknown).
+func (s *Server) self(h hosts.Host) string {
 	s.idMu.RLock()
 	defer s.idMu.RUnlock()
-	return s.selfLogins[host]
+	return s.selfLogins[identityKey(h)]
 }
 
 func (s *Server) ghApp(hostID int64) *vcs.GitHubApp {

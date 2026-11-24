@@ -114,6 +114,10 @@ func (r Rule) specificity() [4]int {
 	return [4]int{strings.Count(r.Pattern, "/") + 1, literal, -wild, len(r.Pattern)}
 }
 
+// MoreSpecific reports whether rule a is more specific than b (the order
+// Rules resolve in; host credentials use it too).
+func MoreSpecific(a, b Rule) bool { return moreSpecific(a, b) }
+
 func moreSpecific(a, b Rule) bool {
 	sa, sb := a.specificity(), b.specificity()
 	for i := range sa {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/divmora/code-review-console/internal/ee/license"
 	"github.com/divmora/code-review-console/internal/httpx"
 )
 
@@ -137,19 +138,72 @@ func githubExpiry(ctx context.Context, h Host) (time.Time, error) {
 func (r *Registry) CheckTokenExpiry(ctx context.Context, h Host) TokenExpiry {
 	e := LookupTokenExpiry(ctx, h)
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.Credential != 0 {
+		if r.credExpiry == nil {
+			r.credExpiry = map[int64]TokenExpiry{}
+		}
+		r.credExpiry[h.Credential] = e
+		return e
+	}
 	if r.expiry == nil {
 		r.expiry = map[int64]TokenExpiry{}
 	}
 	r.expiry[h.ID] = e
-	r.mu.Unlock()
 	return e
 }
 
-// RefreshTokenExpiry checks every enabled host.
+// RefreshTokenExpiry checks every enabled host and its active credentials.
 func (r *Registry) RefreshTokenExpiry(ctx context.Context) {
 	for _, h := range r.Enabled("") {
-		r.CheckTokenExpiry(ctx, h)
+		if h.Token != "" || h.APIToken != "" {
+			r.CheckTokenExpiry(ctx, h)
+		}
+		for _, c := range r.ActiveCredentials(h) {
+			r.CheckTokenExpiry(ctx, h.WithCredential(c))
+		}
 	}
+}
+
+// ActiveCredentials are h's credentials in use: enabled, with the hosts
+// license feature.
+func (r *Registry) ActiveCredentials(h Host) []Credential {
+	if !r.Lic.Has(license.Hosts) {
+		return nil
+	}
+	var out []Credential
+	for _, c := range r.Credentials(h.ID) {
+		if c.Enabled {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// CredentialExpiryOf returns what is known about credential id's token.
+func (r *Registry) CredentialExpiryOf(id int64) (TokenExpiry, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.credExpiry[id]
+	return e, ok
+}
+
+// RecordCredentialCheck remembers the latest check of credential id.
+func (r *Registry) RecordCredentialCheck(id int64, c Check) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.credChecks == nil {
+		r.credChecks = map[int64]Check{}
+	}
+	r.credChecks[id] = c
+}
+
+// CredentialCheckOf returns the latest check of credential id.
+func (r *Registry) CredentialCheckOf(id int64) (Check, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.credChecks[id]
+	return c, ok
 }
 
 // TokenExpiryOf returns what is known about host id's token.

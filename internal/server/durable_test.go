@@ -40,7 +40,7 @@ func stop(s *Server) {
 func TestWaitingReviewsSurviveARestart(t *testing.T) {
 	st := storetest.New()
 	a := durableServer(t, st)
-	tgt, err := a.targetFor("gitlab", "127.0.0.1:1", 0)
+	tgt, err := a.targetFor("gitlab", "127.0.0.1:1", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

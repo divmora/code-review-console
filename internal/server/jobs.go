@@ -35,10 +35,17 @@ type target struct {
 	installation int64
 }
 
-func (s *Server) githubTarget(h hosts.Host, installation int64) target {
+// The target constructors pick the credential for repo (issue #136): the
+// most specific matching credential's token, bot name and reviewer, else
+// the host's own.
+
+func (s *Server) githubTarget(h hosts.Host, installation int64, repo string) target {
+	h = s.hosts.ForRepo(h, repo)
 	var tokens vcs.TokenSource = vcs.StaticToken(h.Token)
-	if app := s.ghApp(h.ID); app != nil && installation != 0 {
+	if app := s.ghApp(h.ID); app != nil && installation != 0 && h.Credential == 0 {
 		tokens = app.Installation(installation)
+	} else if h.Token == "" {
+		tokens = missingToken(h, repo)
 	}
 	return target{
 		client: vcs.NewGitHub(h.BaseURL, tokens),
@@ -52,28 +59,36 @@ func (s *Server) githubTarget(h hosts.Host, installation int64) target {
 			return s.withStateKey(h, map[string]string{"GITHUB_TOKEN": tok, "GITHUB_API_URL": h.BaseURL}), nil
 		},
 		host:         h,
-		botName:      s.mention(h.BotName, h.Host),
+		botName:      s.mention(h),
 		reviewer:     h.Reviewer,
 		installation: installation,
 	}
 }
 
-func (s *Server) gitlabTarget(h hosts.Host) target {
+func (s *Server) gitlabTarget(h hosts.Host, repo string) target {
+	h = s.hosts.ForRepo(h, repo)
 	return target{
 		client: vcs.NewGitLab(h.BaseURL, h.Token, h.SkipTLSVerify),
 		secrets: func(context.Context) (map[string]string, error) {
+			if h.Token == "" {
+				return nil, noCredential(h, repo)
+			}
 			return s.withStateKey(h, map[string]string{"GITLAB_TOKEN": h.Token}), nil
 		},
 		host:     h,
-		botName:  s.mention(h.BotName, h.Host),
+		botName:  s.mention(h),
 		reviewer: h.Reviewer,
 	}
 }
 
-func (s *Server) bitbucketTarget(h hosts.Host) target {
+func (s *Server) bitbucketTarget(h hosts.Host, repo string) target {
+	h = s.hosts.ForRepo(h, repo)
 	return target{
 		client: vcs.NewBitbucket(h.BaseURL, vcs.BitbucketAuth{Token: h.Token, Email: h.Email, APIToken: h.APIToken}),
 		secrets: func(context.Context) (map[string]string, error) {
+			if h.Token == "" && h.APIToken == "" {
+				return nil, noCredential(h, repo)
+			}
 			env := map[string]string{}
 			if h.Token != "" {
 				env["BITBUCKET_TOKEN"] = h.Token
@@ -83,10 +98,29 @@ func (s *Server) bitbucketTarget(h hosts.Host) target {
 			return s.withStateKey(h, env), nil
 		},
 		host:     h,
-		botName:  s.mention(h.BotName, h.Host),
+		botName:  s.mention(h),
 		reviewer: h.Reviewer,
 	}
 }
+
+// noCredential is the error for a repository no credential covers on a
+// host without its own token.
+func noCredential(h hosts.Host, repo string) error {
+	group := repo
+	if i := strings.LastIndex(repo, "/"); i > 0 {
+		group = repo[:i]
+	}
+	return fmt.Errorf("no credential covers %s on %s, and the host has no token of its own: add a credential for %s under Code hosts", repo, h.Host, group)
+}
+
+// missingToken is a token source that fails with noCredential.
+func missingToken(h hosts.Host, repo string) vcs.TokenSource {
+	return errTokens{noCredential(h, repo)}
+}
+
+type errTokens struct{ err error }
+
+func (e errTokens) Token(context.Context) (string, error) { return "", e.err }
 
 // urlHost is a URL's host (with port), lower case.
 func urlHost(u string) string {
@@ -484,16 +518,16 @@ func (s *Server) dispatch(tgt target, ref vcs.Ref, cmd command, ov *config.Overr
 // mention is the bot's handle on a host: the host's bot_name, else the
 // top-level bot_name, else the token's user, so command hints and
 // mentions reach the real bot account, else "codereview".
-func (s *Server) mention(explicit, host string) string {
-	return firstNonEmpty(explicit, s.tuning.Get(context.Background()).BotName, s.self(host), "codereview")
+func (s *Server) mention(h hosts.Host) string {
+	return firstNonEmpty(h.BotName, s.tuning.Get(context.Background()).BotName, s.self(h), "codereview")
 }
 
-// reviewerFor is the username that counts as the bot on host.
-func (s *Server) reviewerFor(tgt target, host string) string {
+// reviewerFor is the username that counts as the bot for tgt's repository.
+func (s *Server) reviewerFor(tgt target) string {
 	if tgt.reviewer != "" {
 		return tgt.reviewer
 	}
-	return s.self(host)
+	return s.self(tgt.host)
 }
 
 func tail(s string, n int) string {
@@ -510,7 +544,7 @@ func (s *Server) ReviewNow(ctx context.Context, ref vcs.Ref, full bool, by strin
 	if _, ok := s.hosts.Find(ref.Platform, ref.Host); !ok {
 		return fmt.Errorf("no enabled %s host for %s: add it under Code hosts", ref.Platform, ref.Host)
 	}
-	tgt, err := s.targetFor(ref.Platform, ref.Host, 0)
+	tgt, err := s.targetFor(ref.Platform, ref.Host, 0, ref.Repo)
 	if err != nil {
 		return err
 	}
