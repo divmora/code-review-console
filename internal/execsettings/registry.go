@@ -2,6 +2,8 @@ package execsettings
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,8 +40,15 @@ type Tags struct {
 	// Getenv reads the registry credentials (os.Getenv by default).
 	Getenv func(string) string
 
-	mu    sync.Mutex
-	cache map[string]tagsEntry
+	mu      sync.Mutex
+	cache   map[string]tagsEntry
+	digests map[string]digestEntry
+}
+
+type digestEntry struct {
+	digest  string
+	err     error
+	fetched time.Time
 }
 
 type tagsEntry struct {
@@ -149,6 +158,85 @@ func (t *Tags) fetch(ctx context.Context, repo string) ([]string, error) {
 		next = nextPage(base, link)
 	}
 	return tags, nil
+}
+
+// manifestTypes are the manifests a tag can point to: a multi-platform
+// index (what the code-review-bot release publishes) or a single image.
+var manifestTypes = strings.Join([]string{
+	"application/vnd.oci.image.index.v1+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+}, ", ")
+
+// Digest returns the digest (sha256:…) tag points to in repo now, so the
+// Executor page can pin a version (issue #135): docker and Kubernetes
+// then pull exactly that image, whatever the tag points to later. Results
+// are cached like the tag list; a failed lookup is retried after a minute.
+func (t *Tags) Digest(ctx context.Context, repo, tag string) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.digests == nil {
+		t.digests = map[string]digestEntry{}
+	}
+	key := repo + ":" + tag
+	e := t.digests[key]
+	ttl := t.TTL
+	if e.err != nil {
+		ttl = time.Minute
+	}
+	if !e.fetched.IsZero() && time.Since(e.fetched) < ttl {
+		return e.digest, e.err
+	}
+	d, err := t.fetchDigest(ctx, repo, tag)
+	t.digests[key] = digestEntry{digest: d, err: err, fetched: time.Now()}
+	return d, err
+}
+
+func (t *Tags) fetchDigest(ctx context.Context, repo, tag string) (string, error) {
+	base, name := registryRef(repo)
+	u := base + "/v2/" + name + "/manifests/" + url.PathEscape(tag)
+	auth := ""
+	for try := 0; try < 2; try++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Accept", manifestTypes)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		resp, err := t.Client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("registry: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized && auth == "" {
+			challenge := resp.Header.Get("Www-Authenticate")
+			_ = resp.Body.Close()
+			if auth, err = t.authorize(ctx, challenge, name); err != nil {
+				return "", err
+			}
+			continue
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("digest of %s:%s: HTTP %d", repo, tag, resp.StatusCode)
+		}
+		// The digest is the hash of the manifest as served. Compute it
+		// rather than trust the Docker-Content-Digest header alone, and
+		// check the two agree when the header is there.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		if err != nil {
+			return "", fmt.Errorf("digest of %s:%s: %w", repo, tag, err)
+		}
+		sum := sha256.Sum256(body)
+		d := "sha256:" + hex.EncodeToString(sum[:])
+		if h := resp.Header.Get("Docker-Content-Digest"); h != "" && h != d {
+			return "", fmt.Errorf("digest of %s:%s: the registry says %s but the manifest hashes to %s", repo, tag, h, d)
+		}
+		return d, nil
+	}
+	return "", fmt.Errorf("digest of %s:%s: not authorized", repo, tag)
 }
 
 func (t *Tags) get(ctx context.Context, u, auth string) (*http.Response, error) {

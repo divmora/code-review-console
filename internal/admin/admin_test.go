@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -859,6 +860,55 @@ func TestExecutorAPI(t *testing.T) {
 	code, body = e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"version": "0.6.0", "cpu": "1", "node_selector": map[string]string{"pool": "batch"}})
 	if code != 200 || !bytes.Contains(body, []byte(`"image":"ghcr.io/divmora/code-review-bot:0.6.0"`)) || !bytes.Contains(body, []byte(`"source":"console"`)) {
 		t.Fatalf("put: %d %s", code, body)
+	}
+}
+
+// TestExecutorPinsDigest: a version picked on the Executor page is saved
+// pinned to its digest, and the page says when the tag has moved since
+// (issue #135).
+func TestExecutorPinsDigest(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	e.adm.Executor = execsettings.New(config.Executor{Type: "docker", Docker: config.DockerExecutor{Image: "ghcr.io/divmora/code-review-bot:0.5.0"}}, e.st)
+	manifest := `{"schemaVersion":2,"v":1}`
+	e.adm.Tags = execsettings.NewTags()
+	e.adm.Tags.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/v2/divmora/code-review-bot/manifests/0.6.1" {
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(manifest)), Request: r}, nil
+		}
+		return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})}
+	digest := func(m string) string { s := sha256.Sum256([]byte(m)); return "sha256:" + hex.EncodeToString(s[:]) }
+	first := digest(manifest)
+
+	code, body := e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"version": "0.6.1", "cpu": "1", "memory": "1g"})
+	if code != 200 || !bytes.Contains(body, []byte(`"version":"0.6.1@`+first+`"`)) || !bytes.Contains(body, []byte(`"image":"ghcr.io/divmora/code-review-bot:0.6.1@`+first+`"`)) ||
+		!bytes.Contains(body, []byte(`"pinned":"`+first+`"`)) || bytes.Contains(body, []byte("pin_warning")) {
+		t.Fatalf("pinned on save: %d %s", code, body)
+	}
+	entries, _ := e.st.ListAudit(context.Background(), 20)
+	audited := false
+	for _, en := range entries {
+		audited = audited || bytes.Contains(en.Detail, []byte(first))
+	}
+	if !audited {
+		t.Errorf("the audit entry carries the digest: %+v", entries)
+	}
+
+	// The tag is re-pushed: the page says so (once the cache expires).
+	manifest = `{"schemaVersion":2,"v":2}`
+	e.adm.Tags.TTL = 0
+	_, body = e.do(t, "GET", "/admin/api/executor", "", nil)
+	if !bytes.Contains(body, []byte(`"pinned":"`+first+`"`)) || !bytes.Contains(body, []byte(`"tag_digest":"`+digest(manifest)+`"`)) {
+		t.Errorf("tag moved: %s", body)
+	}
+
+	// A tag the registry doesn't have is saved unpinned, with a warning.
+	code, body = e.do(t, "PUT", "/admin/api/executor", csrf, map[string]any{"version": "0.7.0", "cpu": "1", "memory": "1g"})
+	if code != 200 || !bytes.Contains(body, []byte(`"version":"0.7.0"`)) || !bytes.Contains(body, []byte(`"pin_warning":"Saved 0.7.0 without pinning`)) {
+		t.Errorf("unpinned with a warning: %d %s", code, body)
 	}
 }
 
