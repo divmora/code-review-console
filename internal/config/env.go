@@ -40,6 +40,16 @@ var EnvVars = []EnvVar{
 	{"CODEREVIEW_CONSOLE_ADMIN_ENABLED", "admin.enabled", "true or false; default true when an OIDC issuer is set", func(c *Config, v string) error { return setBool(&c.Admin.Enabled, v) }},
 	{"CODEREVIEW_CONSOLE_SESSION_TTL", "admin.session_ttl", "admin session length, default 12h", func(c *Config, v string) error { return setDuration(&c.Admin.SessionTTL, v) }},
 	{"CODEREVIEW_CONSOLE_COOKIE_SECRET", "admin.cookie_secret", "32+ random characters, for several replicas", func(c *Config, v string) error { c.Admin.CookieSecret = v; return nil }},
+	{"CODEREVIEW_CONSOLE_HSTS", "admin.hsts.enabled", "true or false, default true: send Strict-Transport-Security when base_url is https", func(c *Config, v string) error {
+		var b bool
+		if err := setBool(&b, v); err != nil {
+			return err
+		}
+		c.Admin.HSTS.Enabled = &b
+		return nil
+	}},
+	{"CODEREVIEW_CONSOLE_HSTS_MAX_AGE", "admin.hsts.max_age", "default 8760h (a year)", func(c *Config, v string) error { return setDuration(&c.Admin.HSTS.MaxAge, v) }},
+	{"CODEREVIEW_CONSOLE_HSTS_INCLUDE_SUBDOMAINS", "admin.hsts.include_subdomains", "true or false, default false", func(c *Config, v string) error { return setBool(&c.Admin.HSTS.IncludeSubDomains, v) }},
 	{"CODEREVIEW_CONSOLE_OIDC_ISSUER", "admin.oidc.issuer", "OpenID Connect issuer URL", func(c *Config, v string) error { c.Admin.OIDC.Issuer = v; return nil }},
 	{"CODEREVIEW_CONSOLE_OIDC_CLIENT_ID", "admin.oidc.client_id", "", func(c *Config, v string) error { c.Admin.OIDC.ClientID = v; return nil }},
 	{"CODEREVIEW_CONSOLE_OIDC_CLIENT_SECRET", "admin.oidc.client_secret", "", func(c *Config, v string) error { c.Admin.OIDC.ClientSecret = v; return nil }},

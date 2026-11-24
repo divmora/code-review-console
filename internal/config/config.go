@@ -334,6 +334,41 @@ type Admin struct {
 	// CookieSecret signs the short-lived sign-in cookie. Set it (32+
 	// random characters) when several instances share a load balancer.
 	CookieSecret string `yaml:"cookie_secret"`
+	// HSTS is sent on every response when base_url is https (issue #129).
+	HSTS HSTS `yaml:"hsts"`
+}
+
+// HSTS configures the Strict-Transport-Security header.
+type HSTS struct {
+	// Enabled defaults to true; it only applies when base_url is https.
+	Enabled *bool `yaml:"enabled"`
+	// MaxAge is how long browsers remember to use HTTPS. Default 8760h (a
+	// year). To undo HSTS, set a short max_age for a while before turning
+	// it off: browsers keep the last value they saw.
+	MaxAge time.Duration `yaml:"max_age"`
+	// IncludeSubDomains extends the rule to every subdomain of the
+	// console's host. Off by default: set it only when they all serve HTTPS.
+	IncludeSubDomains bool `yaml:"include_subdomains"`
+}
+
+// HSTSHeader is the Strict-Transport-Security value to send, or "" when
+// base_url isn't https or HSTS is turned off.
+func (a Admin) HSTSHeader() string {
+	if a.HSTS.Enabled != nil && !*a.HSTS.Enabled {
+		return ""
+	}
+	if !strings.HasPrefix(strings.ToLower(a.BaseURL), "https://") {
+		return ""
+	}
+	age := a.HSTS.MaxAge
+	if age <= 0 {
+		age = 365 * 24 * time.Hour
+	}
+	v := fmt.Sprintf("max-age=%d", int64(age/time.Second))
+	if a.HSTS.IncludeSubDomains {
+		v += "; includeSubDomains"
+	}
+	return v
 }
 
 // OIDC is an OpenID Connect provider.

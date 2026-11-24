@@ -99,6 +99,9 @@ the same key in an optional config file.
 | `CODEREVIEW_CONSOLE_ADMIN_ENABLED` | `admin.enabled` | default true once an OIDC issuer is set |
 | `CODEREVIEW_CONSOLE_SESSION_TTL` | `admin.session_ttl` | default `12h` |
 | `CODEREVIEW_CONSOLE_COOKIE_SECRET` | `admin.cookie_secret` | 32+ random characters, for several replicas |
+| `CODEREVIEW_CONSOLE_HSTS` | `admin.hsts.enabled` | default `true`: send `Strict-Transport-Security` when `base_url` is https; see [HTTPS](#https) |
+| `CODEREVIEW_CONSOLE_HSTS_MAX_AGE` | `admin.hsts.max_age` | default `8760h` (a year) |
+| `CODEREVIEW_CONSOLE_HSTS_INCLUDE_SUBDOMAINS` | `admin.hsts.include_subdomains` | default `false` |
 | `CODEREVIEW_CONSOLE_OIDC_ISSUER`, `_OIDC_CLIENT_ID`, `_OIDC_CLIENT_SECRET` | `admin.oidc.*` | [admin.md](admin.md) |
 | `CODEREVIEW_CONSOLE_OIDC_SCOPES`, `_OIDC_ALLOWED_EMAILS`, `_OIDC_ALLOWED_DOMAINS`, `_OIDC_ALLOWED_GROUPS` | `admin.oidc.*` | comma-separated; the allowed ones are admins |
 | `CODEREVIEW_CONSOLE_OIDC_OPERATOR_EMAILS`, `_OIDC_OPERATOR_GROUPS`, `_OIDC_VIEWER_EMAILS`, `_OIDC_VIEWER_GROUPS` | `admin.oidc.*` | operators and read-only viewers ([roles](admin.md#roles)); license: `sso_rules` |
@@ -390,6 +393,22 @@ The page shows when the token expires and warns a week before. An expired link t
 ask an admin for a new one; generating a new token starts a new period and stops the old link.
 An install that had a token before keeps working with it; one without a token is now for admins
 only, until you choose otherwise. When the dashboard is public, consider hiding repository names.
+
+## HTTPS
+
+Serve the console over HTTPS, usually by terminating TLS at the load balancer or ingress. When
+`base_url` starts with `https://`, every response carries
+`Strict-Transport-Security: max-age=31536000`, so browsers that have visited once keep to HTTPS
+for a year, even if someone later follows an `http://` link or a network tries to downgrade the
+connection. Browsers ignore the header on plain-HTTP responses, so the redirect from HTTP to
+HTTPS belongs to the load balancer.
+
+- `admin.hsts.max_age` (`CODEREVIEW_CONSOLE_HSTS_MAX_AGE`) changes how long, default `8760h`.
+- `admin.hsts.include_subdomains: true` extends it to every subdomain of the console's host. Set it
+  only when they all serve HTTPS.
+- `admin.hsts.enabled: false` (`CODEREVIEW_CONSOLE_HSTS=false`) stops sending it. Browsers remember
+  the last value they saw, so to move the console back to HTTP, send a short `max_age` (such as
+  `1s`) for a while first.
 
 ## Client addresses
 

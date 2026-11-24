@@ -407,7 +407,19 @@ func (s *Server) Handler() http.Handler {
 	if s.admin != nil {
 		s.admin.Register(mux)
 	}
-	return resolver.Middleware(mux)
+	return resolver.Middleware(withHSTS(s.cfg.Admin.HSTSHeader(), mux))
+}
+
+// withHSTS sends Strict-Transport-Security on every response, so browsers
+// keep to HTTPS even behind a load balancer that terminates TLS (issue #129).
+func withHSTS(value string, next http.Handler) http.Handler {
+	if value == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Strict-Transport-Security", value)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ListenAndServe runs until ctx is cancelled, then drains jobs.
