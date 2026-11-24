@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/divmora/code-review-console/internal/dashboards"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -59,6 +60,10 @@ type Server struct {
 	settings *settings.Service
 	models   *models.Service
 	tuning   *tuning.Service
+	// dashboards are the status dashboards (issue #155).
+	dashboards *dashboards.Service
+	// roleFor replaces the admin panel's session lookup in tests.
+	roleFor func(*http.Request) string
 	// metrics are the counters behind /metrics.
 	metrics *serverMetrics
 	// owner identifies this replica's saved queued jobs (see durable.go);
@@ -121,6 +126,8 @@ type Deps struct {
 	// Box is the console's secret key (nil without one). Jobs get a state
 	// key derived from it, so the CLI signs its markers (see stateKey).
 	Box *secrets.Box
+	// Dashboards is shared with the admin panel; nil builds one over Store.
+	Dashboards *dashboards.Service
 }
 
 // New validates config and builds a server.
@@ -162,6 +169,15 @@ func New(cfg *config.Config, exec executor.Executor, logger *slog.Logger, deps D
 	}
 	if err := s.refreshHosts(); err != nil {
 		return nil, err
+	}
+	s.dashboards = deps.Dashboards
+	if s.dashboards == nil {
+		s.dashboards = dashboards.New(deps.Store, s.legacyDashboard)
+	}
+	if created, err := s.dashboards.EnsureDefault(context.Background()); err != nil {
+		return nil, fmt.Errorf("dashboards: %w", err)
+	} else if created {
+		logger.Info("the status dashboard is now the default dashboard (/dashboard); manage it and add others under Dashboards in the admin panel")
 	}
 	s.hosts.OnChange = func() {
 		if err := s.refreshHosts(); err != nil {
@@ -386,6 +402,11 @@ func (s *Server) apiClient(h hosts.Host) userClient {
 	return nil
 }
 
+// legacyDashboard is the old single dashboard's settings.
+func (s *Server) legacyDashboard(ctx context.Context) dashboards.Legacy {
+	return dashboards.LegacyFrom(s.settings.Runtime(ctx), s.tuning.Get(ctx))
+}
+
 // identityKey keys selfLogins: the web host for the host's own token,
 // "host#<credential ID>" for a credential's (issue #136).
 func identityKey(h hosts.Host) string {
@@ -427,10 +448,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	// The dashboard can be switched on and off from the admin console, so
-	// its routes always exist and check the setting per request.
+	// Dashboards can be switched on and off from the admin console, so
+	// their routes always exist and check per request. /dashboard and
+	// /api/status are the default dashboard (links shared before
+	// dashboards keep working).
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if !s.settings.Runtime(r.Context()).DashboardEnabled {
+		if _, ok := s.dashboard(r, dashboards.DefaultSlug); !ok {
 			http.NotFound(w, r)
 			return
 		}
@@ -438,11 +461,16 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /dashboard", s.handleDashboardPage)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /dashboards/{slug}", s.handleDashboardPage)
+	mux.HandleFunc("GET /api/dashboards/{slug}/status", s.handleStatus)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
-	if s.admin != nil {
-		// Admins-only dashboard: under /admin, where the session cookie applies.
+	if s.admin != nil || s.roleFor != nil {
+		// Dashboards opened by signing in: under /admin, where the session
+		// cookie applies.
 		mux.HandleFunc("GET /admin/dashboard", s.handleAdminDashboardPage)
 		mux.HandleFunc("GET /admin/api/status", s.handleAdminStatus)
+		mux.HandleFunc("GET /admin/dashboards/{slug}", s.handleAdminDashboardPage)
+		mux.HandleFunc("GET /admin/api/dashboards/{slug}/status", s.handleAdminStatus)
 	}
 	if s.admin != nil {
 		s.admin.Register(mux)

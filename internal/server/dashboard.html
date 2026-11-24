@@ -113,14 +113,15 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
 })();
 (function () {
   var token = "";
+  var tokenKey = {{.TokenKey}};
   try {
     var q = new URLSearchParams(location.search);
     if (q.get("token")) {
       token = q.get("token");
-      try { sessionStorage.setItem("crb-token", token); } catch (e) {}
+      try { sessionStorage.setItem(tokenKey, token); } catch (e) {}
       history.replaceState(null, "", location.pathname);
     } else {
-      try { token = sessionStorage.getItem("crb-token") || ""; } catch (e) {}
+      try { token = sessionStorage.getItem(tokenKey) || ""; } catch (e) {}
     }
   } catch (e) {}
 
@@ -198,7 +199,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
     var t = d.totals;
     document.getElementById("tiles").replaceChildren(
       tile(num(d.running.length), "running"),
-      tile(num(d.pending.length), "pending"),
+      tile(num(d.pending.length), d.waiting_overall ? "pending · " + num(d.waiting_overall) + " overall" : "pending"),
       tile(num(t.done), "completed"),
       tile(num(t.failed), "failed"),
       tile(num(t.comments), "comments posted"),

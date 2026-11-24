@@ -468,31 +468,63 @@ func (q *Queue) Snapshot() Snapshot {
 	}
 	sort.Slice(s.Running, func(i, j int) bool { return s.Running[i].Started.Before(s.Running[j].Started) })
 	sort.Slice(s.Pending, func(i, j int) bool { return s.Pending[i].ReadyAt.Before(s.Pending[j].ReadyAt) })
+	for i := len(q.history) - 1; i >= 0; i-- {
+		s.Recent = append(s.Recent, q.history[i])
+	}
+	s.Totals = totalsOf(s.Recent)
+	return s
+}
+
+// totalsOf sums up finished jobs.
+func totalsOf(recent []Record) Totals {
+	var t Totals
 	var total time.Duration
 	n := 0
-	for i := len(q.history) - 1; i >= 0; i-- {
-		r := q.history[i]
-		s.Recent = append(s.Recent, r)
+	for _, r := range recent {
 		switch r.State {
 		case Done:
-			s.Totals.Done++
+			t.Done++
 		case Skipped:
-			s.Totals.Skipped++
+			t.Skipped++
 		case Failed:
-			s.Totals.Failed++
+			t.Failed++
 		}
-		s.Totals.Comments += r.Comments
-		s.Totals.TokensIn += r.TokensIn
-		s.Totals.TokensOut += r.TokensOut
+		t.Comments += r.Comments
+		t.TokensIn += r.TokensIn
+		t.TokensOut += r.TokensOut
 		if r.State == Done && (r.Kind == "review" || r.Kind == "full review") {
 			total += r.Finished.Sub(r.Started)
 			n++
 		}
 	}
 	if n > 0 {
-		s.Totals.AvgDuration = (total / time.Duration(n)).Milliseconds()
+		t.AvgDuration = (total / time.Duration(n)).Milliseconds()
 	}
-	return s
+	return t
+}
+
+// Filter keeps the jobs keep accepts (a dashboard's repositories), with the
+// totals recomputed from them.
+func (s Snapshot) Filter(keep func(Record) bool) Snapshot {
+	out := s
+	out.Running, out.Pending, out.Recent = []Record{}, []Record{}, []Record{}
+	for _, r := range s.Running {
+		if keep(r) {
+			out.Running = append(out.Running, r)
+		}
+	}
+	for _, r := range s.Pending {
+		if keep(r) {
+			out.Pending = append(out.Pending, r)
+		}
+	}
+	for _, r := range s.Recent {
+		if keep(r) {
+			out.Recent = append(out.Recent, r)
+		}
+	}
+	out.Totals = totalsOf(out.Recent)
+	return out
 }
 
 // Shutdown stops accepting jobs and waits for running ones up to ctx.

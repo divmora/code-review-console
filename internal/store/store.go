@@ -143,6 +143,50 @@ type HostRow struct {
 	SecretsChanged []string `json:"-"`
 }
 
+// Dashboard is a status dashboard (issue #155): its own title, access and
+// repositories. A repository is on it when attached (Repos), when it
+// matches one of its Patterns, or when AllRepos is set. TokenHash is the
+// SHA-256 (hex) of its token, for Access "token"; the token itself is
+// never stored.
+type Dashboard struct {
+	ID           int64              `json:"id"`
+	Slug         string             `json:"slug"`
+	Title        string             `json:"title"`
+	Description  string             `json:"description"`
+	Access       string             `json:"access"`
+	HideRepos    bool               `json:"hide_repos"`
+	AllRepos     bool               `json:"all_repos"`
+	Enabled      bool               `json:"enabled"`
+	TokenHash    string             `json:"-"`
+	TokenExpires time.Time          `json:"token_expires,omitzero"`
+	Repos        []DashboardRepo    `json:"repos"`
+	Patterns     []DashboardPattern `json:"patterns"`
+	CreatedAt    time.Time          `json:"created_at"`
+	CreatedBy    string             `json:"created_by"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+	UpdatedBy    string             `json:"updated_by"`
+	// TokenChange is "set", "rotated" or "removed" when this save changes
+	// the token (audit only; never the token or its hash).
+	TokenChange string `json:"-"`
+}
+
+// DashboardRepo is a repository attached to a dashboard (Platform, Host
+// and Path are filled in on reads).
+type DashboardRepo struct {
+	ID       int64  `json:"id"`
+	Platform string `json:"platform"`
+	Host     string `json:"host"`
+	Path     string `json:"path"`
+}
+
+// DashboardPattern adds the repositories a pattern covers on a host, as a
+// rule does (group with subgroups, or * within one level).
+type DashboardPattern struct {
+	Platform string `json:"platform"`
+	Host     string `json:"host"`
+	Pattern  string `json:"pattern"`
+}
+
 // HostCredential is an extra credential of a code host, used instead of
 // the host's own for the repositories its group or pattern covers (issue
 // #136): a GitLab group access token per group, say, so one token never
@@ -520,6 +564,12 @@ type Store interface {
 	ListHostCredentials(ctx context.Context) ([]HostCredential, error)
 	PutHostCredential(ctx context.Context, c HostCredential, actor string) (*HostCredential, error)
 	DeleteHostCredential(ctx context.Context, id int64, actor string) error
+	// Status dashboards. PutDashboard creates (ID 0) or updates by ID and
+	// replaces its repositories and patterns; slugs are unique
+	// (ErrDuplicate). Deleting a repository detaches it everywhere.
+	ListDashboards(ctx context.Context) ([]Dashboard, error)
+	PutDashboard(ctx context.Context, d Dashboard, actor string) (*Dashboard, error)
+	DeleteDashboard(ctx context.Context, id int64, actor string) error
 	// HostsVersion changes whenever a host, webhook endpoint or credential is written
 	// or deleted, by any process, so a running console can tell that its
 	// copy is stale (issue #101).
@@ -955,6 +1005,36 @@ var migrations = []string{
 	);
 	CREATE TRIGGER host_credentials_version_bump AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON host_credentials
 		FOR EACH STATEMENT EXECUTE FUNCTION bump_hosts_version();`,
+	// 24: several status dashboards, each with its repositories (issue #155).
+	`CREATE TABLE dashboards (
+		id            bigserial PRIMARY KEY,
+		slug          text NOT NULL UNIQUE,
+		title         text NOT NULL DEFAULT '',
+		description   text NOT NULL DEFAULT '',
+		access        text NOT NULL DEFAULT 'admins',
+		hide_repos    boolean NOT NULL DEFAULT false,
+		all_repos     boolean NOT NULL DEFAULT false,
+		enabled       boolean NOT NULL DEFAULT true,
+		token_hash    text NOT NULL DEFAULT '',
+		token_expires timestamptz,
+		created_at    timestamptz NOT NULL DEFAULT now(),
+		created_by    text NOT NULL DEFAULT '',
+		updated_at    timestamptz NOT NULL DEFAULT now(),
+		updated_by    text NOT NULL DEFAULT ''
+	);
+	CREATE TABLE dashboard_repos (
+		dashboard_id bigint NOT NULL REFERENCES dashboards (id) ON DELETE CASCADE,
+		repo_id      bigint NOT NULL REFERENCES repos (id) ON DELETE CASCADE,
+		PRIMARY KEY (dashboard_id, repo_id)
+	);
+	CREATE INDEX dashboard_repos_repo_idx ON dashboard_repos (repo_id);
+	CREATE TABLE dashboard_patterns (
+		dashboard_id bigint NOT NULL REFERENCES dashboards (id) ON DELETE CASCADE,
+		platform     text NOT NULL,
+		host         text NOT NULL,
+		pattern      text NOT NULL,
+		PRIMARY KEY (dashboard_id, platform, host, pattern)
+	);`,
 }
 
 // approvalSQL adds jobs.approval and job_metrics.approvals, filled in
@@ -1567,6 +1647,220 @@ func (p *Postgres) DeleteWebhookEndpoint(ctx context.Context, id string, actor s
 		return err
 	}
 	if err := audit(ctx, tx, actor, "webhook.delete", e.ID, map[string]any{"before": endpointAudit(e)}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const dashboardCols = `id, slug, title, description, access, hide_repos, all_repos, enabled, token_hash, token_expires, created_at, created_by, updated_at, updated_by`
+
+func scanDashboard(row pgx.Row) (*Dashboard, error) {
+	var d Dashboard
+	var exp *time.Time
+	err := row.Scan(&d.ID, &d.Slug, &d.Title, &d.Description, &d.Access, &d.HideRepos, &d.AllRepos, &d.Enabled, &d.TokenHash, &exp,
+		&d.CreatedAt, &d.CreatedBy, &d.UpdatedAt, &d.UpdatedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if exp != nil {
+		d.TokenExpires = *exp
+	}
+	d.Repos, d.Patterns = []DashboardRepo{}, []DashboardPattern{}
+	return &d, err
+}
+
+// dashboardAudit is what the audit log keeps of a dashboard: never its
+// token or token hash.
+func dashboardAudit(d *Dashboard) map[string]any {
+	if d == nil {
+		return nil
+	}
+	repos := []string{}
+	for _, r := range d.Repos {
+		repos = append(repos, r.Platform+":"+r.Host+"/"+r.Path)
+	}
+	patterns := []string{}
+	for _, p := range d.Patterns {
+		patterns = append(patterns, p.Platform+":"+p.Host+"/"+p.Pattern)
+	}
+	out := map[string]any{"slug": d.Slug, "title": d.Title, "description": d.Description, "access": d.Access, "hide_repos": d.HideRepos,
+		"all_repos": d.AllRepos, "enabled": d.Enabled, "repos": repos, "patterns": patterns, "token": d.TokenHash != ""}
+	if !d.TokenExpires.IsZero() {
+		out["token_expires"] = d.TokenExpires.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// dashboardMembers fills in the repositories and patterns of ds (by ID).
+func dashboardMembers(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, ds map[int64]*Dashboard) error {
+	rows, err := q.Query(ctx, `SELECT d.dashboard_id, r.id, r.platform, r.host, r.path FROM dashboard_repos d JOIN repos r ON r.id = d.repo_id ORDER BY r.platform, r.host, r.path`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		var r DashboardRepo
+		if err := rows.Scan(&id, &r.ID, &r.Platform, &r.Host, &r.Path); err != nil {
+			rows.Close()
+			return err
+		}
+		if d := ds[id]; d != nil {
+			d.Repos = append(d.Repos, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows, err = q.Query(ctx, `SELECT dashboard_id, platform, host, pattern FROM dashboard_patterns ORDER BY platform, host, pattern`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var p DashboardPattern
+		if err := rows.Scan(&id, &p.Platform, &p.Host, &p.Pattern); err != nil {
+			return err
+		}
+		if d := ds[id]; d != nil {
+			d.Patterns = append(d.Patterns, p)
+		}
+	}
+	return rows.Err()
+}
+
+func (p *Postgres) ListDashboards(ctx context.Context) ([]Dashboard, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+dashboardCols+` FROM dashboards ORDER BY slug = 'default' DESC, title, slug`)
+	if err != nil {
+		return nil, err
+	}
+	var list []*Dashboard
+	by := map[int64]*Dashboard{}
+	for rows.Next() {
+		d, err := scanDashboard(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		list = append(list, d)
+		by[d.ID] = d
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := dashboardMembers(ctx, p.pool, by); err != nil {
+		return nil, err
+	}
+	out := make([]Dashboard, 0, len(list))
+	for _, d := range list {
+		out = append(out, *d)
+	}
+	return out, nil
+}
+
+// dashboardTx reads one dashboard with its members inside tx.
+func dashboardTx(ctx context.Context, tx pgx.Tx, id int64, lock bool) (*Dashboard, error) {
+	q := `SELECT ` + dashboardCols + ` FROM dashboards WHERE id = $1`
+	if lock {
+		q += ` FOR UPDATE`
+	}
+	d, err := scanDashboard(tx.QueryRow(ctx, q, id))
+	if err != nil {
+		return nil, err
+	}
+	all := map[int64]*Dashboard{d.ID: d}
+	return d, dashboardMembers(ctx, tx, all)
+}
+
+func (p *Postgres) PutDashboard(ctx context.Context, in Dashboard, actor string) (*Dashboard, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var exp *time.Time
+	if !in.TokenExpires.IsZero() {
+		exp = &in.TokenExpires
+	}
+	var old *Dashboard
+	id := in.ID
+	if id == 0 {
+		err = tx.QueryRow(ctx, `INSERT INTO dashboards (slug, title, description, access, hide_repos, all_repos, enabled, token_hash, token_expires, created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING id`,
+			in.Slug, in.Title, in.Description, in.Access, in.HideRepos, in.AllRepos, in.Enabled, in.TokenHash, exp, actor).Scan(&id)
+	} else {
+		if old, err = dashboardTx(ctx, tx, id, true); err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec(ctx, `UPDATE dashboards SET slug = $2, title = $3, description = $4, access = $5, hide_repos = $6, all_repos = $7, enabled = $8,
+			token_hash = $9, token_expires = $10, updated_by = $11, updated_at = now() WHERE id = $1`,
+			id, in.Slug, in.Title, in.Description, in.Access, in.HideRepos, in.AllRepos, in.Enabled, in.TokenHash, exp, actor)
+	}
+	if err != nil {
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) && pe.Code == "23505" {
+			return nil, ErrDuplicate
+		}
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM dashboard_repos WHERE dashboard_id = $1`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM dashboard_patterns WHERE dashboard_id = $1`, id); err != nil {
+		return nil, err
+	}
+	for _, r := range in.Repos {
+		// A repository deleted meanwhile is skipped (the join finds nothing).
+		if _, err := tx.Exec(ctx, `INSERT INTO dashboard_repos (dashboard_id, repo_id) SELECT $1, id FROM repos WHERE id = $2 ON CONFLICT DO NOTHING`, id, r.ID); err != nil {
+			return nil, err
+		}
+	}
+	for _, pt := range in.Patterns {
+		if _, err := tx.Exec(ctx, `INSERT INTO dashboard_patterns (dashboard_id, platform, host, pattern) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+			id, pt.Platform, pt.Host, pt.Pattern); err != nil {
+			return nil, err
+		}
+	}
+	d, err := dashboardTx(ctx, tx, id, false)
+	if err != nil {
+		return nil, err
+	}
+	action, detail := "dashboard.update", changeDetail(dashboardAudit(old), dashboardAudit(d), nil)
+	if old == nil {
+		action = "dashboard.create"
+	}
+	if in.TokenChange != "" {
+		detail["token_change"] = in.TokenChange
+	}
+	if err := audit(ctx, tx, actor, action, d.Slug, detail); err != nil {
+		return nil, err
+	}
+	if in.TokenChange == "rotated" || in.TokenChange == "set" {
+		if err := audit(ctx, tx, actor, "dashboard.token.rotate", d.Slug, map[string]any{"token_expires": dashboardAudit(d)["token_expires"]}); err != nil {
+			return nil, err
+		}
+	}
+	return d, tx.Commit(ctx)
+}
+
+func (p *Postgres) DeleteDashboard(ctx context.Context, id int64, actor string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	d, err := dashboardTx(ctx, tx, id, true)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM dashboards WHERE id = $1`, id); err != nil {
+		return err
+	}
+	if err := audit(ctx, tx, actor, "dashboard.delete", d.Slug, map[string]any{"before": dashboardAudit(d)}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

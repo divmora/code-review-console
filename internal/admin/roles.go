@@ -191,6 +191,14 @@ func (a *Admin) summarize(r *http.Request) string {
 		return "Change webhook " + r.PathValue("wid")
 	case "DELETE /admin/api/webhooks/{wid}":
 		return "Delete webhook " + r.PathValue("wid")
+	case "POST /admin/api/dashboards":
+		return "Add a dashboard"
+	case "PUT /admin/api/dashboards/{id}":
+		return "Change dashboard #" + r.PathValue("id")
+	case "DELETE /admin/api/dashboards/{id}":
+		return "Delete dashboard #" + r.PathValue("id")
+	case "POST /admin/api/dashboards/{id}/token":
+		return "Rotate the token of dashboard #" + r.PathValue("id")
 	case "POST /admin/api/hosts/{id}/credentials":
 		return "Add a credential to " + host()
 	case "PUT /admin/api/credentials/{cid}":

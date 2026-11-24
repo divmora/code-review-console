@@ -32,7 +32,7 @@ func openTest(t *testing.T) *Postgres {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.pool.Exec(ctx, `TRUNCATE repos, jobs, sessions, audit_log, model_profiles, settings RESTART IDENTITY`); err != nil {
+	if _, err := p.pool.Exec(ctx, `TRUNCATE repos, jobs, sessions, audit_log, model_profiles, settings, dashboards, dashboard_repos, dashboard_patterns RESTART IDENTITY`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
@@ -435,6 +435,61 @@ func TestTokensUsed(t *testing.T) {
 	}
 	if n, _ := p.TokensUsed(ctx, now, "", "", ""); n-before != 1165 {
 		t.Errorf("all today = %d", n)
+	}
+}
+
+func TestDashboardsStore(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	host := fmt.Sprintf("dash-%d.example.com", time.Now().UnixNano())
+	r1, err := p.CreateRepo(ctx, "gitlab", host, "ifmists/fms", "enabled", "a@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, _ := p.CreateRepo(ctx, "gitlab", host, "ifmists/common-lib", "enabled", "a@x")
+	slug := fmt.Sprintf("fms-%d", time.Now().UnixNano())
+	exp := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	d, err := p.PutDashboard(ctx, Dashboard{Slug: slug, Title: "FMS", Access: "token", Enabled: true, TokenHash: "abc123hash", TokenExpires: exp, TokenChange: "set",
+		Repos: []DashboardRepo{{ID: r1.ID}, {ID: r2.ID}}, Patterns: []DashboardPattern{{Platform: "gitlab", Host: host, Pattern: "ifmists/fms"}}}, "a@x")
+	if err != nil || d.ID == 0 || len(d.Repos) != 2 || len(d.Patterns) != 1 || !d.TokenExpires.Equal(exp) || d.Repos[0].Path != "ifmists/common-lib" {
+		t.Fatalf("create: %+v %v", d, err)
+	}
+	if _, err := p.PutDashboard(ctx, Dashboard{Slug: slug, Title: "x", Access: "admins"}, "a@x"); !errors.Is(err, ErrDuplicate) {
+		t.Errorf("duplicate slug: %v", err)
+	}
+	d.Title, d.Repos, d.TokenChange = "FMS team", []DashboardRepo{{ID: r1.ID}, {ID: 999999999}}, ""
+	up, err := p.PutDashboard(ctx, *d, "b@x")
+	if err != nil || up.Title != "FMS team" || len(up.Repos) != 1 || up.TokenHash != "abc123hash" || up.CreatedBy != "a@x" || up.UpdatedBy != "b@x" {
+		t.Fatalf("update (an unknown repository is skipped): %+v %v", up, err)
+	}
+	// Deleting a repository detaches it.
+	if err := p.DeleteRepo(ctx, r1.ID, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := p.ListDashboards(ctx)
+	for _, x := range list {
+		if x.ID == d.ID && len(x.Repos) != 0 {
+			t.Errorf("deleted repository still attached: %+v", x.Repos)
+		}
+	}
+	entries, _ := p.ListAudit(ctx, 30)
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.Target == slug {
+			seen[e.Action] = true
+		}
+		if strings.Contains(string(e.Detail), "abc123hash") {
+			t.Errorf("the audit log has the token hash: %s", e.Detail)
+		}
+	}
+	if !seen["dashboard.create"] || !seen["dashboard.update"] || !seen["dashboard.token.rotate"] {
+		t.Errorf("audit: %v", seen)
+	}
+	if err := p.DeleteDashboard(ctx, d.ID, "a@x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.CreateRepo(ctx, "gitlab", host, "ifmists/after", "enabled", "a@x"); err != nil {
+		t.Errorf("repositories are unaffected by deleting a dashboard: %v", err)
 	}
 }
 
