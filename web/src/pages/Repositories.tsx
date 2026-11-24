@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Plus, Search, Settings2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Ellipsis, FolderPlus, Plus, Search, Settings2 } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
 import type { Access, Overrides, Repo } from "../types";
@@ -27,6 +28,45 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { stickyEnd, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+type Mode = Repo["mode"];
+
+// groupOf is the group or owner a repository is in ("acme/platform" for
+// "acme/platform/api"); "" for a repository at the top level.
+function groupOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i > 0 ? path.slice(0, i) : "";
+}
+
+// ruleLink opens Add rule on the Rules page, prefilled for a group.
+const ruleLink = (r: { platform: string; host: string }, group: string) =>
+  "/rules?" + new URLSearchParams({ new: "1", platform: r.platform, host: r.host, pattern: group }).toString();
+
+// flagsOf lists the effective switches that change what a review does.
+const flagsOf = (e: Access) =>
+  [e.require_reviewer && "reviewer required", e.skip_branch_sync && "skips branch syncs", e.score_labels && "score labels", e.commit_status && "commit status", e.approve && "approves when it passes"].filter(Boolean) as string[];
+
+// StateBadge for a repository: reviewed or not, with why (and its
+// switches) on hover or focus instead of under every row (issue #134).
+function ReviewState({ e }: { e: Access }) {
+  const flags = flagsOf(e);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" className="rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-label={(e.enabled ? "Reviewed: " : "Not reviewed: ") + whyText(e)}>
+          <StateBadge kind={e.enabled ? "on" : "off"}>{e.enabled ? "Reviewed" : "Not reviewed"}</StateBadge>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        <div>{whyText(e)}</div>
+        {flags.length > 0 && <div className="opacity-80">{flags.join(" · ")}</div>}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function whyText(e: Access): string {
   if (e.source === "repository") return "set on this repository";
@@ -82,6 +122,15 @@ export default function Repositories() {
   const [repos, setRepos] = useState<Repo[] | null>(null);
   const [q, setQ] = useState("");
   const [show, setShow] = useState("all");
+  // group: "host|group" to show one group's repositories ("" = all).
+  const [group, setGroup] = useState("");
+  // selected repository IDs, for the bulk actions.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const canChange = me.role !== "viewer";
+  // A bulk action only touches repositories in view: a new filter clears the selection.
+  useEffect(() => setSelected(new Set()), [q, show, group]);
+  const rulesOK = useFeature("rules");
   const [editing, setEditing] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ platform: "github", host: "", path: "", mode: "enabled" });
@@ -106,6 +155,27 @@ export default function Repositories() {
       toast(x.path + ": reviews " + (x.effective.enabled ? "on" : "off") + " (" + x.effective.source + ")");
       return x;
     });
+  // bulk sets the reviews mode of the selected repositories, keeping each
+  // one's own settings; each change is audited like a single one.
+  const bulk = async (mode: Mode) => {
+    const rs = (repos || []).filter((r) => selected.has(r.id) && r.mode !== mode);
+    if (!rs.length) {
+      toast("Nothing to change: they are all set to " + mode);
+      return;
+    }
+    if (rs.length > 1 && !(await confirm({ title: `Set ${rs.length} repositories to ${mode === "inherit" ? "Inherit" : mode === "enabled" ? "Enabled" : "Disabled"}?`, description: mode === "inherit" ? "They follow the rules and the default again." : "This overrides every rule for them. A rule for their group is often simpler: it covers new repositories too.", action: "Change " + rs.length }))) return;
+    setBulkBusy(true);
+    const results = await Promise.allSettled(rs.map((r) => put<Repo>("/admin/api/repos/" + r.id, { mode, settings: r.settings || {} })));
+    const ok = results.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
+    const failed = results.filter((x) => x.status === "rejected") as PromiseRejectedResult[];
+    setRepos((cur) => (cur || []).map((y) => ok.find((x) => x.id === y.id) || y));
+    setBulkBusy(false);
+    if (failed.length) toast(`Changed ${ok.length} of ${rs.length}: ${errMsg(failed[0].reason)}`, true);
+    else {
+      toast(`Set ${ok.length} ${ok.length === 1 ? "repository" : "repositories"} to ${mode}`);
+      setSelected(new Set());
+    }
+  };
   const add = () =>
     post<Repo>("/admin/api/repos", { ...form, host: form.host.trim(), path: form.path.trim() })
       .then((r) => {
@@ -126,11 +196,32 @@ export default function Repositories() {
       .catch((e) => toast(errMsg(e), true));
   };
 
+  const keyOf = (r: Repo) => r.host + "|" + groupOf(r.path);
   const list = (repos || []).filter((r) => {
     if (show === "on" && !r.effective.enabled) return false;
     if (show === "off" && r.effective.enabled) return false;
+    if (show === "set" && r.mode === "inherit") return false;
+    if (group && keyOf(r) !== group) return false;
     return !q || (r.host + "/" + r.path).toLowerCase().includes(q.toLowerCase());
   });
+  // Groups with repositories, for the filter.
+  const groups = Array.from(new Set((repos || []).filter((r) => groupOf(r.path)).map(keyOf))).sort();
+  // Groups where several repositories are enabled one by one: a rule for
+  // the group is simpler and covers new repositories too.
+  const byHand = Object.entries(
+    (repos || []).reduce<Record<string, Repo[]>>((acc, r) => {
+      if (r.mode === "enabled" && groupOf(r.path)) (acc[keyOf(r)] ||= []).push(r);
+      return acc;
+    }, {}),
+  ).filter(([, rs]) => rs.length >= 3);
+  const allShown = list.length > 0 && list.every((r) => selected.has(r.id));
+  const toggle = (id: number, on: boolean) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   const on = (repos || []).filter((r) => r.effective.enabled).length;
   const edited = repos?.find((r) => r.id === editing) ?? null;
 
@@ -145,13 +236,56 @@ export default function Repositories() {
           <option value="all">All</option>
           <option value="on">Reviewed</option>
           <option value="off">Not reviewed</option>
+          <option value="set">Set on the repository</option>
         </NativeSelect>
+        {groups.length > 1 && (
+          <NativeSelect className="w-auto max-w-64" aria-label="Group" value={group} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">All groups</option>
+            {groups.map((g) => (
+              <option key={g} value={g}>
+                {g.split("|")[1]} ({g.split("|")[0]})
+              </option>
+            ))}
+          </NativeSelect>
+        )}
         <span className="text-sm text-muted-foreground">{repos && on + " reviewed · " + (repos.length - on) + " not reviewed"}</span>
         <span className="flex-1" />
         <Button variant="outline" onClick={() => setAdding(true)}>
           <Plus /> Add repository
         </Button>
       </Toolbar>
+
+      <Note>
+        <b>Inherit</b> follows the most specific group or pattern rule, and otherwise the default ({me.allowlist ? "not reviewed: the allowlist is on" : "reviewed: the allowlist is off"}).{" "}
+        <b>Enabled</b> or <b>Disabled</b> here overrides every rule. Hover a repository's state to see why.
+      </Note>
+      {canChange && rulesOK &&
+        byHand.map(([k, rs]) => (
+          <Note key={k}>
+            {rs.length} repositories in <code>{k.split("|")[1]}</code> are enabled one by one. A rule for the group covers them and new ones as they appear; then select them here and choose <b>Inherit</b>.{" "}
+            <Link className="font-medium text-primary underline-offset-2 hover:underline" to={ruleLink(rs[0], k.split("|")[1])}>
+              Create a rule for {k.split("|")[1]}
+            </Link>
+          </Note>
+        ))}
+      {canChange && selected.size > 0 && (
+        <div role="region" aria-label="Selected repositories" className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2 pl-4 shadow-sm">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <span className="flex-1" />
+          <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulk("enabled")}>
+            Enable
+          </Button>
+          <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulk("disabled")}>
+            Disable
+          </Button>
+          <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulk("inherit")}>
+            Inherit
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       <Panel>
         {!repos ? (
@@ -162,7 +296,12 @@ export default function Repositories() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-4">Reviews</TableHead>
+                {canChange && (
+                  <TableHead className="w-10 pl-4">
+                    <Checkbox aria-label="Select all shown" checked={allShown} onCheckedChange={(v) => setSelected(v === true ? new Set([...selected, ...list.map((r) => r.id)]) : new Set([...selected].filter((id) => !list.some((r) => r.id === id))))} />
+                  </TableHead>
+                )}
+                <TableHead className={canChange ? "" : "pl-4"}>Reviews</TableHead>
                 <TableHead>Repository</TableHead>
                 <TableHead className="hidden xl:table-cell">Last webhook</TableHead>
                 {hasMetrics && <TableHead>Scores · 30 days</TableHead>}
@@ -176,20 +315,23 @@ export default function Repositories() {
             <TableBody>
               {list.map((r) => {
                 const e = r.effective;
-                const flags = [e.require_reviewer && "reviewer required", e.skip_branch_sync && "skips branch syncs", e.score_labels && "score labels", e.commit_status && "commit status", e.approve && "approves when it passes"].filter(Boolean);
+                const g = groupOf(r.path);
                 return (
-                  <TableRow key={r.id}>
-                    <TableCell className="w-44 pl-4 align-top whitespace-normal">
-                      <NativeSelect aria-label={"Reviews for " + r.path} value={r.mode} onChange={(ev) => save(r, ev.target.value, r.settings || {}).catch((x) => toast(errMsg(x), true))}>
-                        <option value="inherit">Inherit</option>
-                        <option value="enabled">Enabled</option>
-                        <option value="disabled">Disabled</option>
-                      </NativeSelect>
-                      <div className="mt-1.5">
-                        <StateBadge kind={e.enabled ? "on" : "off"}>{e.enabled ? "Reviewed" : "Not reviewed"}</StateBadge>
+                  <TableRow key={r.id} data-state={selected.has(r.id) ? "selected" : undefined}>
+                    {canChange && (
+                      <TableCell className="pl-4 align-top">
+                        <Checkbox className="mt-2" aria-label={"Select " + r.path} checked={selected.has(r.id)} onCheckedChange={(v) => toggle(r.id, v === true)} />
+                      </TableCell>
+                    )}
+                    <TableCell className={cn("align-top whitespace-nowrap", !canChange && "pl-4")}>
+                      <div className="flex items-center gap-2">
+                        <NativeSelect className="h-8 w-28" aria-label={"Reviews for " + r.path} value={r.mode} disabled={!canChange} onChange={(ev) => save(r, ev.target.value, r.settings || {}).catch((x) => toast(errMsg(x), true))}>
+                          <option value="inherit">Inherit</option>
+                          <option value="enabled">Enabled</option>
+                          <option value="disabled">Disabled</option>
+                        </NativeSelect>
+                        <ReviewState e={e} />
                       </div>
-                      <Sub>{whyText(e)}</Sub>
-                      {flags.length > 0 && <Sub>{flags.join(" · ")}</Sub>}
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="font-medium">{r.path}</div>
@@ -211,12 +353,9 @@ export default function Repositories() {
                           const sc = scoreOf(r);
                           if (!sc) return <Sub>No scored review yet</Sub>;
                           return (
-                            <div className="grid gap-1">
+                            <div className="grid gap-1" title={"Latest scored review: #" + sc.number + ", " + ago(sc.at)}>
                               <ScoreChips s={sc.latest} />
                               <Sparkline points={dailyTrend(scores!.since, scores!.days, sc.trend)} label={"Daily average scores of " + r.path + ", last 30 days"} />
-                              <Sub>
-                                latest: #{sc.number} · {ago(sc.at)}
-                              </Sub>
                             </div>
                           );
                         })()}
@@ -227,10 +366,29 @@ export default function Repositories() {
                       {(e.rules || []).length > 0 && JSON.stringify(e.settings) !== JSON.stringify(r.settings || {}) && <Sub>includes rule settings</Sub>}
                     </TableCell>
                     <TableCell className="hidden align-top text-muted-foreground 2xl:table-cell">{r.updated_by ? r.updated_by + " · " + ago(r.updated_at) : "—"}</TableCell>
-                    <TableCell className={cn("pr-4 text-right align-top", stickyEnd)}>
+                    <TableCell className={cn("pr-4 text-right align-top whitespace-nowrap", stickyEnd)}>
                       <Button variant="ghost" size="sm" onClick={() => setEditing(r.id)}>
                         <Settings2 /> Settings
                       </Button>
+                      {g && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="size-8" aria-label={"More for " + r.path}>
+                              <Ellipsis />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onSelect={() => setGroup(keyOf(r))}>Show only {g}</DropdownMenuItem>
+                            {canChange && rulesOK && (
+                              <DropdownMenuItem asChild>
+                                <Link to={ruleLink(r, g)}>
+                                  <FolderPlus /> Create a rule for {g}
+                                </Link>
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
@@ -241,8 +399,7 @@ export default function Repositories() {
       </Panel>
 
       <Note>
-        Repositories appear here automatically when they send their first webhook, set to <b>Inherit</b>: they follow the most specific group or pattern rule, and otherwise the default (
-        {me.allowlist ? "not reviewed, because the allowlist is on" : "reviewed, because the allowlist is off"}). Choosing Enabled or Disabled here overrides every rule. Settings here override the rules' settings and the repository's own <code>.codereview.yaml</code>.
+        Repositories appear here automatically when they send their first webhook, set to <b>Inherit</b>. To onboard a group, add a rule for it under <b>Rules</b> rather than enabling each repository: the rule covers new repositories too. Settings here override the rules' settings and the repository's own <code>.codereview.yaml</code>.
       </Note>
       {me.require_reviewer && (
         <Note>

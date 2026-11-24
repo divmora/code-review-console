@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
@@ -63,6 +64,15 @@ export default function Rules() {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ platform: "gitlab", host: "", pattern: "", enabled: null as boolean | null });
   const reloadRepos = () => get<Repo[]>("/admin/api/repos").then((r) => setRepos(r || []));
+  // /rules?new=1&platform=…&host=…&pattern=… opens Add rule prefilled (the
+  // "Create a rule for this group" shortcut on Repositories), set to enable.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    if (params.get("new") !== "1") return;
+    setForm({ platform: params.get("platform") || "gitlab", host: params.get("host") || "", pattern: params.get("pattern") || "", enabled: true });
+    setAdding(true);
+    setParams({}, { replace: true });
+  }, []);
   useEffect(() => {
     get<Rule[]>("/admin/api/rules").then((r) => setRules(r || [])).catch((e) => toast(errMsg(e), true));
     reloadRepos().catch(() => {});
