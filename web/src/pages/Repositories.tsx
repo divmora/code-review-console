@@ -25,7 +25,8 @@ function dailyTrend(since: string, days: number, trend: ScoreSums[]): ScoreSums[
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { stickyEnd, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 function whyText(e: Access): string {
   if (e.source === "repository") return "set on this repository";
@@ -163,11 +164,13 @@ export default function Repositories() {
               <TableRow>
                 <TableHead className="pl-4">Reviews</TableHead>
                 <TableHead>Repository</TableHead>
-                <TableHead>Last webhook</TableHead>
+                <TableHead className="hidden xl:table-cell">Last webhook</TableHead>
                 {hasMetrics && <TableHead>Scores · 30 days</TableHead>}
-                <TableHead>Effective settings</TableHead>
-                <TableHead>Last changed</TableHead>
-                <TableHead />
+                <TableHead className="hidden lg:table-cell">Effective settings</TableHead>
+                <TableHead className="hidden 2xl:table-cell">Last changed</TableHead>
+                <TableHead className={stickyEnd}>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -192,9 +195,16 @@ export default function Repositories() {
                       <div className="font-medium">{r.path}</div>
                       <Sub>
                         {r.platform} · {r.host}
+                        <span className="xl:hidden"> · last webhook {ago(r.last_seen)}</span>
                       </Sub>
+                      {/* Below lg the settings column is hidden; its chips move here. */}
+                      {settingsChips(e.settings).length > 0 && (
+                        <div className="mt-1.5 lg:hidden">
+                          <Chips items={settingsChips(e.settings)} />
+                        </div>
+                      )}
                     </TableCell>
-                    <TableCell className="align-top text-muted-foreground">{ago(r.last_seen)}</TableCell>
+                    <TableCell className="hidden align-top text-muted-foreground xl:table-cell">{ago(r.last_seen)}</TableCell>
                     {hasMetrics && (
                       <TableCell className="align-top">
                         {(() => {
@@ -212,12 +222,12 @@ export default function Repositories() {
                         })()}
                       </TableCell>
                     )}
-                    <TableCell className="align-top whitespace-normal">
+                    <TableCell className="hidden align-top whitespace-normal lg:table-cell">
                       <Chips items={settingsChips(e.settings)} />
                       {(e.rules || []).length > 0 && JSON.stringify(e.settings) !== JSON.stringify(r.settings || {}) && <Sub>includes rule settings</Sub>}
                     </TableCell>
-                    <TableCell className="align-top text-muted-foreground">{r.updated_by ? r.updated_by + " · " + ago(r.updated_at) : "—"}</TableCell>
-                    <TableCell className="pr-4 text-right align-top">
+                    <TableCell className="hidden align-top text-muted-foreground 2xl:table-cell">{r.updated_by ? r.updated_by + " · " + ago(r.updated_at) : "—"}</TableCell>
+                    <TableCell className={cn("pr-4 text-right align-top", stickyEnd)}>
                       <Button variant="ghost" size="sm" onClick={() => setEditing(r.id)}>
                         <Settings2 /> Settings
                       </Button>

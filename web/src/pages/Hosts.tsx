@@ -9,8 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { stickyEnd, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 type Host = {
   id: number; platform: "github" | "gitlab" | "bitbucket"; host: string; base_url: string; name: string; enabled: boolean;
@@ -405,7 +406,9 @@ export default function Hosts() {
                 <TableHead>Credentials</TableHead>
                 <TableHead>Webhooks</TableHead>
                 <TableHead>Check</TableHead>
-                <TableHead />
+                <TableHead className={stickyEnd}>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -466,8 +469,8 @@ export default function Hosts() {
                     <TableCell className="w-56 max-w-56 align-top whitespace-normal">
                       <CheckResult t={t} />
                     </TableCell>
-                    <TableCell className="pr-4 text-right align-top">
-                      <div className="flex justify-end gap-1">
+                    <TableCell className={cn("pr-4 text-right align-top", stickyEnd)}>
+                      <div className="flex flex-col items-end gap-1 xl:flex-row xl:justify-end">
                         <Button variant="ghost" size="sm" onClick={() => test(h)}>
                           <Plug /> Test
                         </Button>

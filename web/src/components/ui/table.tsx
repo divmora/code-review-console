@@ -3,20 +3,54 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
+// Table scrolls sideways when it doesn't fit, and says so: a fade on the
+// edge that has more columns (issue #130). Pin a row's actions with
+// stickyEnd so they stay reachable while the rest scrolls.
 function Table({ className, ...props }: React.ComponentProps<"table">) {
+  const ref = React.useRef<HTMLDivElement>(null)
+  const [more, setMore] = React.useState({ start: false, end: false })
+  React.useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth
+      const next = { start: el.scrollLeft > 1, end: el.scrollLeft < max - 1 }
+      setMore((m) => (m.start === next.start && m.end === next.end ? m : next))
+    }
+    update()
+    el.addEventListener("scroll", update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    return () => {
+      el.removeEventListener("scroll", update)
+      ro.disconnect()
+    }
+  }, [])
   return (
-    <div
-      data-slot="table-container"
-      className="relative w-full overflow-x-auto"
-    >
-      <table
-        data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
-        {...props}
-      />
+    <div className="relative">
+      <div
+        ref={ref}
+        data-slot="table-container"
+        data-more-start={more.start || undefined}
+        data-more-end={more.end || undefined}
+        className="relative w-full overflow-x-auto"
+      >
+        <table
+          data-slot="table"
+          className={cn("w-full caption-bottom text-sm", className)}
+          {...props}
+        />
+      </div>
+      <div aria-hidden className={cn("pointer-events-none absolute inset-y-0 left-0 w-6 bg-linear-to-r from-foreground/10 to-transparent transition-opacity", more.start ? "opacity-100" : "opacity-0")} />
+      <div aria-hidden className={cn("pointer-events-none absolute inset-y-0 right-0 w-6 bg-linear-to-l from-foreground/10 to-transparent transition-opacity", more.end ? "opacity-100" : "opacity-0")} />
     </div>
   )
 }
+
+// stickyEnd keeps a row's last cell (its actions) in view while a wide
+// table scrolls.
+const stickyEnd = "sticky right-0 z-[1] bg-card shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.15)]"
 
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
@@ -104,6 +138,7 @@ function TableCaption({
 }
 
 export {
+  stickyEnd,
   Table,
   TableHeader,
   TableBody,
