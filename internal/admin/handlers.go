@@ -622,7 +622,8 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 // outcome for the last 24 hours.
 func (a *Admin) apiWebhooks(w http.ResponseWriter, r *http.Request, s *store.Session) {
 	q := r.URL.Query()
-	f := store.WebhookFilter{Platform: q.Get("platform"), Project: strings.TrimSpace(q.Get("project")), Outcome: q.Get("outcome"), Limit: 100}
+	f := store.WebhookFilter{Platform: q.Get("platform"), Project: strings.TrimSpace(q.Get("project")), Outcome: q.Get("outcome"),
+		Endpoint: strings.TrimSpace(q.Get("endpoint")), Limit: 100}
 	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 && n <= 500 {
 		f.Limit = n
 	}
@@ -786,8 +787,15 @@ type hostView struct {
 	// TokenExpiry is what the code host says about the token's expiry
 	// (nil until it has been checked).
 	TokenExpiry *hosts.TokenExpiry `json:"token_expiry,omitempty"`
-	// Check is the last Test result (nil until Test runs).
+	// Check is the latest check of the credentials: the identity lookup at
+	// start (and after host changes), or the Test button.
 	Check *hosts.Check `json:"check,omitempty"`
+	// Mention is the handle @bot commands use on this host ("" while the
+	// token user is unknown and no bot name is set); MentionSource says
+	// where it comes from: "host" (bot name), "settings" (Tuning) or
+	// "token" (the token user).
+	Mention       string `json:"mention,omitempty"`
+	MentionSource string `json:"mention_source,omitempty"`
 }
 
 var hookEvents = map[string][]string{
@@ -796,15 +804,25 @@ var hookEvents = map[string][]string{
 	hosts.Bitbucket: {"Pull request: Created", "Updated", "Merged", "Declined", "Comment created"},
 }
 
-func (a *Admin) viewHost(h hosts.Host, stats map[string]store.HostHookStats) hostView {
+// hostStats is what the delivery history says about hosts and webhooks.
+type hostStats struct {
+	hosts     map[string]store.HostHookStats    // by "platform:host"
+	endpoints map[string]store.EndpointHookStats // by webhook ID
+}
+
+func (a *Admin) viewHost(ctx context.Context, h hosts.Host, stats hostStats) hostView {
 	v := hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
 		Settings: h.Settings, Secrets: h.SecretStatus(), Webhooks: []webhookView{},
 		Events: hookEvents[h.Platform], Licensed: !h.Enabled || a.Hosts.Active(h)}
 	for _, e := range a.Hosts.Endpoints(h.ID) {
-		v.Webhooks = append(v.Webhooks, a.viewWebhook(h.Platform, e))
+		wv := a.viewWebhook(h.Platform, e)
+		if st, ok := stats.endpoints[e.ID]; ok {
+			wv.Deliveries = &st
+		}
+		v.Webhooks = append(v.Webhooks, wv)
 	}
 	if h.Enabled {
-		v.CommentWarning = commentWarning(h, stats[h.Platform+":"+h.Host])
+		v.CommentWarning = commentWarning(h, stats.hosts[h.Platform+":"+h.Host])
 	}
 	if e, ok := a.Hosts.TokenExpiryOf(h.ID); ok {
 		v.TokenExpiry = &e
@@ -812,20 +830,37 @@ func (a *Admin) viewHost(h hosts.Host, stats map[string]store.HostHookStats) hos
 	if c, ok := a.Hosts.CheckOf(h.ID); ok {
 		v.Check = &c
 	}
+	switch {
+	case h.BotName != "":
+		v.Mention, v.MentionSource = h.BotName, "host"
+	case a.tuning().Get(ctx).BotName != "":
+		v.Mention, v.MentionSource = a.tuning().Get(ctx).BotName, "settings"
+	case v.Check != nil && v.Check.User != "":
+		v.Mention, v.MentionSource = v.Check.User, "token"
+	}
 	return v
 }
 
-// hookStats returns verified-delivery stats by "platform:host" (empty on
-// error: the warnings are a hint, not a reason to fail the page).
-func (a *Admin) hookStats(ctx context.Context) map[string]store.HostHookStats {
-	out := map[string]store.HostHookStats{}
+// hookStats returns delivery stats by host and by webhook, the counts for
+// the last 24 hours (empty on error: they are a hint, not a reason to fail
+// the page).
+func (a *Admin) hookStats(ctx context.Context) hostStats {
+	out := hostStats{hosts: map[string]store.HostHookStats{}, endpoints: map[string]store.EndpointHookStats{}}
 	list, err := a.store.HookStats(ctx)
 	if err != nil {
 		a.logger.Warn("webhook stats unavailable", "error", err)
 		return out
 	}
 	for _, s := range list {
-		out[s.Platform+":"+s.Host] = s
+		out.hosts[s.Platform+":"+s.Host] = s
+	}
+	eps, err := a.store.EndpointHookStats(ctx, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		a.logger.Warn("webhook stats unavailable", "error", err)
+		return out
+	}
+	for _, s := range eps {
+		out.endpoints[s.Endpoint] = s
 	}
 	return out
 }
@@ -872,6 +907,9 @@ type webhookView struct {
 	// "signature or secret token", "secret token").
 	AcceptSecretToken bool   `json:"accept_secret_token"`
 	Accepts           string `json:"accepts"`
+	// Deliveries: the latest delivery on this URL and the last 24 hours'
+	// counts (nil when none is in the history).
+	Deliveries *store.EndpointHookStats `json:"deliveries,omitempty"`
 }
 
 func (a *Admin) viewWebhook(platform string, e hosts.Endpoint) webhookView {
@@ -1004,7 +1042,7 @@ func (a *Admin) apiListHosts(w http.ResponseWriter, r *http.Request, s *store.Se
 	out := []hostView{}
 	stats := a.hookStats(r.Context())
 	for _, h := range a.Hosts.All() {
-		out = append(out, a.viewHost(h, stats))
+		out = append(out, a.viewHost(r.Context(), h, stats))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"mode": a.Hosts.Mode(), "hosts": out, "key_env": secrets.EnvKey})
 }
@@ -1057,7 +1095,7 @@ func (a *Admin) saveHost(w http.ResponseWriter, r *http.Request, s *store.Sessio
 		a.Hosts.CheckTokenExpiry(ctx, saved)
 		cancel()
 	}
-	writeJSON(w, status, a.viewHost(saved, a.hookStats(r.Context())))
+	writeJSON(w, status, a.viewHost(r.Context(), saved, a.hookStats(r.Context())))
 }
 
 func (a *Admin) apiCreateHost(w http.ResponseWriter, r *http.Request, s *store.Session) {
@@ -1156,7 +1194,7 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 	switch h.Platform {
 	case hosts.GitHub:
 		if h.Token == "" {
-			c := hosts.Check{OK: h.AppID != 0, Summary: "GitHub App", Message: "GitHub App: credentials are checked when a webhook arrives (an App has no user)", At: time.Now()}
+			c := hosts.Check{OK: h.AppID != 0, Summary: "GitHub App", Message: "GitHub App: credentials are checked when a webhook arrives (an App has no user)", At: time.Now(), Source: "test"}
 			a.Hosts.RecordCheck(h.ID, c)
 			writeJSON(w, http.StatusOK, c)
 			return
@@ -1173,7 +1211,7 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 		if h.Platform == hosts.Bitbucket && h.Token != "" {
 			msg += " (access tokens have no user: set the reviewer name for this host)"
 		}
-		res := hosts.Check{OK: false, Summary: hosts.Summarize(err), Message: msg, At: time.Now()}
+		res := hosts.Check{OK: false, Summary: hosts.Summarize(err), Message: msg, At: time.Now(), Source: "test"}
 		a.Hosts.RecordCheck(h.ID, res)
 		writeJSON(w, http.StatusOK, res)
 		return
@@ -1189,7 +1227,7 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 			msg += " (" + strconv.Itoa(d) + " days left: replace it soon)"
 		}
 	}
-	res := hosts.Check{OK: true, Summary: "OK as @" + user, Message: msg, At: time.Now()}
+	res := hosts.Check{OK: true, Summary: "OK as @" + user, Message: msg, At: time.Now(), User: user, Source: "test"}
 	a.Hosts.RecordCheck(h.ID, res)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "summary": res.Summary, "message": msg, "at": res.At, "token_expiry": e})
 }

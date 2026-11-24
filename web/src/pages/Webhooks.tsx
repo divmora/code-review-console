@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryState } from "../urlstate";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search, X } from "lucide-react";
 import { get, qs } from "../api";
 import { ago, fmtDateTime, utcTitle } from "../format";
 import { Empty, errMsg, NativeSelect, Note, Panel, StateBadge, Sub, Toolbar, useToast } from "../ui";
@@ -20,7 +20,9 @@ export default function Webhooks() {
   const [hooks, setHooks] = useState<Hook[] | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [more, setMore] = useState(false);
-  const [q, setQ] = useQueryState({ project: "", outcome: "" });
+  // endpoint: one webhook's deliveries (the link from Code hosts).
+  const [q, setQ] = useQueryState({ project: "", outcome: "", endpoint: "" });
+  const endpoint = q.endpoint;
   const [project, setProject] = useState(q.project);
   const outcome = q.outcome;
   const setOutcome = (v: string) => setQ({ outcome: v });
@@ -33,7 +35,7 @@ export default function Webhooks() {
   }, []);
   const load = (older?: boolean) => {
     const before = older && hooks?.length ? hooks[hooks.length - 1].id : undefined;
-    get<{ events: Hook[]; counts_24h: Record<string, number> }>("/admin/api/webhooks" + qs({ limit: 100, project: project.trim(), outcome, before }))
+    get<{ events: Hook[]; counts_24h: Record<string, number> }>("/admin/api/webhooks" + qs({ limit: 100, project: project.trim(), outcome, endpoint, before }))
       .then((d) => {
         setHooks((h) => (older ? (h || []).concat(d.events) : d.events));
         setCounts(d.counts_24h || {});
@@ -44,7 +46,7 @@ export default function Webhooks() {
   useEffect(() => {
     const t = window.setTimeout(() => (load(), setQ({ project: project.trim() })), project ? 250 : 0);
     return () => window.clearTimeout(t);
-  }, [project, outcome]);
+  }, [project, outcome, endpoint]);
   useEffect(() => {
     if (q.project !== project.trim()) setProject(q.project); // the URL changed (a link, Back)
   }, [q.project]);
@@ -63,7 +65,12 @@ export default function Webhooks() {
             </option>
           ))}
         </NativeSelect>
-        <span className="text-sm text-muted-foreground">Last 24 h: {outcomes.map((k) => (counts[k] || 0) + " " + k).join(" · ")}</span>
+        {endpoint && (
+          <Button variant="outline" size="sm" onClick={() => setQ({ endpoint: "" })} aria-label="Show all webhooks">
+            Webhook: {hookNames[endpoint] || "unknown"} <X />
+          </Button>
+        )}
+        <span className="text-sm text-muted-foreground">Last 24 h, all webhooks: {outcomes.map((k) => (counts[k] || 0) + " " + k).join(" · ")}</span>
         <span className="flex-1" />
         <Button variant="outline" onClick={() => load()}>
           <RefreshCw /> Refresh

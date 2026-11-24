@@ -428,10 +428,43 @@ func (m *Memory) ListWebhookEvents(_ context.Context, f store.WebhookFilter) ([]
 		e := m.hooks[i]
 		if (f.Platform != "" && e.Platform != f.Platform) || (f.Outcome != "" && e.Outcome != f.Outcome) ||
 			(f.Project != "" && !strings.Contains(strings.ToLower(e.Project), strings.ToLower(f.Project))) ||
-			(f.BeforeID > 0 && e.ID >= f.BeforeID) {
+			(f.BeforeID > 0 && e.ID >= f.BeforeID) || (f.Endpoint != "" && e.Endpoint != f.Endpoint) {
 			continue
 		}
 		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (m *Memory) EndpointHookStats(_ context.Context, since time.Time) ([]store.EndpointHookStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	by := map[string]*store.EndpointHookStats{}
+	var order []string
+	for i := len(m.hooks) - 1; i >= 0; i-- {
+		e := m.hooks[i]
+		if e.Endpoint == "" {
+			continue
+		}
+		st := by[e.Endpoint]
+		if st == nil {
+			last := e
+			st = &store.EndpointHookStats{Endpoint: e.Endpoint, Last: &last}
+			by[e.Endpoint] = st
+			order = append(order, e.Endpoint)
+		}
+		if e.ReceivedAt.Before(since) {
+			continue
+		}
+		if e.Outcome == store.HookRejected || e.Outcome == store.HookError {
+			st.Rejected++
+		} else {
+			st.Accepted++
+		}
+	}
+	out := []store.EndpointHookStats{}
+	for _, id := range order {
+		out = append(out, *by[id])
 	}
 	return out, nil
 }

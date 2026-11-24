@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { fmtDate } from "../format";
+import { Link } from "react-router-dom";
+import { ago, fmtDate } from "../format";
 import type { TokenExpiry } from "../types";
 import { fmtDateTime } from "../format";
-import { Check, Copy, Plug, Plus, Webhook } from "lucide-react";
-import { del, get, post, put } from "../api";
+import { Check, Copy, Plug, Plus, Radio, Webhook } from "lucide-react";
+import { del, get, post, put, qs } from "../api";
 import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,13 +19,117 @@ type Host = {
   settings: { app_id?: number; email?: string; require_signature?: boolean; skip_tls_verify?: boolean; bot_name?: string; reviewer?: string };
   secrets: { token: boolean; app_private_key: boolean; api_token: boolean };
   webhooks: Hook[]; events: string[]; licensed: boolean; comment_warning?: string; token_expiry?: TokenExpiry; check?: HostCheck;
+  // The handle @bot commands use, and where it comes from (host bot name,
+  // Tuning, or the token user found by the last check).
+  mention?: string; mention_source?: "host" | "settings" | "token";
 };
+
+// Delivery is one entry of the webhook history (the Webhooks page).
+type Delivery = { id: number; received_at: string; outcome: string; reason: string; auth: string; event: string; kind: string; action: string; project: string };
 
 type Hook = {
   id: string; host_id: number; name: string; enabled: boolean; url: string;
   secrets: { webhook_secret: boolean; signing_tokens: number }; created_at: string; created_by: string;
   accept_secret_token?: boolean; accepts?: string;
+  // The latest delivery on this URL and the last 24 hours' counts.
+  deliveries?: { last?: Delivery; accepted: number; rejected: number };
 };
+
+const rejectedOutcome = (o: string) => o === "rejected" || o === "error";
+
+// deliveryText says what happened to a delivery in a few words.
+function deliveryText(d: Delivery) {
+  if (rejectedOutcome(d.outcome)) return (d.outcome === "error" ? "failed" : "rejected") + (d.reason ? ": " + d.reason : "");
+  const via = d.auth === "token-unsigned" ? "secret token, not signed" : d.auth === "token" ? "secret token" : d.auth;
+  return "accepted" + (via ? " (" + via + ")" : "") + (d.outcome !== "queued" ? ", " + d.outcome : ", review queued");
+}
+
+// HookHealth is a webhook's latest delivery and its last 24 hours, with a
+// link to its deliveries on the Webhooks page.
+function HookHealth({ hook }: { hook: Hook }) {
+  const d = hook.deliveries;
+  const link = (
+    <Link className="text-primary underline-offset-2 hover:underline" to={"/webhooks" + qs({ endpoint: hook.id })}>
+      Show deliveries
+    </Link>
+  );
+  if (!d?.last)
+    return (
+      <div className="text-sm text-muted-foreground">
+        No deliveries yet. Set the URL and secret on the code host, then use <b>Check a test delivery</b>.
+      </div>
+    );
+  const bad = rejectedOutcome(d.last.outcome);
+  return (
+    <div className="grid gap-0.5 text-sm">
+      <div>
+        Last delivery <span title={fmtDateTime(d.last.received_at)}>{ago(d.last.received_at)}</span>:{" "}
+        <span className={bad ? "text-destructive" : "text-success"}>{deliveryText(d.last)}</span>
+      </div>
+      <div className="text-muted-foreground">
+        Last 24 h: {d.accepted} accepted{d.rejected ? ", " : ""}
+        {d.rejected > 0 && <span className="text-destructive">{d.rejected} rejected or failed</span>} · {link}
+      </div>
+    </div>
+  );
+}
+
+const testSteps: Record<Host["platform"], string> = {
+  gitlab: "In GitLab, open Settings → Webhooks on the group or project (Admin area → System hooks for a system hook), find this URL and choose Test → Merge request events or Comments.",
+  github: "On GitHub, open the webhook (repository or organization Settings → Webhooks), then Recent Deliveries → Redeliver on any delivery. A new webhook sends a ping when it's created.",
+  bitbucket: "Bitbucket has no test button: open, update or comment on a pull request in a repository this webhook covers.",
+};
+
+// TestDelivery waits for the next delivery on a webhook after the admin
+// triggers one on the code host, and says whether it arrived and why it
+// was refused. It compares delivery IDs, not clocks.
+function TestDelivery({ hook, platform, onClose }: { hook: Hook; platform: Host["platform"]; onClose: () => void }) {
+  const [base, setBase] = useState<number | null>(null);
+  const [got, setGot] = useState<Delivery | null>(null);
+  const [waited, setWaited] = useState(0);
+  const latest = () => get<{ events: Delivery[] }>("/admin/api/webhooks" + qs({ endpoint: hook.id, limit: 1 })).then((d) => d.events[0]);
+  useEffect(() => {
+    latest().then((e) => setBase(e ? e.id : 0)).catch(() => setBase(0));
+  }, [hook.id]);
+  useEffect(() => {
+    if (base === null || got || waited >= 60) return;
+    const t = window.setTimeout(() => {
+      latest()
+        .then((e) => e && e.id > base && setGot(e))
+        .catch(() => {})
+        .finally(() => setWaited((n) => n + 1));
+    }, 3000);
+    return () => window.clearTimeout(t);
+  }, [base, got, waited]);
+  const bad = got && rejectedOutcome(got.outcome);
+  return (
+    <div role="status" className="grid gap-2 rounded-lg border bg-muted/40 p-3 text-sm">
+      <div className="font-medium">Check a test delivery</div>
+      <div className="text-muted-foreground">{testSteps[platform]}</div>
+      {!got ? (
+        <div className="text-muted-foreground">
+          {base === null ? "Starting…" : waited >= 60 ? "Nothing arrived in 3 minutes. Check that the code host can reach the URL and that the webhook is enabled there." : "Waiting for the next delivery on this URL…"}
+        </div>
+      ) : (
+        <div className={bad ? "text-destructive" : "text-success"}>
+          {bad ? "Arrived, but " : "Arrived and "}
+          {deliveryText(got)}
+          {bad && got.auth === "failed" && ". Paste this webhook's secret into the code host again, or use New secret."}
+        </div>
+      )}
+      <div className="flex gap-2">
+        {(got || waited >= 60) && (
+          <Button size="sm" variant="outline" onClick={() => (setGot(null), setWaited(0), latest().then((e) => setBase(e ? e.id : 0)).catch(() => {}))}>
+            Wait for another
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 const names = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
 const defaults = { github: "https://api.github.com", gitlab: "https://gitlab.com", bitbucket: "https://api.bitbucket.org/2.0" };
@@ -86,6 +191,8 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
   const [secret, setSecret] = useState("");
   const [name, setName] = useState(hook.name);
   const [signing, setSigning] = useState("");
+  const [testing, setTesting] = useState(false);
+  const host = platform === "gitlab" ? "GitLab" : platform === "github" ? "GitHub" : "Bitbucket";
   const update = (body: any, msg: string) =>
     put<{ webhook: Hook; secret?: string }>("/admin/api/webhooks/" + hook.id, body)
       .then((r) => {
@@ -95,11 +202,11 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
       })
       .catch((e) => toast(errMsg(e), true));
   const regenerate = async () => {
-    if (!(await confirm({ title: "Replace the secret of " + hook.name + "?", description: "Deliveries signed with the old secret are rejected until you paste the new one into the code host.", action: "Replace secret", danger: true }))) return;
+    if (!(await confirm({ title: "Replace the secret of " + hook.name + "?", description: `The ${host} webhook stops working at once: every delivery is rejected until you paste the new secret into it. Reviews and @bot commands from it stop until then. The new secret is shown once.`, action: "Replace secret", danger: true }))) return;
     update({ regenerate_secret: true }, "New secret for " + hook.name);
   };
   const remove = async () => {
-    if (!(await confirm({ title: "Delete " + hook.name + "?", description: "Its URL stops working at once. Remove the webhook from the code host too.", action: "Delete webhook", danger: true }))) return;
+    if (!(await confirm({ title: "Delete " + hook.name + "?", description: `Its URL stops working at once: the ${host} webhook's deliveries are rejected, so its merge requests are no longer reviewed. Remove the webhook from ${host} too. This can't be undone; a new webhook gets a new URL.`, action: "Delete webhook", danger: true }))) return;
     del("/admin/api/webhooks/" + hook.id)
       .then(() => {
         toast("Deleted " + hook.name);
@@ -117,17 +224,31 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
             accepts: {hook.accepts}
           </Badge>
         )}
-        <span className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={() => update({ enabled: !hook.enabled }, hook.enabled ? "Disabled " + hook.name : "Enabled " + hook.name)}>
+        <Button variant="outline" size="sm" className="h-7" onClick={() => update({ enabled: !hook.enabled }, hook.enabled ? "Disabled " + hook.name : "Enabled " + hook.name)}>
           {hook.enabled ? "Disable" : "Enable"}
         </Button>
-        <Button variant="ghost" size="sm" onClick={regenerate}>
-          New secret
-        </Button>
-        <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={remove}>
-          Delete
-        </Button>
+        <span className="flex-1" />
+        {/* Replacing the secret and deleting break the hook on the code host: kept apart from Disable, and confirmed. */}
+        <div className="flex items-center gap-1 border-l pl-2">
+          <Button variant="ghost" size="sm" className="text-warning hover:text-warning" onClick={regenerate}>
+            New secret
+          </Button>
+          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={remove}>
+            Delete
+          </Button>
+        </div>
       </div>
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <HookHealth hook={hook} />
+        </div>
+        {!testing && (
+          <Button variant="outline" size="sm" onClick={() => setTesting(true)}>
+            <Radio /> Check a test delivery
+          </Button>
+        )}
+      </div>
+      {testing && <TestDelivery hook={hook} platform={platform} onClose={() => (setTesting(false), onChanged())} />}
       <div className="flex flex-wrap items-center gap-2">
         <code className="hosturl min-w-0 flex-1 break-all">{hook.url}</code>
         <CopyButton text={hook.url} label="Copy URL" />
@@ -440,8 +561,8 @@ export default function Hosts() {
                           </Badge>
                         ))}
                       </div>
-                      <Sub>
-                        mention: {h.settings.bot_name ? "@" + h.settings.bot_name : "token user"}
+                      <Sub title={h.mention_source === "token" ? "The token user, found by the last check" : h.mention_source === "settings" ? "The bot name in Settings" : h.mention_source === "host" ? "This host's bot name" : undefined}>
+                        mention: {h.mention ? "@" + h.mention : "unknown until the token is checked"}
                         {h.settings.reviewer ? " · reviewer: " + h.settings.reviewer : ""}
                       </Sub>
                     </TableCell>
@@ -533,21 +654,27 @@ function TokenExpiryNote({ e }: { e?: TokenExpiry }) {
   return <Sub>Token expires {date}</Sub>;
 }
 
-type HostCheck = { ok: boolean; summary?: string; message?: string; at?: string };
+type HostCheck = { ok: boolean; summary?: string; message?: string; at?: string; user?: string; source?: "test" | "startup" };
 
-// CheckResult is the last Test of a host: a short status that wraps inside
-// its column, with the full result one click away (and on hover). "Not
-// tested" until Test runs, so a stored token is never mistaken for a
-// working one.
+// CheckResult is the latest check of a host's credentials (the identity
+// lookup at start and after host changes, or Test): a short status that
+// wraps inside its column, with the full result one click away (and on
+// hover). "Not checked yet" until one runs, so a stored token is never
+// mistaken for a working one.
 function CheckResult({ t }: { t?: HostCheck & { pending?: boolean } }) {
   const [open, setOpen] = useState(false);
-  if (!t) return <Sub>Not tested</Sub>;
+  if (!t) return <Sub>Not checked yet</Sub>;
   if (t.pending) return <span className="text-sm text-muted-foreground">testing…</span>;
   const summary = t.summary || (t.ok ? "OK" : "Check failed");
   return (
     <div className="grid min-w-0 gap-1" title={t.message}>
       <div><StateBadge kind={t.ok ? "on" : "off"}>{summary}</StateBadge></div>
-      {t.at && <Sub>{fmtDateTime(t.at)}</Sub>}
+      {t.at && (
+        <Sub title={fmtDateTime(t.at)}>
+          checked {ago(t.at)}
+          {t.source === "startup" ? " (at start)" : t.source === "test" ? " (Test)" : ""}
+        </Sub>
+      )}
       {t.message && t.message !== summary && (
         <>
           <button type="button" className="w-fit text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => setOpen(!open)}>
