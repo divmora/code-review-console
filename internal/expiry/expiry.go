@@ -44,6 +44,13 @@ func DaysLeft(t, now time.Time) int {
 	return int(math.Floor(d))
 }
 
+// TokenTime is when a token stops working, in UTC with the time, so the
+// cut-off is unambiguous ("22 Dec 2026, 00:00 UTC" for a GitLab token
+// dated 22 Dec: it stops at the start of that day).
+func TokenTime(t time.Time) string {
+	return t.UTC().Format("2 Jan 2006, 15:04 UTC")
+}
+
 // License returns a warning for a license that expires within Soon (a
 // license in its grace period or expired already has its own banner).
 func License(st license.Status, now time.Time) (Warning, bool) {
@@ -70,11 +77,11 @@ func Host(h hosts.Host, e hosts.TokenExpiry, now time.Time) (Warning, bool) {
 	w := Warning{Kind: "host", HostID: h.ID, Name: name, Expires: e.Expires, Days: days, Severity: Warn}
 	if !now.Before(e.Expires) {
 		w.Severity = Bad
-		w.Message = fmt.Sprintf("The token of %s expired on %s: reviews and replies on it fail until it is replaced.", name, e.Expires.UTC().Format("2 Jan 2006"))
+		w.Message = fmt.Sprintf("The token of %s expired on %s: reviews and replies on it fail until it is replaced.", name, TokenTime(e.Expires))
 		return w, true
 	}
 	w.Message = fmt.Sprintf("The token of %s expires on %s (%s): reviews and replies on it stop then. Create a new token and paste it into the host.",
-		name, e.Expires.UTC().Format("2 Jan 2006"), inDays(days))
+		name, TokenTime(e.Expires), inDays(days))
 	return w, true
 }
 

@@ -34,7 +34,7 @@ func TestLookupTokenExpiry(t *testing.T) {
 	gl := func(tok string) TokenExpiry {
 		return LookupTokenExpiry(ctx, Host{Platform: GitLab, BaseURL: srv.URL, Secrets: Secrets{Token: tok}})
 	}
-	if e := gl("dated"); !e.Known || !e.Expires.Equal(time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)) || e.Error != "" {
+	if e := gl("dated"); !e.Known || !e.Expires.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)) || e.Error != "" {
 		t.Errorf("GitLab date: works through that day: %+v", e)
 	}
 	if e := gl("forever"); !e.Known || !e.Expires.IsZero() {

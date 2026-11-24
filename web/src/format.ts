@@ -47,6 +47,14 @@ export function fmtDayUTC(t: string): string {
   return isNaN(d.getTime()) ? "" : dayUTCFmt.format(d);
 }
 
+// fmtTokenTime is when a token stops working, in UTC with the time:
+// "22 Dec 2026, 00:00 UTC".
+const tokenTimeFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" });
+export function fmtTokenTime(t: string): string {
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? "" : tokenTimeFmt.format(d) + " UTC";
+}
+
 // fmtMonthUTC is "Nov 2026" (UTC).
 export function fmtMonthUTC(t: string): string {
   const d = new Date(t);

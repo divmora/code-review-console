@@ -90,12 +90,13 @@ func gitlabExpiry(ctx context.Context, h Host) (time.Time, bool, error) {
 	if body.ExpiresAt == nil || *body.ExpiresAt == "" {
 		return time.Time{}, true, nil // never expires
 	}
-	// A date: the token works through that day (UTC).
+	// A date: GitLab stops accepting the token at 00:00 UTC on it (issue
+	// #132), not at the end of that day.
 	d, err := time.Parse("2006-01-02", *body.ExpiresAt)
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("token expiry: %q: %w", *body.ExpiresAt, err)
 	}
-	return d.Add(24 * time.Hour), true, nil
+	return d, true, nil
 }
 
 func githubExpiry(ctx context.Context, h Host) (time.Time, error) {
