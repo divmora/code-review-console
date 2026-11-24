@@ -38,6 +38,18 @@ Only pushes trigger reviews (`update` events with new commits). Title, label and
 
 In the console, **Code hosts** → **Add host** → GitLab: the instance URL (`https://gitlab.example.com`) and the token from step 1. **Test** checks the token. Add one host per instance; each has its own token, webhooks and, optionally, its own bot name (the mention handle, `@codereview review`) and reviewer username.
 
+## 4. One token per group (optional, licensed)
+
+A single bot token with access to every group means a leaked token exposes them all. Instead, give each group its own **group access token** and add it under **Code hosts** → **Group tokens** on the host:
+
+1. In GitLab, on the group: **Settings → Access tokens → Add new token**, role **Developer**, scope **api**, and an expiry date. GitLab creates a bot user for it (for example `group_42_bot_7f3a`).
+2. In the console, **Group tokens** → add a credential: the group path (`acme/platform`, subgroups included, or a pattern such as `acme/svc-*`), the token, and a mention name. The mention name matters: people type `@review-bot review` more easily than `@group_42_bot_7f3a review`. Leave it empty to use the host's bot name.
+3. Click **Test**. The console reads the token's user and its expiry (warned about two weeks ahead, like the host token).
+
+For each repository the most specific enabled credential is used: for its reviews, comments, approvals, reactions and `@bot` commands, the same way Rules resolve. **Repositories** shows the credential a repository uses. The host's own token covers repositories no credential covers, and it is optional: remove it (edit the host) to review only the groups that have a credential; other repositories' reviews then fail with a message naming the group. Comments from any of the host's bot users count as the bot's, so they never answer each other.
+
+Credentials are part of the licensed console (feature `hosts`). Webhooks are unchanged: a group webhook (or a system hook) delivers events, and the console picks the token by the repository.
+
 ## CI instead of a server
 
 The free [code-review-bot](https://github.com/divmora/code-review-bot) CLI can run in GitLab CI instead: see its `examples/gitlab-ci.yml`. `CI_JOB_TOKEN` cannot write MR notes, so provide `GITLAB_TOKEN` as a masked CI/CD variable.

@@ -82,6 +82,9 @@ export type Repo = {
   updated_at: string;
   updated_by: string;
   effective: Access;
+  // The host credential the repository uses (issue #136); absent: the
+  // host's own token.
+  credential?: { id: number; name: string; pattern: string };
 };
 
 export type Rule = {
