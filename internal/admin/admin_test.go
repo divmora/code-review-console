@@ -1087,7 +1087,7 @@ func TestTokenExpiryWarnings(t *testing.T) {
 	var hv struct{ ID int64 }
 	_ = json.Unmarshal(body, &hv)
 	_, body = e.do(t, "GET", "/admin/api/me", "", nil)
-	if !bytes.Contains(body, []byte(`{"kind":"host","host_id":`)) || !bytes.Contains(body, []byte(`Our GitLab expires on`)) || !bytes.Contains(body, []byte(`"days":6`)) {
+	if !bytes.Contains(body, []byte(`{"kind":"host","host_id":`)) || !bytes.Contains(body, []byte(`Our GitLab expires on`)) || !bytes.Contains(body, []byte(`"days":5`)) {
 		t.Errorf("the banner warns about the token: %s", body)
 	}
 	_, body = e.do(t, "GET", "/admin/api/setup", "", nil)

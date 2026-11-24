@@ -1222,7 +1222,7 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 	case e.Known && e.Expires.IsZero():
 		msg += "; the token never expires"
 	case e.Known:
-		msg += "; the token expires on " + e.Expires.UTC().Format("2 Jan 2006")
+		msg += "; the token expires on " + expiry.TokenTime(e.Expires)
 		if d := expiry.DaysLeft(e.Expires, time.Now()); d <= 14 {
 			msg += " (" + strconv.Itoa(d) + " days left: replace it soon)"
 		}

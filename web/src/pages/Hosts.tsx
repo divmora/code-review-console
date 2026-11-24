@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ago, fmtDate } from "../format";
+import { ago, fmtDate, fmtTokenTime } from "../format";
 import type { TokenExpiry } from "../types";
 import { fmtDateTime } from "../format";
 import { Check, Copy, Plug, Plus, Radio, Webhook } from "lucide-react";
@@ -648,9 +648,11 @@ function TokenExpiryNote({ e }: { e?: TokenExpiry }) {
   if (!e.expires) return <Sub>Token never expires</Sub>;
   const exp = new Date(e.expires);
   const days = Math.ceil((exp.getTime() - Date.now()) / 86400000);
-  const date = fmtDate(exp);
+  // In UTC with the time: a GitLab token stops at 00:00 UTC on its date,
+  // which is the evening before west of UTC (issue #132).
+  const date = fmtTokenTime(e.expires);
   if (days <= 0) return <div className="mt-1"><StateBadge kind="warn">Token expired {date}</StateBadge></div>;
-  if (days <= 14) return <div className="mt-1"><StateBadge kind="warn">Token expires in {days} {days === 1 ? "day" : "days"}</StateBadge></div>;
+  if (days <= 14) return <div className="mt-1" title={"Expires " + date}><StateBadge kind="warn">Token expires in {days} {days === 1 ? "day" : "days"}</StateBadge><Sub>{date}</Sub></div>;
   return <Sub>Token expires {date}</Sub>;
 }
 

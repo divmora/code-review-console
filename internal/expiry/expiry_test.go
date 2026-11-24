@@ -42,4 +42,13 @@ func TestWarnings(t *testing.T) {
 	if !ok || w.Severity != Bad || !strings.Contains(w.Message, "expired") {
 		t.Errorf("expired token: %+v", w)
 	}
+	// A GitLab token dated 22 Dec stops at the start of that day (issue #132).
+	gl := time.Date(2026, 12, 22, 0, 0, 0, 0, time.UTC)
+	w, ok = Host(h, hosts.TokenExpiry{Known: true, Expires: gl}, gl.Add(-10*time.Hour))
+	if !ok || !strings.Contains(w.Message, "expires on 22 Dec 2026, 00:00 UTC") || w.Days != 1 {
+		t.Errorf("GitLab cut-off: %+v", w)
+	}
+	if w, ok = Host(h, hosts.TokenExpiry{Known: true, Expires: gl}, gl.Add(time.Hour)); !ok || w.Severity != Bad {
+		t.Errorf("on its date the token is already expired: %+v", w)
+	}
 }
