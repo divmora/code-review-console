@@ -50,7 +50,10 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
 
 // stickyEnd keeps a row's last cell (its actions) in view while a wide
 // table scrolls.
-const stickyEnd = "sticky right-0 z-[1] bg-card shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.15)]"
+// Opaque, so scrolled cells don't show through; it follows the row's
+// hover and selected backgrounds.
+const stickyEnd =
+  "sticky right-0 z-[1] bg-card shadow-[-8px_0_8px_-8px_rgb(0_0_0/0.15)] [tr:hover>&]:bg-[color-mix(in_srgb,var(--color-muted)_50%,var(--color-card))] [tr[data-state=selected]>&]:bg-muted"
 
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
