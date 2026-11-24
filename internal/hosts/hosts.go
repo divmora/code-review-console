@@ -14,8 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -204,9 +206,10 @@ type Registry struct {
 	list      []Host
 	endpoints []Endpoint
 	mode      string // "database" or "config"
-	// shared are hosts that still store shared-URL webhook secrets (see
+	// shared are hosts that still store shared-URL webhook secrets, with
+	// the audit's secrets_changed entries for deleting them (see
 	// dropSharedSecrets).
-	shared []int64
+	shared map[int64][]string
 	// version is the store's HostsVersion at the last load (see Refresh);
 	// refreshMu keeps refreshes one at a time.
 	version   int64
@@ -297,7 +300,7 @@ func (r *Registry) addNote(n string) { r.notes = append(r.notes, n) }
 // Load reads the hosts from the database (or the config file).
 func (r *Registry) Load(ctx context.Context) error {
 	list, mode := FromConfig(r.cfg), "config"
-	var shared []int64
+	shared := map[int64][]string{}
 	var version int64
 	if r.st != nil {
 		// Read the version first: a write during the load bumps it again,
@@ -319,8 +322,8 @@ func (r *Registry) Load(ctx context.Context) error {
 					return fmt.Errorf("host %s:%s: %w", row.Platform, row.Host, err)
 				}
 				list = append(list, h)
-				if legacy {
-					shared = append(shared, h.ID)
+				if len(legacy) > 0 {
+					shared[h.ID] = legacy
 				}
 			}
 		} else if r.box != nil {
@@ -489,7 +492,9 @@ func (r *Registry) Save(ctx context.Context, h Host, actor string) (Host, error)
 	return saved, nil
 }
 
-func (r *Registry) save(ctx context.Context, h Host, actor string) (Host, error) {
+// save stores h. removed names secrets deleted outside h.Secrets (the
+// shared URL's), for the audit's secrets_changed.
+func (r *Registry) save(ctx context.Context, h Host, actor string, removed ...string) (Host, error) {
 	if err := h.Normalize(); err != nil {
 		return Host{}, err
 	}
@@ -517,7 +522,7 @@ func (r *Registry) save(ctx context.Context, h Host, actor string) (Host, error)
 		}
 	}
 	row, err := r.st.PutHost(ctx, store.HostRow{Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name,
-		Enabled: h.Enabled, Config: cfgJSON, Secrets: sealed, SecretsChanged: SecretChanges(old, h.Secrets)}, actor)
+		Enabled: h.Enabled, Config: cfgJSON, Secrets: sealed, SecretsChanged: append(SecretChanges(old, h.Secrets), removed...)}, actor)
 	if err != nil {
 		return Host{}, err
 	}
@@ -542,25 +547,28 @@ func (r *Registry) Delete(ctx context.Context, id int64, actor string) error {
 	return nil
 }
 
-// decode opens a stored host; legacy is true when it still has the
-// shared URL's webhook secrets (see dropSharedSecrets).
-func (r *Registry) decode(row store.HostRow) (h Host, legacy bool, err error) {
+// decode opens a stored host; legacy lists the shared URL's webhook
+// secrets it still has, as secrets_changed entries for removing them
+// ("webhook_secrets:-1"; see dropSharedSecrets).
+func (r *Registry) decode(row store.HostRow) (h Host, legacy []string, err error) {
 	h = Host{ID: row.ID, Platform: row.Platform, Host: row.Host, BaseURL: row.BaseURL, Name: row.Name, Enabled: row.Enabled}
 	if len(row.Config) > 0 {
 		if err := json.Unmarshal(row.Config, &h.Settings); err != nil {
-			return h, false, fmt.Errorf("settings: %w", err)
+			return h, nil, fmt.Errorf("settings: %w", err)
 		}
 	}
 	if row.Secrets != "" {
 		pt, err := r.box.Open(row.Secrets)
 		if err != nil {
-			return h, false, err
+			return h, nil, err
 		}
 		if err := json.Unmarshal(pt, &h.Secrets); err != nil {
-			return h, false, fmt.Errorf("secrets: %w", err)
+			return h, nil, fmt.Errorf("secrets: %w", err)
 		}
 		var old sharedHookSecrets
-		legacy = json.Unmarshal(pt, &old) == nil && len(old.WebhookSecrets)+len(old.SigningTokens) > 0
+		if json.Unmarshal(pt, &old) == nil {
+			legacy = append(listChange("webhook_secrets", old.WebhookSecrets, nil), listChange("signing_tokens", old.SigningTokens, nil)...)
+		}
 	}
 	return h, legacy, nil
 }
@@ -570,18 +578,20 @@ func (r *Registry) decode(row store.HostRow) (h Host, legacy bool, err error) {
 // host stores only its current secrets.
 func (r *Registry) dropSharedSecrets(ctx context.Context) error {
 	r.mu.RLock()
-	ids := append([]int64{}, r.shared...)
+	shared := maps.Clone(r.shared)
 	r.mu.RUnlock()
-	if len(ids) == 0 || r.st == nil || r.box == nil {
+	if len(shared) == 0 || r.st == nil || r.box == nil {
 		return nil
 	}
 	var names []string
-	for _, id := range ids {
+	for _, id := range slices.Sorted(maps.Keys(shared)) {
 		h, ok := r.Get(id)
 		if !ok {
 			continue
 		}
-		if _, err := r.save(ctx, h, "upgrade: shared webhook URL removed"); err != nil {
+		// The audit entry lists what was deleted (issue #133): the
+		// host's own settings and secrets are unchanged.
+		if _, err := r.save(ctx, h, "upgrade: shared webhook URL removed", shared[id]...); err != nil {
 			return fmt.Errorf("remove the shared webhook secrets of %s: %w", h.Host, err)
 		}
 		names = append(names, h.Platform+" "+h.Host)

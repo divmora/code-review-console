@@ -39,9 +39,14 @@ function flat(v: unknown, prefix = "", out: Record<string, string> = {}): Record
   return out;
 }
 
+// secretLabel reads a secrets_changed entry: "token:set" → "token set",
+// "signing_tokens:-1" → "signing tokens: 1 removed".
 const secretLabel = (s: string) => {
   const [name, change] = s.split(":");
-  return name.replace(/_/g, " ") + " " + (change || "changed");
+  const what = name.replace(/_/g, " ");
+  const n = /^([+-])(\d+)$/.exec(change || "");
+  if (n) return what + ": " + n[2] + (n[1] === "+" ? " added" : " removed");
+  return what + " " + (change || "changed");
 };
 
 // Changes shows what an entry changed: only the fields whose value differs
