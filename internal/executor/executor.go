@@ -18,7 +18,7 @@ import (
 // Task is one CLI invocation.
 type Task struct {
 	ID   string // unique, used for container/Job names
-	Kind string // "review", "ask" or "validate"
+	Kind string // "review", "diagram", "ask" or "validate"
 	URL  string // pull/merge request web URL
 
 	Full     bool // review every file, ignore previous reviews
@@ -63,6 +63,11 @@ type Result struct {
 	// without --approve), and ApprovalReason why.
 	Approval       string
 	ApprovalReason string
+	// Diagram: the review drew (or kept) a flow diagram; DiagramTokens is
+	// what drawing it cost (in and out); DiagramNote why none was drawn.
+	Diagram       bool
+	DiagramTokens int
+	DiagramNote   string
 	// Unreadable is set when the CLI succeeded but its result couldn't be
 	// read in full (see parseMerged); the counts are a best effort.
 	Unreadable string
@@ -126,6 +131,14 @@ func Args(t Task) ([]string, error) {
 			// Always explicit: the CLI's default changed to on in 0.6, so
 			// "leave it" must say =false (older CLIs accept that too).
 			args = append(args, "--approve-withdraw="+strconv.FormatBool(a.Withdraw))
+		}
+		return args, nil
+	case "diagram":
+		// "@bot diagram": draw the flow for the current head from the last
+		// review, and replace the diagram in the summary (CLI 0.7.0+).
+		args := []string{"review", t.URL, "--diagram-only", "--format", "json"}
+		if t.Post {
+			args = append(args, "--post")
 		}
 		return args, nil
 	case "validate":
@@ -206,6 +219,12 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 			InputTokens  int `json:"InputTokens"`
 			OutputTokens int `json:"OutputTokens"`
 		} `json:"usage"`
+		Diagram      json.RawMessage `json:"diagram"`
+		DiagramNote  string          `json:"diagram_note"`
+		DiagramUsage struct {
+			InputTokens  int `json:"InputTokens"`
+			OutputTokens int `json:"OutputTokens"`
+		} `json:"diagram_usage"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil {
 		return nil, fmt.Errorf("parse codereview output: %w", err)
@@ -218,6 +237,9 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 	res.TokensIn, res.TokensOut = v.Usage.InputTokens, v.Usage.OutputTokens
 	res.Partial, res.TooLarge = len(v.Errors) > 0, v.TooLarge
 	res.Approval, res.ApprovalReason = v.Approval, v.ApprovalR
+	d := bytes.TrimSpace(v.Diagram)
+	res.Diagram = len(d) > 0 && string(d) != "null"
+	res.DiagramTokens, res.DiagramNote = v.DiagramUsage.InputTokens+v.DiagramUsage.OutputTokens, v.DiagramNote
 	if sc := v.Scores; !res.Skipped && sc != nil && in1to100(sc.Quality) && in1to100(sc.Security) && in1to100(sc.Maintainability) {
 		res.Scores = sc
 	}

@@ -24,6 +24,10 @@ type Overrides struct {
 	AutoReview   *bool   `json:"auto_review,omitempty"`
 	Drafts       *bool   `json:"drafts,omitempty"`
 	Instructions string  `json:"instructions,omitempty"` // appended to repo instructions
+	// Diagram is the walkthrough's flow diagram: off, auto or always (nil:
+	// the repository's .codereview.yaml). "off" also refuses "@bot
+	// diagram". Needs code-review-bot 0.7.0 (DiagramCLIVersion).
+	Diagram *string `json:"diagram,omitempty"`
 	// Learnings are team decisions attached by the console per job (from
 	// its learnings store); they are not set in the admin UI's repo form.
 	Learnings []Learning `json:"learnings,omitempty"`
@@ -63,6 +67,13 @@ func (o *Overrides) Validate(profiles map[string]bool) error {
 	}
 	if len(o.Instructions) > 8000 {
 		return fmt.Errorf("instructions are limited to 8000 characters")
+	}
+	if o.Diagram != nil {
+		switch *o.Diagram {
+		case "off", "auto", "always":
+		default:
+			return fmt.Errorf("diagram %q: want off, auto or always", *o.Diagram)
+		}
 	}
 	return nil
 }

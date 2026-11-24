@@ -8,6 +8,7 @@ export type Overrides = {
   auto_review?: boolean;
   drafts?: boolean;
   instructions?: string;
+  diagram?: "off" | "auto" | "always";
 };
 
 export type Feature = "hosts" | "rules" | "learnings" | "executors" | "budgets" | "metrics" | "audit" | "branch_sync" | "sso_rules";

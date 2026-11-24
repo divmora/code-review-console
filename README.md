@@ -21,7 +21,7 @@ The control plane for [code-review-bot](https://github.com/divmora/code-review-b
 - **Webhooks** from GitHub (App or token, github.com and Enterprise), GitLab (gitlab.com and self-managed, several instances) and Bitbucket Cloud, each webhook with its own URL and secret.
 - **A review queue** with a global worker limit. Different PRs run in parallel; the same PR never runs twice at once, and a newer push replaces an older one that is still waiting.
 - **Executors**: each review runs the `codereview` CLI as a **local process**, a **Docker container** or a **Kubernetes Job**. Every job gets its own short-lived credentials and an isolated, locked-down environment.
-- **Chat commands**: `@codereview review`, `full review`, `help`, or any question in a PR comment. The handle is set per code host, with a default under Settings. Commands that run the model are accepted only from people who can push to the repository (checked with the code host; Settings can open them to anyone who can comment), and each person can run a few per hour.
+- **Chat commands**: `@codereview review`, `full review`, `diagram` (a flow diagram of the change, from the last review), `help`, or any question in a PR comment. The handle is set per code host, with a default under Settings. Commands that run the model are accepted only from people who can push to the repository (checked with the code host; Settings can open them to anyone who can comment), and each person can run a few per hour.
 - **Admin** with OIDC single sign-on: a repository allowlist with group and pattern rules, review settings per group or repository, an audit log and persistent history in PostgreSQL.
 
 ### Learnings (team memory)

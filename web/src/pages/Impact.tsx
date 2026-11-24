@@ -16,7 +16,7 @@ type Count = { severity?: string; category?: string; platform?: string; host?: s
 type ImpactPoint = { bucket: string; reviews: number; findings: Record<string, number>; scored: number; quality_sum: number; security_sum: number; maintainability_sum: number };
 type Impact = {
   range: string; from: string; to: string; through: string; granularity: string; licensed: boolean;
-  prs_reviewed: number; review_runs: number; active_repos: number; findings: number; by_severity: Record<string, number>;
+  prs_reviewed: number; review_runs: number; active_repos: number; prs_with_diagram?: number; findings: number; by_severity: Record<string, number>;
   by_category: Count[]; security_findings: number; comments: number; approvals: number; first_reviews: number; median_first_review_ms: number;
   scored: number; quality_sum: number; security_sum: number; maintainability_sum: number;
   trend: ImpactPoint[]; top_by_reviews: Count[]; top_by_findings: Count[];
@@ -206,7 +206,7 @@ export default function ImpactPage() {
       ) : (
         <>
           <div className="tiles grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile value={fmtNum(d.prs_reviewed)} label="Merge requests reviewed" sub={fmtNum(d.review_runs) + " review runs"} to={reviewsLink(d, { state: "done" })} />
+            <Tile value={fmtNum(d.prs_reviewed)} label="Merge requests reviewed" sub={fmtNum(d.review_runs) + " review runs" + (d.prs_with_diagram ? " · " + fmtNum(d.prs_with_diagram) + " with a flow diagram" : "")} to={reviewsLink(d, { state: "done" })} />
             <Tile value={fmtNum(d.findings)} label="Findings raised" sub={sevSplit || undefined} to={d.findings ? reviewsLink(d, { severity: "any" }) : undefined} />
             <Tile value={fmtNum(d.security_findings)} label="Security findings caught" sub="before merge, in review" to={d.security_findings ? reviewsLink(d, { category: "security" }) : undefined} />
             <Tile value={d.first_reviews ? fmtDur(d.median_first_review_ms) : "–"} label="Median time to first review" sub={d.first_reviews ? "from the webhook, " + fmtNum(d.first_reviews) + " merge requests" : undefined} />

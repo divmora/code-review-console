@@ -1316,6 +1316,7 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 		return points[b]
 	}
 	prs, repos, cats := map[string]bool{}, map[string]bool{}, map[string]int{}
+	diagrams := map[string]bool{}
 	byRepoReviews, byRepoFindings := map[store.RepoCount]int{}, map[store.RepoCount]int{}
 	first := map[string]store.Job{}
 	for _, j := range m.jobs { // oldest first
@@ -1328,6 +1329,9 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 		b := bucket(j.Finished)
 		if b.Before(f.From) || !b.Before(f.To) {
 			continue
+		}
+		if j.Diagram && j.State == "done" {
+			diagrams[pr] = true
 		}
 		pt := point(j.Finished)
 		out.Comments += j.Comments
@@ -1363,7 +1367,7 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 			byRepoFindings[rc] += fc.Count
 		}
 	}
-	out.PRsReviewed, out.ActiveRepos = len(prs), len(repos)
+	out.PRsReviewed, out.ActiveRepos, out.PRsWithDiagram = len(prs), len(repos), len(diagrams)
 	var lat []int64
 	for _, j := range first {
 		if !j.Finished.Before(f.From) && j.Finished.Before(f.To) {

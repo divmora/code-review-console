@@ -52,6 +52,10 @@ type Report struct {
 	// Approval is what the review did with the bot's approval (see
 	// store.Job.Approval).
 	Approval string `json:"approval,omitempty"`
+	// Diagram: the job drew or kept a flow diagram; DiagramTokens what
+	// drawing it cost (issue #161).
+	Diagram       bool `json:"diagram,omitempty"`
+	DiagramTokens int  `json:"diagram_tokens,omitempty"`
 }
 
 // Record is one job's lifecycle, as shown on the dashboard.

@@ -75,6 +75,10 @@ type Job struct {
 	// unchanged, failed), or "" when approvals are off. InsertJob reads it
 	// from Result when it is empty.
 	Approval string `json:"approval,omitempty"`
+	// Diagram: the job drew (or kept) a flow diagram of the change (issue
+	// #161), and DiagramTokens its tokens, in and out (part of the totals).
+	Diagram       bool `json:"diagram,omitempty"`
+	DiagramTokens int  `json:"diagram_tokens,omitempty"`
 }
 
 // Scores rate a review's change from 1 (poor) to 100 (excellent), as the
@@ -1038,6 +1042,7 @@ var migrations = []string{
 		pattern      text NOT NULL,
 		PRIMARY KEY (dashboard_id, platform, host, pattern)
 	);`,
+	diagramSQL,
 }
 
 // approvalSQL adds jobs.approval and job_metrics.approvals, filled in
@@ -2439,12 +2444,12 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
 			merged, error, note, comments, files, tokens_in, tokens_out, model, result, requested_by,
-			score_quality, score_security, score_maintainability, approval)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+			score_quality, score_security, score_maintainability, approval, diagram, diagram_tokens)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		RETURNING id`,
 		j.Kind, j.Platform, j.Host, j.Repo, j.Number, j.URL, j.Trigger, j.State, j.Enqueued, nullTime(j.Started), j.Finished,
 		j.Merged, j.Error, j.Note, j.Comments, j.Files, j.TokensIn, j.TokensOut, j.Model, result, j.RequestedBy,
-		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability"), j.Approval).Scan(&id)
+		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability"), j.Approval, j.Diagram, j.DiagramTokens).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -2554,7 +2559,8 @@ func (p *Postgres) PruneJobs(ctx context.Context, before, hourlyBefore time.Time
 }
 
 const jobCols = `id, kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
-	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by, score_quality, score_security, score_maintainability, approval`
+	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by, score_quality, score_security, score_maintainability, approval,
+	diagram, diagram_tokens`
 
 // scoreArg is one score for an insert (NULL without scores).
 func scoreArg(s *Scores, kind string) any {
@@ -2569,7 +2575,8 @@ func scanJob(row pgx.Row, withResult bool) (*Job, error) {
 	var started *time.Time
 	var q, sec, mt *int
 	dest := []any{&j.ID, &j.Kind, &j.Platform, &j.Host, &j.Repo, &j.Number, &j.URL, &j.Trigger, &j.State, &j.Enqueued, &started, &j.Finished,
-		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy, &q, &sec, &mt, &j.Approval}
+		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy, &q, &sec, &mt, &j.Approval,
+		&j.Diagram, &j.DiagramTokens}
 	var result []byte
 	if withResult {
 		dest = append(dest, &result)

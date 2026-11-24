@@ -110,7 +110,10 @@ type Impact struct {
 	ReviewRuns  int `json:"review_runs"`
 	// ActiveRepos have had a review run in the period.
 	ActiveRepos int `json:"active_repos"`
-	Findings    int `json:"findings"`
+	// PRsWithDiagram are merge requests with a flow diagram drawn or kept
+	// in the period (issue #161).
+	PRsWithDiagram int `json:"prs_with_diagram"`
+	Findings       int `json:"findings"`
 	// BySeverity is critical, major, minor, nitpick and other.
 	BySeverity map[string]int `json:"by_severity"`
 	ByCategory []FindingCount `json:"by_category"`
@@ -217,9 +220,29 @@ const impactBackfill = `
 	FROM jobs WHERE kind IN ('review', 'full review') AND state = 'done'
 	ON CONFLICT DO NOTHING;`
 
+// diagramSQL adds flow diagrams to jobs and a table of the merge requests
+// that got one, by day, for Impact (migration 25, issue #161).
+const diagramSQL = `
+	ALTER TABLE jobs ADD COLUMN diagram boolean NOT NULL DEFAULT false, ADD COLUMN diagram_tokens integer NOT NULL DEFAULT 0;
+	CREATE TABLE pr_diagram_days (
+		day      date NOT NULL,
+		platform text NOT NULL,
+		host     text NOT NULL,
+		repo     text NOT NULL,
+		number   integer NOT NULL,
+		PRIMARY KEY (day, platform, host, repo, number)
+	);`
+
 // recordImpact adds a finished review run to the Impact rollups, in the
 // job's insert transaction.
 func recordImpact(ctx context.Context, tx pgx.Tx, j Job) error {
+	if j.Diagram && j.State == "done" {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO pr_diagram_days (day, platform, host, repo, number) VALUES (($1::timestamptz AT TIME ZONE 'UTC')::date, $2, $3, lower($4), $5)
+			ON CONFLICT DO NOTHING`, j.Finished, j.Platform, j.Host, j.Repo, j.Number); err != nil {
+			return err
+		}
+	}
 	if !IsReview(j) {
 		return nil
 	}
@@ -264,6 +287,12 @@ func (p *Postgres) Impact(ctx context.Context, f ImpactFilter) (*Impact, error) 
 		SELECT count(DISTINCT (platform, host, repo, number)), count(DISTINCT (platform, host, repo))
 		FROM pr_review_days WHERE day >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND day < ($2::timestamptz AT TIME ZONE 'UTC')::date`, f.From, f.To).
 		Scan(&out.PRsReviewed, &out.ActiveRepos); err != nil {
+		return nil, err
+	}
+	if err := p.pool.QueryRow(ctx, `
+		SELECT count(DISTINCT (platform, host, repo, number))
+		FROM pr_diagram_days WHERE day >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND day < ($2::timestamptz AT TIME ZONE 'UTC')::date`, f.From, f.To).
+		Scan(&out.PRsWithDiagram); err != nil {
 		return nil, err
 	}
 	var median *float64

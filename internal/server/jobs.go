@@ -427,6 +427,7 @@ func (s *Server) enqueueReviewWith(tgt target, ref vcs.Ref, opts reviewOpts, del
 		rep.Comments, rep.Files, rep.Model = res.Posted, res.Files, res.Model
 		rep.TokensIn, rep.TokensOut = res.TokensIn, res.TokensOut
 		rep.Result, rep.Approval = res.Raw, res.Approval
+		rep.Diagram, rep.DiagramTokens = res.Diagram, res.DiagramTokens
 		if sc := res.Scores; sc != nil {
 			rep.Scores = &store.Scores{Quality: sc.Quality, Security: sc.Security, Maintainability: sc.Maintainability}
 		}
@@ -484,6 +485,51 @@ func (s *Server) enqueueAnswerWith(tgt target, ref vcs.Ref, question string, ov 
 	}, p, id)
 }
 
+// enqueueDiagram runs "@bot diagram": the flow diagram for the current
+// head, drawn from the last review and put in the walkthrough, without
+// reviewing again (issue #161). An admin's "Flow diagram: off" refuses it.
+func (s *Server) enqueueDiagram(tgt target, ref vcs.Ref, ov *config.Overrides, id string) error {
+	p := payloadFor("diagram", tgt, ref)
+	p.Overrides, p.Trigger = ov, "command"
+	return s.submit(&Job{
+		Key:   fmt.Sprintf("diagram:%s:%d", ref.String(), time.Now().UnixNano()),
+		Label: "diagram " + ref.String(),
+		Meta:  meta(ref, "diagram", "command"),
+		Run: func(ctx context.Context, rep *Report) error {
+			pr := &vcs.PR{Ref: ref}
+			if ov != nil && ov.Diagram != nil && *ov.Diagram == "off" {
+				rep.Skipped, rep.Note = true, "flow diagrams are off for this repository"
+				return tgt.client.PostComment(ctx, pr, "ℹ️ Flow diagrams are turned off for this repository in the review console.")
+			}
+			if why := s.overBudget(ctx, ref); why != "" {
+				rep.Skipped, rep.Note = true, why
+				return tgt.client.PostComment(ctx, pr, "⏸️ No diagram: "+why+".")
+			}
+			t, err := s.newTask(ctx, tgt, ref, "diagram", ov)
+			if err != nil {
+				return err
+			}
+			res, err := s.exec.Run(ctx, t)
+			if err != nil {
+				msg := truncate(err.Error(), 500)
+				var re *executor.RunError
+				if errors.As(err, &re) && strings.Contains(re.Logs, "flag provided but not defined: -diagram-only") {
+					msg = "the review CLI is older than code-review-bot " + config.DiagramCLIVersion
+				}
+				_ = tgt.client.PostComment(context.WithoutCancel(ctx), pr, "⚠️ The flow diagram failed: "+msg)
+				return err
+			}
+			rep.Model, rep.TokensIn, rep.TokensOut = res.Model, res.TokensIn, res.TokensOut
+			rep.Diagram, rep.DiagramTokens = res.Diagram, res.DiagramTokens
+			if !res.Diagram {
+				rep.Note = firstNonEmpty(res.DiagramNote, "no flow to draw")
+				return tgt.client.PostComment(ctx, pr, "ℹ️ No flow diagram: "+rep.Note+".")
+			}
+			return nil
+		},
+	}, p, id)
+}
+
 func (s *Server) postHelp(tgt target, ref vcs.Ref) error {
 	return s.postHelpWith(tgt, ref, "")
 }
@@ -508,6 +554,8 @@ func (s *Server) dispatch(tgt target, ref vcs.Ref, cmd command, ov *config.Overr
 		return s.enqueueReview(tgt, ref, reviewOpts{Full: true, Overrides: ov}, false)
 	case "help":
 		return s.postHelp(tgt, ref)
+	case "diagram":
+		return s.enqueueDiagram(tgt, ref, ov, "")
 	case "remember":
 		return s.remember(tgt, ref, cmd.question, cmd.author, cmd.sourceRef)
 	default:

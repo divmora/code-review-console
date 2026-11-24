@@ -24,7 +24,10 @@ The console runs the `codereview` CLI for every review, so the two must agree on
 - **Approving merge requests** (Settings → Approve merge requests) needs v0.5.0 or later: older CLIs
   don't know `--approve`, and reviews fail while it is on. v0.5.0 also anchors scores to the
   previous review, so they don't swing between runs.
-- **v0.6.1 is recommended**, and the console image bundles it. 0.6.0 brought security fixes (see the
+- **Flow diagrams** (a review setting, and `@bot diagram`) need v0.7.0 or later, which the console image
+  bundles. Older CLIs reject the setting, so the admin panel refuses it while the Executor runs an older
+  release, and the console sends it only when it's set.
+- **v0.6.1 or later is recommended.** 0.6.0 brought security fixes (see the
   code-review-bot advisories):
   - no GitLab quick actions or mentions in what the bot posts;
   - only the bot's own, or signed, comments are read back as its state, using a key the console passes each job;
@@ -179,7 +182,7 @@ Configure the Deployment with environment variables, for example:
 ```yaml
 env:
   - { name: CODEREVIEW_CONSOLE_EXECUTOR, value: kubernetes }
-  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.6.1 }
+  - { name: CODEREVIEW_CONSOLE_IMAGE, value: ghcr.io/divmora/code-review-bot:0.7.0 }
   - { name: CODEREVIEW_CONSOLE_KUBE_NAMESPACE, value: code-review }
   - { name: CODEREVIEW_CONSOLE_BASE_URL, value: https://review.example.com }
   - { name: CODEREVIEW_CONSOLE_OIDC_ISSUER, value: https://idp.example.com }

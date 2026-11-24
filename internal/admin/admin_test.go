@@ -912,6 +912,29 @@ func TestExecutorPinsDigest(t *testing.T) {
 	}
 }
 
+// TestDiagramNeedsCLI: a flow diagram setting is refused while the
+// Executor runs a code-review-bot release older than 0.7.0 (it would reject
+// the override and fail every review).
+func TestDiagramNeedsCLI(t *testing.T) {
+	e := setup(t, config.OIDC{AllowedEmails: []string{"alice@example.com"}})
+	e.idp.as(map[string]any{"sub": "u1", "email": "alice@example.com", "email_verified": true})
+	_ = e.login(t).Body.Close()
+	csrf := e.csrf(t)
+	e.adm.Executor = execsettings.New(config.Executor{Type: "docker", Docker: config.DockerExecutor{Image: "ghcr.io/divmora/code-review-bot:0.6.1"}}, e.st)
+	repo, _ := e.st.CreateRepo(context.Background(), "gitlab", "g.example", "team/app", "enabled", "a@x")
+	code, body := e.do(t, "PUT", "/admin/api/repos/"+strconv.FormatInt(repo.ID, 10), csrf, map[string]any{"mode": "enabled", "settings": map[string]any{"diagram": "auto"}})
+	if code != 400 || !bytes.Contains(body, []byte("need code-review-bot 0.7.0")) {
+		t.Errorf("old CLI: %d %s", code, body)
+	}
+	e.adm.Executor = execsettings.New(config.Executor{Type: "docker", Docker: config.DockerExecutor{Image: "ghcr.io/divmora/code-review-bot:0.7.0"}}, e.st)
+	if code, body := e.do(t, "PUT", "/admin/api/repos/"+strconv.FormatInt(repo.ID, 10), csrf, map[string]any{"mode": "enabled", "settings": map[string]any{"diagram": "auto"}}); code != 200 || !bytes.Contains(body, []byte(`"diagram":"auto"`)) {
+		t.Errorf("0.7.0: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "PUT", "/admin/api/repos/"+strconv.FormatInt(repo.ID, 10), csrf, map[string]any{"mode": "enabled", "settings": map[string]any{"diagram": "maybe"}}); code != 400 {
+		t.Errorf("invalid value: %d", code)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

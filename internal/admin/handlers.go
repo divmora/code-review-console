@@ -434,6 +434,10 @@ func (a *Admin) apiUpdateRepo(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := a.checkDiagramCLI(r.Context(), &req.Settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	repo, err := a.store.UpdateRepo(r.Context(), id, req.Mode, req.Settings, s.Email)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "repository not found"})
@@ -507,6 +511,10 @@ func (a *Admin) apiCreateRule(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := a.checkDiagramCLI(r.Context(), &req.Settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	rule, err := a.store.CreateRule(r.Context(), store.Rule{Platform: platform, Host: host, Pattern: pattern, Enabled: req.Enabled,
 		RequireReviewer: req.RequireReviewer, SkipBranchSync: req.SkipBranchSync, ScoreLabels: req.ScoreLabels,
 		CommitStatus: req.CommitStatus, Approve: req.Approve, Settings: req.Settings}, s.Email)
@@ -542,6 +550,10 @@ func (a *Admin) apiUpdateRule(w http.ResponseWriter, r *http.Request, s *store.S
 		return
 	}
 	if err := req.Settings.Validate(a.knownProfiles(r.Context())); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := a.checkDiagramCLI(r.Context(), &req.Settings); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -647,6 +659,10 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		st.DashboardTitle = "Code review"
 	}
 	if err := st.Validate(a.knownProfiles(r.Context()), true); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := a.checkDiagramCLI(r.Context(), &st.ReviewDefaults); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
