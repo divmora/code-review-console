@@ -28,7 +28,7 @@ older releases are not patched.
 - **Executors**: prefer `docker` or `kubernetes` so each review of untrusted PR content runs isolated. Mounting the Docker
   socket into the console gives it control of the host; use a dedicated host or the Kubernetes executor in shared environments.
   For Kubernetes, give the console a namespace-scoped Role limited to Jobs, Pods (get/list/logs) and Secrets.
-- **Admin**: HTTPS only; restrict `allowed_groups`/`allowed_emails`; keep `session_ttl` and the inactivity sign-out
+- **Admin**: HTTPS only (with an `https://` `base_url` the console sends `Strict-Transport-Security`); restrict `allowed_groups`/`allowed_emails`; keep `session_ttl` and the inactivity sign-out
   short; review the audit log; consider exposing the admin UI only internally and the webhooks publicly. Sessions are
   rechecked against the sign-in rules on every request, and **Settings → Signed-in admins** signs sessions out. Give
   people the operator or viewer role where they don't need to change code hosts, secrets or settings.
