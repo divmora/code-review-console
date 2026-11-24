@@ -119,6 +119,39 @@ func FromConfig(e config.Executor) Settings {
 	return Settings{}
 }
 
+// caSecretAllowed: the panel may use a Secret for the CA bundle only when
+// it's the one the config file names, with the same key. A review pod
+// processes untrusted code, and the namespace usually also holds the
+// console's own Secret (CODEREVIEW_CONSOLE_SECRET_KEY, DATABASE_URL): any
+// other Secret name would mount one of its keys into every review pod
+// (issue #128). CA certificates aren't secret: use a ConfigMap.
+func caSecretAllowed(e config.Executor, b CABundle) bool {
+	if b.Secret == "" {
+		return true
+	}
+	file := e.Kubernetes.CABundle
+	key := firstNonEmptyStr(b.Key, "ca.crt")
+	return b.Secret == file.Secret && key == firstNonEmptyStr(file.Key, "ca.crt")
+}
+
+// IgnoredCASecret names a saved CA bundle Secret that Apply leaves out
+// (see caSecretAllowed), for a warning; "" when there is none.
+func IgnoredCASecret(e config.Executor, s Settings) string {
+	if e.Type != "kubernetes" || caSecretAllowed(e, s.CABundle) {
+		return ""
+	}
+	return s.CABundle.Secret
+}
+
+func firstNonEmptyStr(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // Apply returns e with s in place of the config file's values.
 func Apply(e config.Executor, s Settings) config.Executor {
 	switch e.Type {
@@ -135,7 +168,11 @@ func Apply(e config.Executor, s Settings) config.Executor {
 		}
 		k.NodeSelector, k.Tolerations, k.Affinity = s.NodeSelector, s.Tolerations, s.Affinity
 		k.PriorityClassName, k.PodLabels, k.PodAnnotations = s.PriorityClassName, s.PodLabels, s.PodAnnotations
-		k.CABundle = config.KubeCABundle{ConfigMap: s.CABundle.ConfigMap, Secret: s.CABundle.Secret, Key: s.CABundle.Key}
+		if caSecretAllowed(e, s.CABundle) {
+			k.CABundle = config.KubeCABundle{ConfigMap: s.CABundle.ConfigMap, Secret: s.CABundle.Secret, Key: s.CABundle.Key}
+		} else {
+			k.CABundle = config.KubeCABundle{} // saved before this rule: not mounted (IgnoredCASecret warns)
+		}
 		if k.CABundle.Enabled() && k.CABundle.Key == "" {
 			k.CABundle.Key = "ca.crt"
 		}
@@ -184,7 +221,16 @@ func Validate(e config.Executor, s Settings) error {
 			return fmt.Errorf("ttl %q: want a duration between 1m and 168h, such as 10m", s.TTL)
 		}
 	}
-	return executor.CheckKube(ex.Kubernetes)
+	if s.CABundle.ConfigMap != "" && s.CABundle.Secret != "" {
+		return errors.New("ca_bundle: set config_map or secret, not both")
+	}
+	if err := executor.CheckKube(ex.Kubernetes); err != nil {
+		return err
+	}
+	if !caSecretAllowed(e, s.CABundle) {
+		return fmt.Errorf("ca_bundle: put the CA certificates in a ConfigMap (they aren't secret); a Secret can only be the one the config file names (executor.kubernetes.ca_bundle.secret), so no other Secret of the namespace, such as the console's own, is mounted into review pods")
+	}
+	return nil
 }
 
 // Service reads and changes the executor settings.

@@ -175,6 +175,11 @@ func serve(ctx context.Context, args []string) error {
 		for _, d := range differs {
 			logger.Warn("config file value ignored: the executor setting saved in the admin panel wins", "setting", "executor."+cfg.Executor.Type+"."+d)
 		}
+		if saved, ok, err := execSvc.Get(ctx); err == nil && ok {
+			if name := execsettings.IgnoredCASecret(cfg.Executor, saved); name != "" {
+				logger.Warn("the CA bundle Secret saved on the Executor page isn't mounted into review pods: put the certificates in a ConfigMap and choose it there, or name the Secret in the config file (executor.kubernetes.ca_bundle.secret)", "secret", name)
+			}
+		}
 		base := exec
 		exec = execsettings.NewExecutor(execSvc, base, func(e config.Executor) (executor.Executor, error) {
 			if k, ok := base.(*executor.Kubernetes); ok {

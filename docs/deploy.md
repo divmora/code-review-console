@@ -235,8 +235,13 @@ consolidation from evicting a review mid-run.
 ### Private CA certificates
 
 When a self-managed GitLab or GitHub Enterprise, an LLM gateway or a TLS-inspecting proxy uses a
-certificate from a private CA, put the CA certificates (PEM) in a ConfigMap or Secret in the jobs'
-namespace and name it under **CA bundle** on the Executor page (the key defaults to `ca.crt`):
+certificate from a private CA, put the CA certificates (PEM) in a ConfigMap in the jobs'
+namespace and name it under **CA bundle** on the Executor page (the key defaults to `ca.crt`). CA
+certificates aren't secret, so the Executor page takes a ConfigMap. A Secret can only be the one the
+config file names (`executor.kubernetes.ca_bundle.secret`, with its key): review pods process untrusted
+code, and the namespace usually also holds the console's own Secret, which must never be mounted into
+them. A Secret saved on the Executor page before 0.14.1 that isn't the config file's is no longer
+mounted, and the console logs a warning at start. Create the ConfigMap like this:
 
 ```bash
 kubectl -n code-review create configmap corporate-ca --from-file=ca.crt=corporate-ca.pem

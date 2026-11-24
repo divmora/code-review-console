@@ -263,7 +263,7 @@ export default function Executor() {
                   </Field>
                 </FormGrid>
                 <FormGrid>
-                  <Field label="Extra CA certificates" hint={<Sub>For a code host or model endpoint behind a private CA. Trusted in addition to the system CAs.</Sub>}>
+                  <Field label="Extra CA certificates" hint={<Sub>For a code host or model endpoint behind a private CA. Trusted in addition to the system CAs. Use a ConfigMap: certificates aren't secret. A Secret can only be the one the config file names (executor.kubernetes.ca_bundle.secret), so no other Secret, such as the console's own, is mounted into review pods.</Sub>}>
                     <NativeSelect value={f.caKind} onChange={set("caKind")}>
                       <option value="">None</option>
                       <option value="config_map">From a ConfigMap</option>
