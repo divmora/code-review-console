@@ -189,6 +189,30 @@ var (
 	errNoChanges = errors.New("the local executor has no settings in the admin panel; it runs the codereview binary on the console host")
 )
 
+// PlainTag reports whether version is a tag alone (0.6.1), which the
+// Executor page pins to its digest when it saves (issue #135).
+func PlainTag(version string) bool { return tagRe.MatchString(version) }
+
+// PinnedTag splits "0.6.1@sha256:…" into its tag and digest (ok false
+// for a tag alone or a digest alone).
+func PinnedTag(version string) (tag, digest string, ok bool) {
+	if !tagDigestRe.MatchString(version) {
+		return "", "", false
+	}
+	tag, digest, _ = strings.Cut(version, "@")
+	return tag, digest, true
+}
+
+// ImageRepo is the repository of the image reviews run with ("" for the
+// local executor).
+func ImageRepo(e config.Executor) string {
+	if e.Type != "docker" && e.Type != "kubernetes" {
+		return ""
+	}
+	repo, _ := SplitImage(image(e))
+	return repo
+}
+
 // Validate checks s for the executor e (the config file's, defaults applied).
 func Validate(e config.Executor, s Settings) error {
 	if e.Type != "docker" && e.Type != "kubernetes" {

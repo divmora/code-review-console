@@ -125,7 +125,7 @@ Secrets and credentials:
 | `DATABASE_URL` | **Required.** PostgreSQL 13+ (`database.url`): code hosts, models, settings, the license, history and learnings live there. Migrations run at startup under an advisory lock, so several replicas can start together. Replicas share webhook replay protection through it: a delivery is processed once, whichever replica receives it. |
 | `CODEREVIEW_CONSOLE_LICENSE` | The Divmora license key (see [License](#license)) |
 | `CODEREVIEW_CONSOLE_SECRET_KEY` | **Required.** 32 bytes as base64 or hex (`openssl rand -base64 32`), or a passphrase of 32+ characters. Host tokens and webhook secrets are encrypted with it, and each review job gets a key derived from it per code host (`CODEREVIEW_STATE_KEY`), which the CLI (0.6 or later) uses to sign what it posts, so its earlier comments still count after a host's token changes to another user. Changing this key only means older comments are no longer recognised as signed. **Keep it safe:** if it is lost, the stored tokens cannot be read and must be entered again. |
-| `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
+| `CODEREVIEW_CONSOLE_REGISTRY_USERNAME`, `CODEREVIEW_CONSOLE_REGISTRY_PASSWORD` | Optional: read-only credentials for a private image registry, so the **Executor** page can list the versions in your repository and pin them to their digests (public ones such as ghcr.io need none). Without them, or offline, you type the version. Amazon ECR's 12-hour passwords aren't refreshed, so type the version there. |
 | Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_*`, ...) | Forwarded to each review job; add other names under **Settings → Bot and review jobs** (the console's own secrets can't be added) |
 
 `GET /healthz` returns `{"status":"ok"}` for probes. It no longer shows the version or the queue to
@@ -213,6 +213,13 @@ below. Until a version is saved there, reviews use the image tag in the config f
 picked from the release tags found in the image repository (your own registry or mirror works: the
 console lists its tags with the registry API), or typed. A change applies to the next review without
 a restart.
+
+A version saved as a tag alone is **pinned to its digest**: the console asks the registry which image
+the tag points to and saves `0.6.1@sha256:…`, so docker and Kubernetes pull exactly that image even if
+the tag is re-pushed later, and the audit log records the digest. If the tag later points to another
+image, the Executor page says so; reviews keep running the saved image until you choose **Pin the new
+image**. When the registry can't be reached, the tag is saved unpinned and the page says why; save
+again later to pin it. Typing a digest (or `tag@digest`) yourself keeps it as typed.
 
 The executor type, binaries, the Docker network, `kubeconfig`, `namespace`, `service_account` and
 `automount_service_account_token` stay in the config file only: they decide what review jobs, which

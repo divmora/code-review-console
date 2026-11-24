@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { get, put } from "../api";
-import { Empty, errMsg, Field, FormGrid, NativeSelect, Note, Sub, useToast } from "../ui";
+import { Empty, errMsg, Field, FormGrid, NativeSelect, Note, Sub, useConfirm, useToast } from "../ui";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,9 @@ type View = {
   type: string; editable: boolean; source: "console" | "config"; image_repo?: string; image?: string;
   settings: Settings; fixed: Record<string, string>; min_cli_version: string; licensed: boolean;
   tags: string[]; tags_error?: string;
+  // pinned: the digest the saved version is pinned to; tag_digest: where
+  // its tag points now; pin_warning: why a save couldn't pin.
+  pinned?: string; tag_digest?: string; pin_warning?: string;
 };
 
 // key=value lines <-> a map.
@@ -81,6 +85,40 @@ function toSettings(f: Form): Settings {
 
 const OTHER = "__other__";
 
+// tagOf is the tag of a version ("0.6.1" for "0.6.1@sha256:…").
+const tagOf = (version: string) => version.split("@")[0];
+const short = (d: string) => d.replace(/^sha256:/, "").slice(0, 12);
+
+// Pin says what the saved version is pinned to, and warns when its tag
+// now points to another image (issue #135).
+function Pin({ v, onRepin, busy }: { v: View; onRepin: () => void; busy: boolean }) {
+  const tag = tagOf(v.settings.version);
+  if (v.pinned && v.tag_digest && v.tag_digest !== v.pinned)
+    return (
+      <Alert role="alert" className="border-warning/60">
+        <AlertDescription className="grid gap-2">
+          <span>
+            <b>The tag {tag} now points to another image</b> (<code title={v.tag_digest}>{short(v.tag_digest)}</code>) than the one saved (<code title={v.pinned}>{short(v.pinned)}</code>). Reviews keep running the saved image. A re-pushed release tag is unusual: check the release notes and the registry before pinning the new image.
+          </span>
+          <span>
+            <Button size="sm" variant="outline" disabled={busy} onClick={onRepin}>
+              Pin the new image
+            </Button>
+          </span>
+        </AlertDescription>
+      </Alert>
+    );
+  if (v.pinned)
+    return (
+      <Sub>
+        Pinned to <code title={v.pinned}>{tag}@{short(v.pinned)}…</code>: reviews pull exactly this image, even if the tag is re-pushed.
+      </Sub>
+    );
+  if (v.source === "console" && /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(v.settings.version))
+    return <Sub className="text-warning">Not pinned: reviews pull whatever {v.settings.version} points to. Save to pin it to its digest.</Sub>;
+  return null;
+}
+
 // VersionHint explains the version field: where the list comes from, or
 // why it couldn't be loaded, and what runs now.
 function VersionHint({ v, version, custom }: { v: View; version: string; custom: boolean }) {
@@ -109,6 +147,7 @@ function VersionHint({ v, version, custom }: { v: View; version: string; custom:
 
 export default function Executor() {
   const toast = useToast();
+  const confirm = useConfirm();
   const [v, setV] = useState<View | null>(null);
   const [f, setF] = useState<Form | null>(null);
   const [busy, setBusy] = useState(false);
@@ -117,7 +156,7 @@ export default function Executor() {
   const show = (nv: View) => {
     setV(nv);
     setF(toForm(nv.settings));
-    setCustom(!nv.tags.includes(nv.settings.version));
+    setCustom(!nv.tags.includes(tagOf(nv.settings.version)));
   };
   useEffect(() => {
     get<View>("/admin/api/executor").then(show).catch((e) => toast(errMsg(e), true));
@@ -136,8 +175,10 @@ export default function Executor() {
     }
     setBusy(true);
     try {
-      show(await put<View>("/admin/api/executor", body));
-      toast("Saved: the next review uses these settings");
+      const nv = await put<View>("/admin/api/executor", body);
+      show(nv);
+      if (nv.pin_warning) toast(nv.pin_warning, true);
+      else toast("Saved: the next review uses these settings" + (nv.pinned ? ", pinned to its digest" : ""));
     } catch (e) {
       toast(errMsg(e), true);
     } finally {
@@ -145,6 +186,21 @@ export default function Executor() {
     }
   };
 
+  // repin saves the tag alone again, which pins it to where it points now.
+  const repin = async () => {
+    if (!(await confirm({ title: "Pin the new image of " + tagOf(v.settings.version) + "?", description: "Reviews then run the image the tag points to now, with the code host and model credentials. Do this only if you know why the tag changed.", action: "Pin new image", danger: true }))) return;
+    setBusy(true);
+    try {
+      const nv = await put<View>("/admin/api/executor", { ...toSettings(toForm(v.settings)), version: tagOf(v.settings.version) });
+      show(nv);
+      if (nv.pin_warning) toast(nv.pin_warning, true);
+      else toast("Pinned the new image");
+    } catch (e) {
+      toast(errMsg(e), true);
+    } finally {
+      setBusy(false);
+    }
+  };
   const fixed = Object.entries(v.fixed);
   return (
     <section className="grid max-w-4xl gap-4">
@@ -197,17 +253,18 @@ export default function Executor() {
                     <NativeSelect
                       aria-label="Version"
                       className="w-auto min-w-36"
-                      value={custom ? OTHER : f.version}
+                      value={custom ? OTHER : tagOf(f.version)}
                       onChange={(e) => {
                         if (e.target.value === OTHER) setCustom(true);
                         else {
                           setCustom(false);
-                          setF({ ...f, version: e.target.value });
+                          // The current tag keeps its saved pin; another is pinned when saved.
+                          setF({ ...f, version: e.target.value === tagOf(v.settings.version) ? v.settings.version : e.target.value });
                         }
                       }}
                     >
                       {v.tags.map((t, i) => (
-                        <option key={t} value={t}>{t}{i === 0 ? " (newest)" : ""}{t === v.settings.version ? " (current)" : ""}</option>
+                        <option key={t} value={t}>{t}{i === 0 ? " (newest)" : ""}{t === tagOf(v.settings.version) ? " (current)" : ""}</option>
                       ))}
                       <option value={OTHER}>Other: tag or digest…</option>
                     </NativeSelect>
@@ -215,6 +272,9 @@ export default function Executor() {
                   {(custom || v.tags.length === 0) && (
                     <Input value={f.version} onChange={set("version")} placeholder="0.6.1" spellCheck={false} aria-label={v.tags.length ? "Other version" : "Version"} className="sm:max-w-64" />
                   )}
+                </div>
+                <div className="mt-1.5">
+                  <Pin v={v} onRepin={repin} busy={busy} />
                 </div>
               </Field>
               <Field label="CPU" hint={<Sub>{kube ? "Request and limit, e.g. 500m or 1." : "docker --cpus, e.g. 1.5."} Empty = no limit.</Sub>}>

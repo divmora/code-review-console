@@ -30,6 +30,14 @@ type executorView struct {
 	// to typing the version).
 	Tags      []string `json:"tags"`
 	TagsError string   `json:"tags_error,omitempty"`
+	// Pinned is the digest the saved version is pinned to ("" for a tag
+	// alone); TagDigest is the digest its tag points to now, when the
+	// registry answered. They differ when the tag was re-pushed after
+	// saving (issue #135).
+	Pinned    string `json:"pinned,omitempty"`
+	TagDigest string `json:"tag_digest,omitempty"`
+	// PinWarning says why a version just saved could not be pinned.
+	PinWarning string `json:"pin_warning,omitempty"`
 }
 
 func (a *Admin) executorView(r *http.Request) (executorView, error) {
@@ -78,6 +86,14 @@ func (a *Admin) executorView(r *http.Request) (executorView, error) {
 	if v.Tags == nil {
 		v.Tags = []string{}
 	}
+	if tag, d, ok := execsettings.PinnedTag(st.Version); ok {
+		v.Pinned = d
+		if v.Editable && v.ImageRepo != "" {
+			if now, err := a.Tags.Digest(r.Context(), v.ImageRepo, tag); err == nil {
+				v.TagDigest = now
+			}
+		}
+	}
 	if len(a.Executor.Config().Env) > 0 {
 		v.Fixed["env"] = strings.Join(a.Executor.Config().Env, ", ")
 	}
@@ -102,9 +118,30 @@ func (a *Admin) apiPutExecutor(w http.ResponseWriter, r *http.Request, s *store.
 	if !decode(w, r, &req) {
 		return
 	}
+	// A tag alone is pinned to the digest it points to now, so a re-pushed
+	// tag can't change what runs with the code host and model credentials;
+	// the saved version (and its audit entry) carries the digest.
+	warning := ""
+	req.Version = strings.TrimSpace(req.Version)
+	if repo := execsettings.ImageRepo(a.Executor.Config()); repo != "" && execsettings.PlainTag(req.Version) {
+		if a.Tags == nil {
+			a.Tags = execsettings.NewTags()
+		}
+		if d, err := a.Tags.Digest(r.Context(), repo, req.Version); err == nil {
+			req.Version += "@" + d
+		} else {
+			warning = "Saved " + req.Version + " without pinning it to a digest: " + err.Error() + ". Reviews pull whatever the tag points to; save again once the registry can be reached."
+		}
+	}
 	if err := a.Executor.Put(r.Context(), req, s.Email); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	a.apiGetExecutor(w, r, s)
+	v, err := a.executorView(r)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	v.PinWarning = warning
+	writeJSON(w, http.StatusOK, v)
 }
