@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Ellipsis, FolderPlus, KeyRound, Plus, Search, Settings2 } from "lucide-react";
+import { Ellipsis, FolderPlus, KeyRound, LayoutDashboard, Plus, Search, Settings2 } from "lucide-react";
+import type { Dashboard } from "./Dashboards";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
 import type { Access, Overrides, Repo } from "../types";
@@ -127,6 +128,35 @@ export default function Repositories() {
   // selected repository IDs, for the bulk actions.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Dashboards that repositories can be added to (admins; issue #155).
+  const [boards, setBoards] = useState<Dashboard[]>([]);
+  useEffect(() => {
+    if (me.role && me.role !== "admin") return;
+    get<{ dashboards: Dashboard[] }>("/admin/api/dashboards")
+      .then((r) => setBoards((r.dashboards || []).filter((d) => d.id && !d.all_repos)))
+      .catch(() => {});
+  }, []);
+  // addTo attaches the selected repositories to a dashboard.
+  const addTo = async (d: Dashboard) => {
+    const ids = new Set([...d.repos.map((r) => r.id), ...selected]);
+    const added = ids.size - d.repos.length;
+    if (!added) {
+      toast("They are on " + d.title + " already");
+      return;
+    }
+    if (!(await confirm({ title: `Add ${added} ${added === 1 ? "repository" : "repositories"} to ${d.title}?`, description: `Everyone who can open ${d.title} sees ${added === 1 ? "its" : "their"} reviews and scores${d.hide_repos ? " (names hidden)" : ""}.`, action: "Add" }))) return;
+    setBulkBusy(true);
+    put<Dashboard>("/admin/api/dashboards/" + d.id, { slug: d.slug, title: d.title, description: d.description, access: d.access, hide_repos: d.hide_repos, enabled: d.enabled,
+      all_repos: false, repos: Array.from(ids), patterns: d.patterns })
+      .then((saved) => {
+        setBoards((bs) => bs.map((b) => (b.id === saved.id ? saved : b)));
+        toast(`Added ${added} to ${d.title}`);
+        setSelected(new Set());
+        load();
+      })
+      .catch((e) => toast(errMsg(e), true))
+      .finally(() => setBulkBusy(false));
+  };
   const canChange = me.role !== "viewer";
   // A bulk action only touches repositories in view: a new filter clears the selection.
   useEffect(() => setSelected(new Set()), [q, show, group]);
@@ -281,6 +311,22 @@ export default function Repositories() {
           <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulk("inherit")}>
             Inherit
           </Button>
+          {boards.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" disabled={bulkBusy}>
+                  <LayoutDashboard /> Add to dashboard…
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {boards.map((b) => (
+                  <DropdownMenuItem key={b.id} onSelect={() => addTo(b)}>
+                    {b.title}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
             Clear
           </Button>
@@ -339,6 +385,11 @@ export default function Repositories() {
                         {r.platform} · {r.host}
                         <span className="xl:hidden"> · last webhook {ago(r.last_seen)}</span>
                       </Sub>
+                      {r.dashboards && r.dashboards.length > 0 && (
+                        <Sub className="max-w-64 truncate" title={"On the dashboards " + r.dashboards.map((d) => d.title).join(", ")}>
+                          <LayoutDashboard className="inline size-3 align-[-1px]" /> {r.dashboards.map((d) => d.title).join(", ")}
+                        </Sub>
+                      )}
                       {r.credential && (
                         <Sub className="max-w-64 truncate" title={"Uses the group token for " + r.credential.pattern + " (Code hosts), not the host's own"}>
                           <KeyRound className="inline size-3 align-[-1px]" /> {r.credential.name}

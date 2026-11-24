@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { del, get, post, put } from "../api";
 import type { Overrides } from "../types";
 import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Section, SettingsEditor, shortAgent, Sub, useConfirm, useFeature, useMe, useRefreshMe, useToast } from "../ui";
@@ -281,14 +282,13 @@ export default function Settings() {
               note={<Note className="text-xs">A session that makes no request for this long is signed out, so a browser left open on a shared machine doesn't keep admin rights. The panel's own refreshes (Setup, the dashboard) don't count as activity. 5 to 1440, or 0 for never.</Note>} />
           </FormGrid>
         </Group>
-        <Group title="Status dashboard" unsaved={any("dashboard_enabled", "hide_repos", "dashboard_title")} description="Who can open it is set under Status dashboard access, further down.">
-          <FormGrid className="lg:grid-cols-2">
-            <Bool label="Dashboard" value={v.dashboard_enabled} onChange={set("dashboard_enabled")} yes="On" no="Off" />
-            <Bool label="Repository names" value={!v.hide_repos} onChange={(x) => set("hide_repos")(!x)} yes="Shown" no="Hidden" />
-            <Field label="Title" className="sm:col-span-2">
-              <Input maxLength={120} value={v.dashboard_title} onChange={(e) => set("dashboard_title")(e.target.value)} />
-            </Field>
-          </FormGrid>
+        <Group title="Status dashboards" description="Their titles, access, tokens and repositories are managed on the Dashboards page.">
+          <Note>
+            Each dashboard shows its own repositories to the people its access lets in. The one that used to be here is the <b>default</b> dashboard (<code>/dashboard</code>).{" "}
+            <Link className="font-medium text-primary underline-offset-2 hover:underline" to="/dashboards">
+              Open Dashboards
+            </Link>
+          </Note>
         </Group>
       </div>
       <Card className="py-4">

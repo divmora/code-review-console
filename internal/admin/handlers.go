@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/divmora/code-review-console/internal/dashboards"
 	"io"
 	"io/fs"
 	"net/http"
@@ -201,7 +202,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 }
 
 // adminSections are the admin UI's pages (see the routes in web/src/App.tsx).
-var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "impact": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "change-requests": true}
+var adminSections = map[string]bool{"setup": true, "repositories": true, "reviews": true, "impact": true, "dashboards": true, "learnings": true, "hosts": true, "rules": true, "webhooks": true, "settings": true, "audit": true, "license": true, "models": true, "executor": true, "change-requests": true}
 
 // dropSlash redirects to the same URL without the trailing slash, keeping
 // the query string.
@@ -258,6 +259,16 @@ type repoView struct {
 	// Credential is the host credential the repository uses (issue #136);
 	// nil for the host's own.
 	Credential *repoCredential `json:"credential,omitempty"`
+	// Dashboards are the dashboards that pick this repository out, by
+	// attachment or pattern (issue #155); those with every repository
+	// aren't listed.
+	Dashboards []repoDashboard `json:"dashboards,omitempty"`
+}
+
+type repoDashboard struct {
+	ID    int64  `json:"id"`
+	Slug  string `json:"slug"`
+	Title string `json:"title"`
 }
 
 func (a *Admin) view(ctx context.Context, repos []store.Repo) ([]repoView, error) {
@@ -269,9 +280,27 @@ func (a *Admin) view(ctx context.Context, repos []store.Repo) ([]repoView, error
 	if !a.Lic.Has(license.Rules) {
 		rules = nil // group and pattern rules are a paid feature
 	}
+	type scoped struct {
+		d     repoDashboard
+		scope dashboards.Scope
+	}
+	var ds []scoped
+	if list, err := a.dashboards().List(ctx); err == nil {
+		for _, d := range list {
+			if !d.AllRepos && d.ID != 0 {
+				ds = append(ds, scoped{repoDashboard{ID: d.ID, Slug: d.Slug, Title: d.Title}, dashboards.ScopeOf(d)})
+			}
+		}
+	}
 	out := make([]repoView, 0, len(repos))
 	for _, r := range repos {
-		out = append(out, repoView{Repo: r, Effective: store.Resolve(r, rules, eff.Base()), Credential: a.credentialOf(r)})
+		v := repoView{Repo: r, Effective: store.Resolve(r, rules, eff.Base()), Credential: a.credentialOf(r)}
+		for _, x := range ds {
+			if x.scope.Covers(r.Platform, r.Host, r.Path) {
+				v.Dashboards = append(v.Dashboards, x.d)
+			}
+		}
+		out = append(out, v)
 	}
 	return out, nil
 }
@@ -824,7 +853,7 @@ var hookEvents = map[string][]string{
 
 // hostStats is what the delivery history says about hosts and webhooks.
 type hostStats struct {
-	hosts     map[string]store.HostHookStats    // by "platform:host"
+	hosts     map[string]store.HostHookStats     // by "platform:host"
 	endpoints map[string]store.EndpointHookStats // by webhook ID
 }
 
