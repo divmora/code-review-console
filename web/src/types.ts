@@ -85,6 +85,9 @@ export type Repo = {
   // The host credential the repository uses (issue #136); absent: the
   // host's own token.
   credential?: { id: number; name: string; pattern: string };
+  // The dashboards that pick the repository out (issue #155); those with
+  // every repository aren't listed.
+  dashboards?: { id: number; slug: string; title: string }[];
 };
 
 export type Rule = {

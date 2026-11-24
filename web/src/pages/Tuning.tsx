@@ -1,6 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
 import { diffCount, useUnsaved } from "../unsaved";
-import { fmtDate } from "../format";
 import { get, put } from "../api";
 import { Empty, errMsg, Field, FormGrid, NativeSelect, Note, StateBadge, Sub, useMe, useToast } from "../ui";
 import { Button } from "@/components/ui/button";
@@ -42,13 +41,6 @@ function NumField({ label, value, onChange, hint, placeholder, min, max }: { lab
   );
 }
 
-// accessNote says who can open the dashboard with the chosen access.
-function accessNote(access: string, hasToken: boolean, clearing: boolean) {
-  if (access === "public") return "Anyone who can reach the console's URL sees it. Hide repository names unless that is intended.";
-  if (access === "token") return clearing || !hasToken ? "Set a token first: without one, only admins can open it." : "Admins at /admin/dashboard, and anyone with the token at /dashboard.";
-  return "Admins open it at /admin/dashboard (the sidebar link). /dashboard sends everyone else to sign in.";
-}
-
 // scrapeConfig is a Prometheus scrape job for this console.
 function scrapeConfig(access: string, token: string) {
   const u = new URL(location.origin);
@@ -63,28 +55,7 @@ function scrapeConfig(access: string, token: string) {
   return lines.join("\n");
 }
 
-// shareLink is the dashboard URL with the token, for people without an admin sign-in.
-function shareLink(token: string) {
-  return location.origin + "/dashboard?token=" + encodeURIComponent(token);
-}
-
-const day = 24 * 60 * 60 * 1000;
-
-// TokenState says whether a token is set and when it expires.
-function TokenState({ v, clearing, replacing }: { v: View; clearing: boolean; replacing: boolean }) {
-  if (clearing) return <Sub>The token is removed when you save.</Sub>;
-  if (replacing) return <Sub>The new token replaces the current one when you save; the old link stops working.</Sub>;
-  if (!v.dashboard_token_set) return <Sub>No token.</Sub>;
-  if (v.dashboard_token_expired) return <StateBadge kind="warn">Expired: generate a new token</StateBadge>;
-  if (!v.dashboard_token_expires) return <StateBadge kind="on">Set, never expires</StateBadge>;
-  const exp = new Date(v.dashboard_token_expires);
-  const when = fmtDate(exp);
-  return exp.getTime() - Date.now() < 7 * day
-    ? <StateBadge kind="warn">Expires soon: {when}</StateBadge>
-    : <StateBadge kind="on">Set, expires {when}</StateBadge>;
-}
-
-// newToken makes a random dashboard token (32 hex characters).
+// newToken makes a random token (32 hex characters).
 function newToken() {
   const b = new Uint8Array(16);
   crypto.getRandomValues(b);
@@ -92,18 +63,15 @@ function newToken() {
 }
 
 // Tuning edits how many reviews run, timeouts, the review engine, the
-// bot's mention handle, extra environment variables and the dashboard
-// token. Everything applies to the next review, without a restart.
+// bot's mention handle, extra environment variables and /metrics access
+// (dashboard access moved to the Dashboards page). Everything applies to
+// the next review, without a restart.
 export default function Tuning() {
   const toast = useToast();
   const me = useMe();
   const [v, setV] = useState<View | null>(null);
   const [env, setEnv] = useState("");
   const [defaults, setDefaults] = useState("");
-  const [token, setToken] = useState("");
-  const [clear, setClear] = useState(false);
-  const [validDays, setValidDays] = useState(90);
-  const [copied, setCopied] = useState(false);
   const [mToken, setMToken] = useState("");
   const [mClear, setMClear] = useState(false);
   const [mCopied, setMCopied] = useState(false);
@@ -115,9 +83,6 @@ export default function Tuning() {
     setBase(n);
     setEnv(n.extra_env.join(", "));
     setDefaults(n.engine.defaults ? JSON.stringify(n.engine.defaults, null, 2) : "");
-    setToken("");
-    setClear(false);
-    setCopied(false);
     setMToken("");
     setMClear(false);
     setMCopied(false);
@@ -131,7 +96,6 @@ export default function Tuning() {
     count = diffCount({ ...v, extra_env: [], engine: { ...v.engine, defaults: undefined } }, { ...base, extra_env: [], engine: { ...base.engine, defaults: undefined } });
     if (env !== base.extra_env.join(", ")) count++;
     if (defaults !== (base.engine.defaults ? JSON.stringify(base.engine.defaults, null, 2) : "")) count++;
-    if (token || clear) count++;
     if (mToken || mClear) count++;
   }
   useUnsaved("tuning", { label: "Queue, review engine and access", count, save: () => save(), discard: () => base && take(base) });
@@ -152,7 +116,6 @@ export default function Tuning() {
     const body = {
       ...v, engine: { ...v.engine, defaults: parsed },
       extra_env: env.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean),
-      dashboard_token: token, clear_dashboard_token: clear, dashboard_token_valid_days: validDays,
       metrics_token: mToken, clear_metrics_token: mClear,
     };
     try {
@@ -245,50 +208,6 @@ export default function Tuning() {
           }>
             <Input placeholder="MY_PROXY_CA, SSL_CERT_DIR" value={env} onChange={(e) => setEnv(e.target.value)} />
           </Field>
-        </FormGrid>
-      </Card2>
-      <Card2 title="Status dashboard access" description="The status dashboard shows every running and recent review, with repository names unless they are hidden under Status dashboard above.">
-        <FormGrid className="lg:grid-cols-2">
-          <Field label="Who can open it" hint={<Sub>{accessNote(v.dashboard_access, v.dashboard_token_set || !!token, clear)}</Sub>}>
-            <NativeSelect value={v.dashboard_access} onChange={(e) => set("dashboard_access")(e.target.value as View["dashboard_access"])}>
-              <option value="admins">Signed-in admins only</option>
-              <option value="token">Admins, and anyone with the token</option>
-              <option value="public">Anyone who can reach the console</option>
-            </NativeSelect>
-          </Field>
-          <Field label="Dashboard token" hint={<Sub>For screens and people without an admin sign-in: /dashboard?token=… or a Bearer header. Stored hashed and never shown again.</Sub>}>
-            <div className="grid gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Input className="max-w-sm font-mono" placeholder={v.dashboard_token_set ? "Set (leave empty to keep it)" : "Not set"} value={token} onChange={(e) => { setToken(e.target.value); setClear(false); setCopied(false); }} />
-                <Button variant="outline" onClick={() => { setToken(newToken()); setClear(false); setCopied(false); }}>Generate</Button>
-                {v.dashboard_token_set && (
-                  <Button variant="ghost" className="text-destructive" onClick={() => { setToken(""); setClear(true); }} disabled={clear}>{clear ? "Removed on save" : "Remove"}</Button>
-                )}
-              </div>
-              <TokenState v={v} clearing={clear} replacing={!!token} />
-            </div>
-          </Field>
-          {token && (
-            <>
-              <Field label="New token valid for" hint={<Sub>Counted from when you save. After that the link stops working until a new token is generated.</Sub>}>
-                <NativeSelect value={String(validDays)} onChange={(e) => setValidDays(parseInt(e.target.value, 10))}>
-                  <option value="7">7 days</option>
-                  <option value="30">30 days</option>
-                  <option value="90">90 days</option>
-                  <option value="365">1 year</option>
-                  <option value="0">Never expires</option>
-                </NativeSelect>
-              </Field>
-              <Field label="Link to share" hint={<Sub className="text-warning">Copy it now: once saved, the token can't be shown again.</Sub>}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input readOnly className="font-mono text-xs" value={shareLink(token)} onFocus={(e) => e.target.select()} />
-                  <Button variant="outline" onClick={() => {
-                    navigator.clipboard?.writeText(shareLink(token)).then(() => setCopied(true), () => toast("Copy failed: select the link and copy it", true));
-                  }}>{copied ? "Copied" : "Copy link"}</Button>
-                </div>
-              </Field>
-            </>
-          )}
         </FormGrid>
       </Card2>
       <Card2 title="Prometheus metrics" description="/metrics in the Prometheus text format: queue, reviews by kind and result, durations, tokens, webhooks by outcome, and when the license and host tokens expire. No repository names.">

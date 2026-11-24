@@ -382,24 +382,20 @@ release stops reading these keys.
 
 ## Status dashboard
 
-When it is on (**Settings → Status dashboard**), the dashboard shows every running, waiting and recent
-review: repository, merge or pull request, errors, token use and the review's scores. Hiding
-repository names hides the scores too. **Settings → Status dashboard access** decides who can open
-it:
+Dashboards are managed on the **Dashboards** page of the admin panel. Each has its own title, link,
+access, token and repositories, and shows its repositories' running, waiting and recent reviews
+(repository, merge or pull request, errors, token use, scores) plus, with a database, its scores and
+totals. Hiding repository names hides the scores and per-repository lists too.
 
-| Access | Who | Where |
-|---|---|---|
-| Signed-in admins only (default) | admins | `/admin/dashboard`, the sidebar link; `/dashboard` sends others to sign in |
-| Admins, and anyone with the token | admins, and screens or people with the token | `/dashboard?token=…` or `Authorization: Bearer …` |
-| Anyone who can reach the console | everyone | `/dashboard` |
+The **default** dashboard is the one consoles had before there were several: `/dashboard`,
+`/api/status` and `/admin/dashboard`, the sidebar's *Status dashboard* link, with every repository.
+It can be turned off but not deleted.
 
-The token is set or generated on the same page. Choose how long it works (7, 30 or 90 days, a year,
-or never; 90 days by default) and copy the ready-made link before saving: only a SHA-256 hash of the
-token is stored (in the database's settings, never in the audit log), so it can't be shown again.
-The page shows when the token expires and warns a week before. An expired link tells its viewer to
-ask an admin for a new one; generating a new token starts a new period and stops the old link.
-An install that had a token before keeps working with it; one without a token is now for admins
-only, until you choose otherwise. When the dashboard is public, consider hiding repository names.
+To share a `token` dashboard, open its **Token** on the Dashboards page, choose how long it works
+(7, 30 or 90 days, a year, or never) and copy the link: only a SHA-256 hash of the token is stored
+(never in the audit log), so it can't be shown again. An expired link tells its viewer to ask an admin
+for a new one; replacing the token stops the old link at once. When a dashboard is public, consider
+hiding repository names: new `public` and `token` dashboards start with them hidden.
 
 ### Several dashboards
 
@@ -428,7 +424,8 @@ A token opens only its own dashboard. New `public` and `token` dashboards hide r
 until an admin shows them. On upgrade, the old "signed-in admins only" setting becomes `signed_in`,
 because it let in every signed-in role; set the default dashboard to `admins` to keep viewers and
 operators out. The admin API is `/admin/api/dashboards` (list, create, change, delete,
-`/{id}/token` to rotate); the Dashboards page comes with a later release.
+`/{id}/token` to rotate). On **Repositories**, each repository lists the dashboards that pick it out,
+and selected repositories can be added to a dashboard at once (**Add to dashboard…**).
 
 ## HTTPS
 

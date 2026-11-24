@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Sun,
   TrendingUp,
+  LayoutDashboard,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -73,6 +74,7 @@ import Models from "./pages/Models";
 import Executor from "./pages/Executor";
 import Setup from "./pages/Setup";
 import Impact from "./pages/Impact";
+import Dashboards from "./pages/Dashboards";
 
 // Each section has its own URL under /admin, so a reload lands on it.
 const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element; paid?: Feature }[] = [
@@ -80,6 +82,7 @@ const sections: { path: string; title: string; icon: LucideIcon; el: JSX.Element
   { path: "repositories", title: "Repositories", icon: FolderGit2, el: <Repositories /> },
   { path: "reviews", title: "Reviews", icon: ChartColumn, el: <Reviews /> },
   { path: "impact", title: "Impact", icon: TrendingUp, el: <Impact /> },
+  { path: "dashboards", title: "Dashboards", icon: LayoutDashboard, el: <Dashboards /> },
   { path: "learnings", title: "Learnings", icon: BookOpen, el: <Learnings />, paid: "learnings" },
   { path: "hosts", title: "Code hosts", icon: Server, el: <Hosts /> },
   { path: "models", title: "Models", icon: Bot, el: <Models /> },

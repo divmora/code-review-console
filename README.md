@@ -76,7 +76,7 @@ Deeper rules beat shallower ones and exact groups beat patterns, so `acme` enabl
 - **Approvals**: the bot can approve merge requests whose review passes a rule you set (which findings block it, an optional lowest score) and withdraw its approval when a later push doesn't pass; rules turn it on or off per group or repository. Reviews and the status dashboard mark the merge requests it approved, and Impact counts them.
 - **Impact**: what the console has done for the installation (merge requests reviewed, findings by severity and category, security findings, time to first review, active repositories, scores), with trends, top repositories and a CSV/JSON export, from its own database.
 - **Scores**: each review's quality, security and maintainability scores on Reviews, per repository with trends, on the status dashboard and in `/metrics`.
-- **Status**: running, pending and recent reviews on a status dashboard, for signed-in admins by default; it can also be opened with a token (for a team screen) or made public (Settings → Status dashboard access).
+- **Status**: status dashboards with running, pending and recent reviews, scores and totals. Each has its own repositories (picked, or by group pattern) and access: signed-in admins, anyone signed in, a token of its own (for a team screen) or public. Managed on the **Dashboards** page; the default one stays at `/dashboard`.
 - **Metrics**: `/metrics` in the Prometheus format (queue, reviews, durations, tokens, webhooks, license and token expiry), off until chosen under Settings.
 
 > The `/api/v1` API, testing a model from the panel, manual actions and the admin-controlled public status page are in progress. See [ROADMAP.md](ROADMAP.md).
