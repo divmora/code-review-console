@@ -242,6 +242,20 @@ type HostHookStats struct {
 	SystemHook int `json:"system_hook"`
 }
 
+// EndpointHookStats is what one webhook URL received: its latest delivery
+// in the history, and deliveries since a time by result (issue #131).
+type EndpointHookStats struct {
+	Endpoint string `json:"endpoint"`
+	// Last is the newest delivery on the URL (nil if none is kept).
+	Last *WebhookEvent `json:"last,omitempty"`
+	// Accepted counts deliveries since the time asked for that passed
+	// authentication and were handled (queued, ignored or duplicate);
+	// Rejected those refused (bad secret or signature, malformed) or
+	// that failed (outcome error).
+	Accepted int `json:"accepted"`
+	Rejected int `json:"rejected"`
+}
+
 // CommentKinds are the webhook kinds that carry a comment.
 var CommentKinds = []string{"note", "issue_comment", "pull_request_review_comment", "pullrequest:comment_created"}
 
@@ -259,6 +273,7 @@ type WebhookFilter struct {
 	Platform string
 	Project  string // substring, case-insensitive
 	Outcome  string
+	Endpoint string // the webhook URL's ID
 	BeforeID int64
 	Limit    int
 }
@@ -494,6 +509,9 @@ type Store interface {
 	CountWebhookEvents(ctx context.Context, since time.Time) (map[string]int, error)
 	// HookStats summarises verified deliveries per host.
 	HookStats(ctx context.Context) ([]HostHookStats, error)
+	// EndpointHookStats summarises deliveries per webhook URL, counting
+	// those received since since.
+	EndpointHookStats(ctx context.Context, since time.Time) ([]EndpointHookStats, error)
 	// PruneWebhookEvents deletes events older than before and keeps at most
 	// keep rows.
 	PruneWebhookEvents(ctx context.Context, before time.Time, keep int) (int64, error)
@@ -888,6 +906,8 @@ var migrations = []string{
 	// 21: what each review did with the bot's approval, and approvals
 	// given per bucket for Impact (issue #115).
 	approvalSQL,
+	// 22: per-webhook delivery stats on the Code hosts page (issue #131).
+	`CREATE INDEX webhook_events_endpoint_idx ON webhook_events (endpoint, id DESC) WHERE endpoint <> '';`,
 }
 
 // approvalSQL adds jobs.approval and job_metrics.approvals, filled in
@@ -1544,6 +1564,9 @@ func (p *Postgres) ListWebhookEvents(ctx context.Context, f WebhookFilter) ([]We
 	if f.Project != "" {
 		add("project ILIKE $%d", "%"+likeEscape(f.Project)+"%")
 	}
+	if f.Endpoint != "" {
+		add("endpoint = $%d", f.Endpoint)
+	}
 	if f.BeforeID > 0 {
 		add("id < $%d", f.BeforeID)
 	}
@@ -1556,14 +1579,21 @@ func (p *Postgres) ListWebhookEvents(ctx context.Context, f WebhookFilter) ([]We
 	defer rows.Close()
 	out := []WebhookEvent{}
 	for rows.Next() {
-		var e WebhookEvent
-		if err := rows.Scan(&e.ID, &e.ReceivedAt, &e.Platform, &e.Host, &e.Project, &e.Number, &e.Event, &e.Kind, &e.Action,
-			&e.Sender, &e.Delivery, &e.Endpoint, &e.Auth, &e.Outcome, &e.Reason, &e.Status, &e.DurationMS, &e.SourceIP); err != nil {
+		e, err := scanHook(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// scanHook reads a row of hookCols.
+func scanHook(row pgx.Row) (WebhookEvent, error) {
+	var e WebhookEvent
+	err := row.Scan(&e.ID, &e.ReceivedAt, &e.Platform, &e.Host, &e.Project, &e.Number, &e.Event, &e.Kind, &e.Action,
+		&e.Sender, &e.Delivery, &e.Endpoint, &e.Auth, &e.Outcome, &e.Reason, &e.Status, &e.DurationMS, &e.SourceIP)
+	return e, err
 }
 
 func likeEscape(s string) string {
@@ -1606,6 +1636,60 @@ func (p *Postgres) HookStats(ctx context.Context) ([]HostHookStats, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) EndpointHookStats(ctx context.Context, since time.Time) ([]EndpointHookStats, error) {
+	by := map[string]*EndpointHookStats{}
+	var order []string
+	get := func(id string) *EndpointHookStats {
+		if by[id] == nil {
+			by[id] = &EndpointHookStats{Endpoint: id}
+			order = append(order, id)
+		}
+		return by[id]
+	}
+	rows, err := p.pool.Query(ctx, `SELECT DISTINCT ON (endpoint) `+hookCols+` FROM webhook_events
+		WHERE endpoint <> '' ORDER BY endpoint, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		e, err := scanHook(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		get(e.Endpoint).Last = &e
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = p.pool.Query(ctx, `SELECT endpoint,
+		count(*) FILTER (WHERE outcome NOT IN ('rejected', 'error')),
+		count(*) FILTER (WHERE outcome IN ('rejected', 'error'))
+		FROM webhook_events WHERE endpoint <> '' AND received_at >= $1 GROUP BY endpoint`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var ok, bad int
+		if err := rows.Scan(&id, &ok, &bad); err != nil {
+			return nil, err
+		}
+		st := get(id)
+		st.Accepted, st.Rejected = ok, bad
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]EndpointHookStats, 0, len(order))
+	for _, id := range order {
+		out = append(out, *by[id])
+	}
+	return out, nil
 }
 
 func (p *Postgres) PruneWebhookEvents(ctx context.Context, before time.Time, keep int) (int64, error) {

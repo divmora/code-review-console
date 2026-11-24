@@ -520,6 +520,38 @@ func TestHookStats(t *testing.T) {
 	t.Errorf("host missing from %+v", list)
 }
 
+func TestEndpointHookStats(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	ep := uuid.NewString()
+	old := time.Now().Add(-48 * time.Hour)
+	if err := p.InsertWebhookEvents(ctx, []WebhookEvent{
+		{Platform: "gitlab", Host: "h", Endpoint: ep, Auth: "signature", Outcome: HookQueued, ReceivedAt: old},
+		{Platform: "gitlab", Host: "h", Endpoint: ep, Auth: "signature", Outcome: HookIgnored},
+		{Platform: "gitlab", Host: "h", Endpoint: ep, Auth: "failed", Outcome: HookRejected, Reason: "invalid token"},
+		{Platform: "gitlab", Host: "h", Endpoint: ep, Auth: "signature", Outcome: HookError},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := p.EndpointHookStats(ctx, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.Endpoint == ep {
+			if s.Accepted != 1 || s.Rejected != 2 || s.Last == nil || s.Last.Outcome != HookError {
+				t.Errorf("stats = %+v (last %+v)", s, s.Last)
+			}
+			events, err := p.ListWebhookEvents(ctx, WebhookFilter{Endpoint: ep})
+			if err != nil || len(events) != 4 {
+				t.Errorf("filtered by endpoint: %d, %v", len(events), err)
+			}
+			return
+		}
+	}
+	t.Errorf("endpoint missing from %+v", list)
+}
+
 // TestConnectDoesNotMigrate: check-config connects without migrating, so a
 // newer binary never changes the schema under a serving console.
 func TestConnectDoesNotMigrate(t *testing.T) {

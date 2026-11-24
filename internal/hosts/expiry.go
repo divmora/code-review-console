@@ -167,9 +167,14 @@ type Check struct {
 	Summary string    `json:"summary"`
 	Message string    `json:"message"`
 	At      time.Time `json:"at"`
+	// User is who the token belongs to, when the check got that far.
+	User string `json:"user,omitempty"`
+	// Source says what ran the check: "test" (the Test button) or
+	// "startup" (the identity lookup at start and after host changes).
+	Source string `json:"source,omitempty"`
 }
 
-// RecordCheck remembers a Test result for host id.
+// RecordCheck remembers the latest check of host id's credentials.
 func (r *Registry) RecordCheck(id int64, c Check) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -179,7 +184,7 @@ func (r *Registry) RecordCheck(id int64, c Check) {
 	r.checks[id] = c
 }
 
-// CheckOf returns the last Test result for host id.
+// CheckOf returns the latest check of host id's credentials.
 func (r *Registry) CheckOf(id int64) (Check, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

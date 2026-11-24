@@ -142,8 +142,8 @@ func (a *Admin) setup(ctx context.Context) (setupStatus, error) {
 		stats := a.hookStats(ctx)
 		total := 0
 		for _, h := range active {
-			total += stats[h.Platform+":"+h.Host].Comments
-			if w := commentWarning(h, stats[h.Platform+":"+h.Host]); w != "" && comments.Detail == "" {
+			total += stats.hosts[h.Platform+":"+h.Host].Comments
+			if w := commentWarning(h, stats.hosts[h.Platform+":"+h.Host]); w != "" && comments.Detail == "" {
 				comments.Detail = h.Name + ": " + w
 			}
 		}

@@ -322,9 +322,15 @@ func (s *Server) refreshHosts() error {
 		login, err := c.CurrentUser(ctx)
 		if err != nil || login == "" {
 			s.logger.Warn("could not read the token user", "platform", h.Platform, "host", h.Host, "error", err)
+			if err == nil {
+				err = errors.New("the code host returned no user for the token")
+			}
+			// The Code hosts page shows this instead of "Not tested" (issue #131).
+			s.hosts.RecordCheck(h.ID, hosts.Check{Summary: hosts.Summarize(err), Message: err.Error(), At: time.Now(), Source: "startup"})
 			continue
 		}
 		logins[h.Host] = login
+		s.hosts.RecordCheck(h.ID, hosts.Check{OK: true, Summary: "OK as @" + login, Message: "connected as @" + login, At: time.Now(), User: login, Source: "startup"})
 		s.logger.Info(h.Platform+" identity", "host", h.Host, "token_user", login,
 			"reviewer", firstNonEmpty(h.Reviewer, login), "mention", "@"+firstNonEmpty(h.BotName, s.tuning.Get(ctx).BotName, login))
 	}
