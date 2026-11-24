@@ -138,7 +138,8 @@ type Impact struct {
 type ImpactPoint struct {
 	Bucket             time.Time      `json:"bucket"`
 	Reviews            int            `json:"reviews"`
-	Findings           map[string]int `json:"findings"` // by severity
+	Comments           int            `json:"comments,omitempty"` // dashboards only
+	Findings           map[string]int `json:"findings"`           // by severity
 	Scored             int            `json:"scored"`
 	QualitySum         int64          `json:"quality_sum"`
 	SecuritySum        int64          `json:"security_sum"`

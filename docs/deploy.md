@@ -417,6 +417,13 @@ not even as counts, and the queue shows only as "N waiting overall" (not on a pu
 | `token` | admins, and anyone with this dashboard's token | `/dashboards/<slug>?token=…`; JSON at `/api/dashboards/<slug>/status` |
 | `public` | everyone | `/dashboards/<slug>` |
 
+With a database, each dashboard also shows its repositories' **scores and totals**: reviews, comments
+and findings by severity for the last 7 and 30 days with the average scores, a 30-day trend of the
+daily average scores, each repository's latest scores, and the five lowest-scoring merge requests
+reviewed in the last 30 days. They come from the database's rollups (the same on every replica) and
+refresh every minute. A dashboard that hides repository names keeps the totals and the trend and
+leaves out the per-repository lists.
+
 A token opens only its own dashboard. New `public` and `token` dashboards hide repository names
 until an admin shows them. On upgrade, the old "signed-in admins only" setting becomes `signed_in`,
 because it let in every signed-in role; set the default dashboard to `admins` to keep viewers and

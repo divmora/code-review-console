@@ -1405,3 +1405,84 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 	out.TopByReviews, out.TopByFindings = top(byRepoReviews), top(byRepoFindings)
 	return out, nil
 }
+
+// Insights computes a dashboard's numbers from the saved jobs (the
+// Postgres store reads its rollups).
+func (m *Memory) Insights(_ context.Context, f store.InsightsFilter) (*store.Insights, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := &store.Insights{Daily: []store.ImpactPoint{}, Latest: []store.ScoredPR{}, Lowest: []store.ScoredPR{}}
+	in := func(j store.Job) bool {
+		if f.Repos == nil {
+			return true
+		}
+		p, h, r := store.RepoKey(j.Platform, j.Host, j.Repo)
+		for _, x := range f.Repos {
+			xp, xh, xr := store.RepoKey(x.Platform, x.Host, x.Repo)
+			if p == xp && h == xh && r == xr {
+				return true
+			}
+		}
+		return false
+	}
+	points := map[time.Time]*store.ImpactPoint{}
+	latest := map[string]store.ScoredPR{}
+	prs := map[string]store.ScoredPR{}
+	for _, j := range m.jobs { // oldest first
+		if !in(j) {
+			continue
+		}
+		p, h, r := store.RepoKey(j.Platform, j.Host, j.Repo)
+		var s store.ScoredPR
+		if j.Scores != nil {
+			s = store.ScoredPR{Platform: p, Host: h, Repo: r, Number: j.Number, URL: j.URL, At: j.Finished, Scores: *j.Scores}
+			latest[p+"|"+h+"|"+r] = s
+		}
+		if j.Finished.Before(f.From) || !j.Finished.Before(f.To) {
+			continue
+		}
+		if j.Scores != nil {
+			prs[p+"|"+h+"|"+r+"|"+strconv.Itoa(j.Number)] = s
+		}
+		t := j.Finished.UTC()
+		b := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		pt := points[b]
+		if pt == nil {
+			pt = &store.ImpactPoint{Bucket: b, Findings: map[string]int{}}
+			points[b] = pt
+		}
+		if j.Scores != nil {
+			pt.Scored++
+			pt.QualitySum += int64(j.Scores.Quality)
+			pt.SecuritySum += int64(j.Scores.Security)
+			pt.MaintainabilitySum += int64(j.Scores.Maintainability)
+		}
+		pt.Comments += j.Comments
+		if store.IsReview(j) {
+			pt.Reviews++
+			for _, fc := range store.CountFindings(j.Result) {
+				pt.Findings[fc.Severity] += fc.Count
+			}
+		}
+	}
+	for _, pt := range points {
+		out.Daily = append(out.Daily, *pt)
+	}
+	sort.Slice(out.Daily, func(i, j int) bool { return out.Daily[i].Bucket.Before(out.Daily[j].Bucket) })
+	for _, s := range latest {
+		out.Latest = append(out.Latest, s)
+	}
+	sort.Slice(out.Latest, func(i, j int) bool {
+		return out.Latest[i].Platform+out.Latest[i].Host+out.Latest[i].Repo < out.Latest[j].Platform+out.Latest[j].Host+out.Latest[j].Repo
+	})
+	if f.Lowest > 0 {
+		for _, s := range prs {
+			out.Lowest = append(out.Lowest, s)
+		}
+		store.SortScored(out.Lowest)
+		if len(out.Lowest) > f.Lowest {
+			out.Lowest = out.Lowest[:f.Lowest]
+		}
+	}
+	return out, nil
+}

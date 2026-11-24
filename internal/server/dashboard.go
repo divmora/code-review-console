@@ -175,6 +175,8 @@ type statusResponse struct {
 	// WaitingOverall is how many jobs wait in the whole queue, when the
 	// dashboard shows only some repositories (never on a public one).
 	WaitingOverall int `json:"waiting_overall,omitempty"`
+	// Insights are the dashboard's scores and totals from the database.
+	Insights *dashboardInsights `json:"insights,omitempty"`
 	Snapshot
 }
 
@@ -291,6 +293,7 @@ func (s *Server) writeStatus(w http.ResponseWriter, r *http.Request, d dashboard
 	if !scope.All() && d.Access != dashboards.Public {
 		resp.WaitingOverall = len(all.Pending)
 	}
+	resp.Insights = s.insights(r.Context(), d, scope)
 	writeJSON(w, http.StatusOK, resp)
 }
 
