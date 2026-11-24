@@ -531,10 +531,15 @@ hosts:
         name: platform group
         secret: ${GITLAB_HOOK_PLATFORM}
       - name: web group                # no id or secret: both are generated, the secret printed once
+    credentials:                       # group tokens, matched by pattern (licensed)
+      - pattern: acme/platform
+        name: Platform team
+        token: ${GITLAB_TOKEN_PLATFORM}
+        settings: { bot_name: review-bot }
 ```
 
-Import creates or updates hosts (matched by platform and URL) and webhooks (matched by id), and
-never deletes. An absent secret keeps the stored value. The whole file is checked before anything is
+Import creates or updates hosts (matched by platform and URL), webhooks (matched by id) and
+credentials (matched by pattern), and never deletes. An absent secret keeps the stored value. The whole file is checked before anything is
 written, and unknown fields are rejected. Imports are audited as `cli: hosts import`. A running console
 applies the import within 5 seconds, without a restart (versions before 0.12 need a restart).
 

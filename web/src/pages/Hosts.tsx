@@ -3,10 +3,11 @@ import { Link } from "react-router-dom";
 import { ago, fmtDate, fmtTokenTime } from "../format";
 import type { TokenExpiry } from "../types";
 import { fmtDateTime } from "../format";
-import { Check, Copy, Plug, Plus, Radio, Webhook } from "lucide-react";
+import { Check, Copy, KeyRound, Plug, Plus, Radio, Webhook } from "lucide-react";
 import { del, get, post, put, qs } from "../api";
 import { Empty, errMsg, Field, FormGrid, LockNote, NativeSelect, Note, Panel, SidePanel, StateBadge, Sub, Toolbar, useConfirm, useFeature, useToast } from "../ui";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -22,6 +23,17 @@ type Host = {
   // The handle @bot commands use, and where it comes from (host bot name,
   // Tuning, or the token user found by the last check).
   mention?: string; mention_source?: "host" | "settings" | "token";
+  credentials: Cred[];
+};
+
+// Cred is a credential covering a group or pattern of a host instead of the
+// host's own token (issue #136).
+type Cred = {
+  id: number; host_id: number; name: string; pattern: string; enabled: boolean;
+  settings: { bot_name?: string; reviewer?: string; email?: string };
+  secrets: { token: boolean; api_token: boolean };
+  token_expiry?: TokenExpiry; check?: HostCheck; mention?: string;
+  updated_at: string; updated_by: string;
 };
 
 // Delivery is one entry of the webhook history (the Webhooks page).
@@ -286,6 +298,181 @@ function HookRow({ hook, platform, onChanged }: { hook: Hook; platform: Host["pl
   );
 }
 
+// CredForm adds a credential, or changes one (tokens left blank are kept).
+function CredForm({ host, cred, onSaved, onCancel }: { host: Host; cred?: Cred; onSaved: () => void; onCancel?: () => void }) {
+  const toast = useToast();
+  const [v, setV] = useState({
+    name: cred?.name ?? "", pattern: cred?.pattern ?? "", token: "", email: cred?.settings.email ?? "", apiToken: "",
+    bot: cred?.settings.bot_name ?? "", reviewer: cred?.settings.reviewer ?? "",
+  });
+  const set = (k: keyof typeof v) => (e: { target: { value: string } }) => setV({ ...v, [k]: e.target.value });
+  const save = () => {
+    const body: any = { name: v.name.trim(), pattern: v.pattern.trim(), enabled: cred ? cred.enabled : true, settings: { bot_name: v.bot.trim(), reviewer: v.reviewer.trim() } };
+    if (host.platform === "bitbucket") body.settings.email = v.email.trim();
+    if (v.token.trim()) body.token = v.token.trim();
+    if (v.apiToken.trim()) body.api_token = v.apiToken.trim();
+    (cred ? put<Cred>("/admin/api/credentials/" + cred.id, body) : post<Cred>(`/admin/api/hosts/${host.id}/credentials`, body))
+      .then((c) => {
+        toast((cred ? "Saved " : "Added ") + (c.name || c.pattern));
+        if (!cred) setV({ name: "", pattern: "", token: "", email: "", apiToken: "", bot: "", reviewer: "" });
+        onSaved();
+      })
+      .catch((e) => toast(errMsg(e), true));
+  };
+  const tokenLabel = host.platform === "gitlab" ? "Group or project access token (api scope)" : host.platform === "github" ? "Token (fine-grained, for this owner)" : "Access token";
+  return (
+    <div className="grid gap-3">
+      <FormGrid className="lg:grid-cols-2">
+        <Field label="Group, owner or pattern">
+          <Input value={v.pattern} placeholder={host.platform === "github" ? "acme · acme/svc-*" : "acme · acme/platform · acme/svc-*"} onChange={set("pattern")} spellCheck={false} />
+        </Field>
+        <Field label="Name">
+          <Input value={v.name} placeholder="e.g. Platform team" onChange={set("name")} />
+        </Field>
+        <Secret label={tokenLabel} set={!!cred?.secrets.token} value={v.token} onChange={(x) => setV({ ...v, token: x })} />
+        {host.platform === "bitbucket" && (
+          <>
+            <Field label="Account email">
+              <Input value={v.email} placeholder="with an API token instead" onChange={set("email")} />
+            </Field>
+            <Secret label="Atlassian API token" set={!!cred?.secrets.api_token} value={v.apiToken} onChange={(x) => setV({ ...v, apiToken: x })} />
+          </>
+        )}
+        <Field label="Mention name">
+          <Input value={v.bot} placeholder={"default: " + (host.settings.bot_name ? "@" + host.settings.bot_name : "the token's user")} onChange={set("bot")} />
+        </Field>
+        <Field label="Reviewer username">
+          <Input value={v.reviewer} placeholder={"default: " + (host.settings.reviewer || "the token's user")} onChange={set("reviewer")} />
+        </Field>
+      </FormGrid>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={save}>
+          {cred ? "Save credential" : <><Plus /> Add credential</>}
+        </Button>
+        {onCancel && (
+          <Button size="sm" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// CredRow is one credential: what it covers, its check and expiry, and
+// its actions.
+function CredRow({ host, cred, covers, managed, onChanged }: { host: Host; cred: Cred; covers?: number; managed: boolean; onChanged: () => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [editing, setEditing] = useState(false);
+  const [test, setTest] = useState<(HostCheck & { pending?: boolean }) | undefined>(cred.check);
+  useEffect(() => setTest(cred.check), [cred.check]);
+  const label = cred.name || cred.pattern;
+  const runTest = () => {
+    setTest({ ok: false, pending: true });
+    post<HostCheck>(`/admin/api/credentials/${cred.id}/test`)
+      .then((r) => (setTest(r), onChanged()))
+      .catch((e) => setTest({ ok: false, summary: "Check failed", message: errMsg(e) }));
+  };
+  const toggle = () =>
+    put<Cred>("/admin/api/credentials/" + cred.id, { name: cred.name, pattern: cred.pattern, enabled: !cred.enabled, settings: cred.settings })
+      .then(() => (toast((cred.enabled ? "Disabled " : "Enabled ") + label), onChanged()))
+      .catch((e) => toast(errMsg(e), true));
+  const remove = async () => {
+    const fallback = host.secrets.token || host.secrets.api_token || host.secrets.app_private_key ? "the host's own token (or a broader credential)" : "a broader credential; with none, their reviews fail";
+    if (!(await confirm({ title: "Delete the credential for " + cred.pattern + "?", description: `Repositories in ${cred.pattern} fall back to ${fallback}. Revoke the token on the code host too.`, action: "Delete credential", danger: true }))) return;
+    del("/admin/api/credentials/" + cred.id)
+      .then(() => (toast("Deleted " + label), onChanged()))
+      .catch((e) => toast(errMsg(e), true));
+  };
+  return (
+    <div className="grid gap-3 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="text-sm font-medium">{cred.pattern}</code>
+        {cred.name && <span className="text-sm text-muted-foreground">{cred.name}</span>}
+        <StateBadge kind={cred.enabled ? "on" : "idle"}>{cred.enabled ? "Enabled" : "Disabled"}</StateBadge>
+        <span className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={runTest}>
+          <Plug /> Test
+        </Button>
+        {managed && (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setEditing(!editing)}>
+              {editing ? "Close" : "Edit"}
+            </Button>
+            <Button variant="outline" size="sm" className="h-7" onClick={toggle}>
+              {cred.enabled ? "Disable" : "Enable"}
+            </Button>
+            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={remove}>
+              Delete
+            </Button>
+          </>
+        )}
+      </div>
+      <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+        <div className="grid gap-0.5 text-sm">
+          <div>
+            mention: {cred.mention ? "@" + cred.mention : <span className="text-muted-foreground">unknown until the token is checked</span>}
+            {cred.settings.reviewer ? " · reviewer: " + cred.settings.reviewer : ""}
+          </div>
+          {covers !== undefined && (
+            <div className="text-muted-foreground">
+              {covers === 0 ? "No known repository uses it yet" : `Used by ${covers} known ${covers === 1 ? "repository" : "repositories"}`}
+            </div>
+          )}
+          <TokenExpiryNote e={cred.token_expiry} />
+        </div>
+        <CheckResult t={test} />
+      </div>
+      {editing && <CredForm host={host} cred={cred} onSaved={() => (setEditing(false), onChanged())} onCancel={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+// HostCredentials lists a host's credentials: each covers a group, owner or
+// pattern instead of the host's own token, so one token never reaches
+// every group (issue #136).
+function HostCredentials({ host, managed, onChanged }: { host: Host; managed: boolean; onChanged: () => void }) {
+  const licensed = useFeature("hosts");
+  const [covers, setCovers] = useState<Record<number, number> | null>(null);
+  const loadCovers = () =>
+    get<{ host: string; platform: string; credential?: { id: number } }[]>("/admin/api/repos")
+      .then((rs) => {
+        const n: Record<number, number> = {};
+        for (const r of rs) if (r.credential) n[r.credential.id] = (n[r.credential.id] || 0) + 1;
+        setCovers(n);
+      })
+      .catch(() => setCovers(null));
+  useEffect(() => {
+    loadCovers();
+  }, [host.credentials.length]);
+  const changed = () => (onChanged(), loadCovers());
+  const own = host.secrets.token || host.secrets.api_token || host.secrets.app_private_key;
+  return (
+    <div className="grid gap-6">
+      <Sub>
+        A credential covers a group, owner or pattern (<code>acme</code>, <code>acme/platform</code> with its subgroups, <code>acme/svc-*</code>) with its own token, so a leaked token exposes only
+        that group. The most specific enabled credential covering a repository is used for its reviews, comments and @bot commands, like Rules;{" "}
+        {own ? "the host's own token covers the rest." : "this host has no token of its own, so repositories no credential covers aren't reviewed."}
+        {host.platform === "gitlab" && " A GitLab group access token (Developer role, api scope) is a good fit: it reaches only that group."}
+      </Sub>
+      {!licensed && <LockNote feature="hosts" />}
+      {managed && licensed && (
+        <Section title="Add a credential">
+          <CredForm host={host} onSaved={changed} />
+        </Section>
+      )}
+      <Section title={`Credentials (${host.credentials.length})`}>
+        {!host.credentials.length ? (
+          <Sub>None yet: every repository uses the host's own token.</Sub>
+        ) : (
+          host.credentials.map((c) => <CredRow key={c.id} host={host} cred={c} covers={covers ? covers[c.id] || 0 : undefined} managed={managed} onChanged={changed} />)
+        )}
+      </Section>
+    </div>
+  );
+}
+
 function CommentWarning({ text }: { text: string }) {
   return (
     <div role="status" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm text-warning">
@@ -360,6 +547,9 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
     token: "", appID: st.app_id ? String(st.app_id) : "", appKey: "", email: st.email ?? "", apiToken: "",
     reqSig: !!st.require_signature, skipTLS: !!st.skip_tls_verify, bot: st.bot_name ?? "", reviewer: st.reviewer ?? "",
   });
+  // dropToken removes the host's own token: credentials by group cover its
+  // repositories instead (issue #136).
+  const [dropToken, setDropToken] = useState(false);
   const set = (k: keyof typeof v) => (x: any) => setV({ ...v, [k]: typeof x === "object" && x?.target ? x.target.value : x });
   const save = () => {
     const body: any = { platform: plat, base_url: v.base.trim(), name: v.name.trim(), enabled: v.enabled, settings: { bot_name: v.bot.trim(), reviewer: v.reviewer.trim() } };
@@ -367,6 +557,7 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
     if (plat === "gitlab") Object.assign(body.settings, { skip_tls_verify: v.skipTLS, require_signature: v.reqSig });
     if (plat === "bitbucket") body.settings.email = v.email.trim();
     if (v.token.trim()) body.token = v.token.trim();
+    else if (dropToken) body.token = "";
     if (v.appKey.trim()) body.app_private_key = v.appKey;
     if (v.apiToken.trim()) body.api_token = v.apiToken.trim();
     (host ? put<Host>("/admin/api/hosts/" + host.id, body) : post<Host>("/admin/api/hosts", body))
@@ -433,6 +624,16 @@ function HostForm({ host, onSaved, onCancel }: { host: Host | null; onSaved: (h:
               <Secret label="Atlassian API token" set={sec.api_token} value={v.apiToken} onChange={set("apiToken")} />
             </>
           )}
+          <Sub>
+            The host's own token is optional: credentials by group (on the host's row, once it is saved) can cover its groups instead, each with its own token. Repositories no credential covers then
+            aren't reviewed.
+          </Sub>
+          {host && sec.token && !v.token.trim() && (
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={dropToken} onCheckedChange={(x) => setDropToken(x === true)} />
+              Remove the host's own token (only credentials by group are used)
+            </label>
+          )}
         </div>
       </Section>
       <Separator />
@@ -477,6 +678,7 @@ export default function Hosts() {
   const [data, setData] = useState<{ mode: string; key_env?: string; hosts: Host[] } | null>(null);
   const [editing, setEditing] = useState<number | null>(null); // 0 = new
   const [hooks, setHooks] = useState<number | null>(null);
+  const [creds, setCreds] = useState<number | null>(null);
   const [tests, setTests] = useState<Record<number, HostCheck & { pending?: boolean }>>({});
   const load = () => get<{ mode: string; key_env?: string; hosts: Host[] }>("/admin/api/hosts").then(setData).catch((e) => toast(errMsg(e), true));
   useEffect(() => {
@@ -500,6 +702,7 @@ export default function Hosts() {
   const managed = data?.mode === "database";
   const editHost = editing ? data?.hosts.find((h) => h.id === editing) ?? null : null;
   const hooksHost = hooks ? data?.hosts.find((h) => h.id === hooks) ?? null : null;
+  const credsHost = creds ? data?.hosts.find((h) => h.id === creds) ?? null : null;
   return (
     <section className="grid gap-4">
       <Toolbar>
@@ -561,10 +764,18 @@ export default function Hosts() {
                           </Badge>
                         ))}
                       </div>
+                      {auth.length === 0 && (
+                        <div className="mt-1">
+                          <StateBadge kind={h.credentials.some((c) => c.enabled) ? "idle" : "warn"}>{h.credentials.some((c) => c.enabled) ? "credentials only" : "no token"}</StateBadge>
+                        </div>
+                      )}
                       <Sub title={h.mention_source === "token" ? "The token user, found by the last check" : h.mention_source === "settings" ? "The bot name in Settings" : h.mention_source === "host" ? "This host's bot name" : undefined}>
                         mention: {h.mention ? "@" + h.mention : "unknown until the token is checked"}
                         {h.settings.reviewer ? " · reviewer: " + h.settings.reviewer : ""}
                       </Sub>
+                      <Button variant="link" size="sm" className="h-auto px-0" title="Tokens for groups or patterns, used instead of the host's own" onClick={() => setCreds(h.id)}>
+                        <KeyRound /> Group tokens{h.credentials.length ? ` (${h.credentials.length})` : ""}
+                      </Button>
                     </TableCell>
                     <TableCell className="max-w-80 align-top whitespace-normal">
                       {h.webhooks.length ? (
@@ -620,6 +831,10 @@ export default function Hosts() {
 
       <SidePanel open={hooksHost !== null} onClose={() => setHooks(null)} title={hooksHost ? "Webhooks: " + hooksHost.name : ""} description="Each webhook has its own URL and secret." wide>
         {hooksHost && <HostWebhooks key={hooksHost.id} host={hooksHost} managed={managed} onChanged={load} />}
+      </SidePanel>
+
+      <SidePanel open={credsHost !== null} onClose={() => setCreds(null)} title={credsHost ? "Credentials: " + credsHost.name : ""} description="Tokens for groups or patterns, used instead of the host's own." wide>
+        {credsHost && <HostCredentials key={credsHost.id} host={credsHost} managed={managed} onChanged={load} />}
       </SidePanel>
 
       <SidePanel open={editing !== null} onClose={() => setEditing(null)} title={editHost ? "Edit " + editHost.name : "New host"} description="Credentials are encrypted before they are stored.">

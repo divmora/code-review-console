@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Ellipsis, FolderPlus, Plus, Search, Settings2 } from "lucide-react";
+import { Ellipsis, FolderPlus, KeyRound, Plus, Search, Settings2 } from "lucide-react";
 import { del, get, post, put } from "../api";
 import { ago } from "../format";
 import type { Access, Overrides, Repo } from "../types";
@@ -339,6 +339,11 @@ export default function Repositories() {
                         {r.platform} · {r.host}
                         <span className="xl:hidden"> · last webhook {ago(r.last_seen)}</span>
                       </Sub>
+                      {r.credential && (
+                        <Sub className="max-w-64 truncate" title={"Uses the group token for " + r.credential.pattern + " (Code hosts), not the host's own"}>
+                          <KeyRound className="inline size-3 align-[-1px]" /> {r.credential.name}
+                        </Sub>
+                      )}
                       {/* Below lg the settings column is hidden; its chips move here. */}
                       {settingsChips(e.settings).length > 0 && (
                         <div className="mt-1.5 lg:hidden">
