@@ -36,6 +36,21 @@ func TestSharedSecretsAreDeleted(t *testing.T) {
 	if strings.Contains(string(open), "webhook_secrets") || strings.Contains(string(open), "signing_tokens") || !strings.Contains(string(open), "glpat-x") {
 		t.Errorf("only the shared URL's secrets are deleted: %s", open)
 	}
+	// The audit entry says what was deleted, not "no visible change" (issue #133).
+	entries, _ := st.ListAudit(ctx, 10)
+	var got []string
+	for _, e := range entries {
+		if e.Actor == "upgrade: shared webhook URL removed" {
+			var d struct {
+				SecretsChanged []string `json:"secrets_changed"`
+			}
+			_ = json.Unmarshal(e.Detail, &d)
+			got = d.SecretsChanged
+		}
+	}
+	if strings.Join(got, ",") != "webhook_secrets:-1,signing_tokens:-1" {
+		t.Errorf("audit secrets_changed = %v", got)
+	}
 	// Nothing left to delete: the next start says nothing.
 	r2 := New(fileConfig(t), st, box, nil)
 	if notes, err := r2.Init(ctx); err != nil || strings.Contains(strings.Join(notes, " "), "shared") {
