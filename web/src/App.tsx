@@ -352,8 +352,26 @@ function Header({ me }: { me: Me }) {
   );
 }
 
+// WIDE is where the sidebar has room to show its labels. Narrower (a split
+// screen, a pane beside an editor) it collapses to icons, so tables keep
+// their width (issue #130); the toggle still opens it, until the window
+// crosses the breakpoint again.
+const WIDE = "(min-width: 1024px)";
+
+function useSidebarOpen(): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(() => window.matchMedia(WIDE).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(WIDE);
+    const onChange = () => setOpen(mql.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return [open, setOpen];
+}
+
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useSidebarOpen();
   const [err, setErr] = useState("");
   const loadMe = () =>
     get<Me>("/admin/api/me")
@@ -398,7 +416,7 @@ export default function App() {
         <TooltipProvider delayDuration={300}>
           <ToastProvider>
             <ConfirmProvider>
-              <SidebarProvider>
+              <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
                 <AppSidebar me={me} />
                 <SidebarInset className="min-w-0">
                   <Header me={me} />
