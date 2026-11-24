@@ -73,6 +73,22 @@ a:hover { text-decoration: underline; }
 .plat { color: var(--muted); font-size: 12px; }
 .err { color: var(--bad); }
 footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+.periods { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
+.period { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.period h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.period .row { display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline; }
+.period .n { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.period .l { color: var(--muted); font-size: 12px; }
+.trend { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-top: 10px; }
+.trend svg { width: 100%; height: 120px; display: block; }
+.trend .ln { fill: none; stroke-width: 2; }
+.trend .ln-quality { stroke: var(--accent); } .trend .ln-security { stroke: var(--bad); } .trend .ln-maintainability { stroke: var(--ok); }
+.trend .grid { stroke: var(--line); stroke-width: 1; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.legend i { display: inline-block; width: 10px; height: 3px; margin-right: 5px; vertical-align: middle; }
+.legend .k-quality { background: var(--accent); } .legend .k-security { background: var(--bad); } .legend .k-maintainability { background: var(--ok); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 10px; }
+.two table { min-width: 0; }
 </style>
 </head>
 <body>
@@ -87,6 +103,16 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
   </header>
 
   <section class="tiles" id="tiles"></section>
+
+  <section id="insights" hidden>
+    <h2>Scores and totals</h2>
+    <div class="periods" id="periods"></div>
+    <div class="trend" id="trend"></div>
+    <div class="two">
+      <div><h2>Latest scores by repository</h2><div class="panel" id="latest"></div></div>
+      <div><h2>Lowest-scoring merge requests, 30 days</h2><div class="panel" id="lowest"></div></div>
+    </div>
+  </section>
 
   <h2>Running <span class="count" id="c-running">0</span></h2>
   <div class="panel" id="running"></div>
@@ -191,11 +217,76 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
     return " · mention " + ms.map(function (m) { return "@" + m.handle + (m.host ? " on " + m.host : ""); }).join(", ");
   }
 
+  var SVG = "http://www.w3.org/2000/svg";
+  function svg(tag, attrs) {
+    var n = document.createElementNS(SVG, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+  var kinds = [["quality", "Quality"], ["security", "Security"], ["maintainability", "Maintainability"]];
+  function avgChips(p) {
+    if (!p.scored) return el("span", { cls: "l", text: "no scored reviews" });
+    return el("span", null, kinds.map(function (k) {
+      var v = p[k[0]], band = v >= 80 ? "ok" : v >= 50 ? "warn" : "bad";
+      return el("span", { cls: "sc " + band, title: "Average " + k[1].toLowerCase() + " " + v, text: k[1][0] + " " + v });
+    }));
+  }
+  function period(title, p) {
+    var f = p.findings || {}, total = 0;
+    for (var k in f) total += f[k];
+    function stat(n, l) { return el("div", null, [el("div", { cls: "n", text: n }), el("div", { cls: "l", text: l })]); }
+    return el("div", { cls: "period" }, [el("h3", { text: title }), el("div", { cls: "row" }, [
+      stat(num(p.reviews), "reviews"), stat(num(p.comments), "comments"),
+      stat(num(total), "findings · " + num(f.critical || 0) + " critical, " + num(f.major || 0) + " major"),
+      el("div", null, [avgChips(p), el("div", { cls: "l", text: "average scores (" + num(p.scored) + " scored)" })])
+    ])]);
+  }
+  // trend draws the daily average scores of the last 30 days.
+  function trend(daily, now) {
+    var pts = daily.filter(function (p) { return p.scored > 0; });
+    var box = document.getElementById("trend");
+    if (!pts.length) { box.replaceChildren(el("div", { cls: "empty", text: "No scored reviews in the last 30 days." })); return; }
+    var W = 600, H = 120, pad = 6, end = now, start = end - 30 * 86400000;
+    // The scale starts a little below the lowest average (at most 40), so
+    // the lines don't crowd the top.
+    var lo = 40;
+    pts.forEach(function (p) { kinds.forEach(function (k) { lo = Math.min(lo, Math.floor(p[k[0] + "_sum"] / p.scored) - 5); }); });
+    lo = Math.max(0, lo);
+    var x = function (t) { return pad + (W - 2 * pad) * (ms(t) - start) / (end - start); };
+    var y = function (v) { return H - pad - (H - 2 * pad) * (v - lo) / (100 - lo); };
+    var s = svg("svg", { viewBox: "0 0 " + W + " " + H, preserveAspectRatio: "none", role: "img", "aria-label": "Daily average scores, last 30 days" });
+    [50, 80].forEach(function (v) { s.appendChild(svg("line", { x1: 0, x2: W, y1: y(v), y2: y(v), "class": "grid" })); });
+    kinds.forEach(function (k) {
+      var d = pts.map(function (p) { return x(p.bucket).toFixed(1) + "," + y(p[k[0] + "_sum"] / p.scored).toFixed(1); }).join(" ");
+      s.appendChild(svg("polyline", { points: pts.length === 1 ? d + " " + d : d, "class": "ln ln-" + k[0], "vector-effect": "non-scaling-stroke" }));
+    });
+    var legend = el("div", { cls: "legend" }, kinds.map(function (k) { return el("span", null, [el("i", { cls: "k-" + k[0] }), k[1]]); }).concat([el("span", { text: "daily averages, last 30 days" })]));
+    box.replaceChildren(legend, s);
+  }
+  function renderInsights(d, now) {
+    var box = document.getElementById("insights"), ins = d.insights;
+    box.hidden = !ins;
+    if (!ins) return;
+    document.getElementById("periods").replaceChildren(period("Last 7 days", ins.week), period("Last 30 days", ins.month));
+    trend(ins.daily || [], now);
+    var hidden = d.redacted ? "Hidden: this dashboard hides repository names." : null;
+    set("latest", hidden ? el("div", { cls: "empty", text: hidden }) : table(["Repository", "Scores", "Latest review"],
+      (ins.latest || []).map(function (r) {
+        return el("tr", null, [el("td", null, [r.repo, " ", el("span", { cls: "plat", text: r.host })]), scores(r.scores),
+          el("td", { text: "#" + r.number + " · " + ago(r.at, now) })]);
+      }), "No scored reviews yet."));
+    set("lowest", hidden ? el("div", { cls: "empty", text: hidden }) : table(["Merge request", "Scores", "Reviewed"],
+      (ins.lowest || []).map(function (r) {
+        return el("tr", null, [pr(r), scores(r.scores), el("td", { text: ago(r.at, now) })]);
+      }), "No scored reviews in the last 30 days."));
+  }
+
   function render(d) {
     var now = ms(d.now);
     document.getElementById("meta").textContent =
       d.workers + " workers · debounce " + d.debounce + " · up " + dur(now - ms(d.since)) +
       (d.redacted ? " · repository names hidden" : "") + mentionText(d);
+    renderInsights(d, now);
     var t = d.totals;
     document.getElementById("tiles").replaceChildren(
       tile(num(d.running.length), "running"),

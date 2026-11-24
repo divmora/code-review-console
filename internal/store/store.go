@@ -617,6 +617,9 @@ type Store interface {
 	// Impact summarises what the console did in a period, from rollups
 	// (see impact.go).
 	Impact(ctx context.Context, f ImpactFilter) (*Impact, error)
+	// Insights are a dashboard's trend, latest scores and lowest-scoring
+	// merge requests over a period, for its repositories only.
+	Insights(ctx context.Context, f InsightsFilter) (*Insights, error)
 	// RepoScores returns each repository's latest scored review, with its
 	// daily score trend since since.
 	RepoScores(ctx context.Context, since time.Time) ([]RepoScore, error)

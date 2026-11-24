@@ -61,7 +61,8 @@ type Server struct {
 	models   *models.Service
 	tuning   *tuning.Service
 	// dashboards are the status dashboards (issue #155).
-	dashboards *dashboards.Service
+	dashboards    *dashboards.Service
+	insightsCache insightsCache
 	// roleFor replaces the admin panel's session lookup in tests.
 	roleFor func(*http.Request) string
 	// metrics are the counters behind /metrics.

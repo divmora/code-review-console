@@ -438,6 +438,48 @@ func TestTokensUsed(t *testing.T) {
 	}
 }
 
+func TestInsights(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	host := fmt.Sprintf("ins-%d.example.com", time.Now().UnixNano())
+	now := time.Now()
+	res := json.RawMessage(`{"summary":"s","findings":[{"severity":"major","category":"bug"}]}`)
+	add := func(repo string, number int, f time.Time, q, s int) {
+		t.Helper()
+		if _, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: host, Repo: repo, Number: number, State: "done", Enqueued: f, Started: f, Finished: f,
+			Comments: 2, Scores: &Scores{Quality: q, Security: s, Maintainability: 80}, Result: res}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("Team/API", 1, now.Add(-2*time.Hour), 90, 30)
+	add("team/api", 1, now.Add(-time.Hour), 92, 35)
+	add("team/web", 4, now.Add(-time.Hour), 60, 70)
+	add("other/x", 7, now.Add(-time.Hour), 10, 10)
+	day := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	f := InsightsFilter{From: day.AddDate(0, 0, -29), To: day.AddDate(0, 0, 1), Lowest: 5,
+		Repos: []RepoRef{{Platform: "gitlab", Host: host, Repo: "team/api"}, {Platform: "gitlab", Host: strings.ToUpper(host), Repo: "TEAM/WEB"}}}
+	in, err := p.Insights(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviews, comments, majors int
+	for _, d := range in.Daily {
+		reviews, comments, majors = reviews+d.Reviews, comments+d.Comments, majors+d.Findings["major"]
+	}
+	if reviews != 3 || comments != 6 || majors != 3 {
+		t.Errorf("daily: %d reviews, %d comments, %d majors: %+v", reviews, comments, majors, in.Daily)
+	}
+	if len(in.Latest) != 2 || in.Latest[0].Repo != "team/api" || in.Latest[0].Scores.Quality != 92 {
+		t.Errorf("latest: %+v", in.Latest)
+	}
+	if len(in.Lowest) != 2 || in.Lowest[0].Repo != "team/api" || in.Lowest[0].Scores.Security != 35 || in.Lowest[1].Repo != "team/web" {
+		t.Errorf("lowest: %+v", in.Lowest)
+	}
+	if none, _ := p.Insights(ctx, InsightsFilter{From: f.From, To: f.To, Repos: []RepoRef{}}); len(none.Daily)+len(none.Latest) != 0 {
+		t.Errorf("an empty scope: %+v", none)
+	}
+}
+
 func TestDashboardsStore(t *testing.T) {
 	p := openTest(t)
 	ctx := context.Background()
