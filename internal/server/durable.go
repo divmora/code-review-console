@@ -176,33 +176,33 @@ func (s *Server) restoreSaved(ctx context.Context) {
 }
 
 // targetFor builds the code host connection a saved job needs.
-func (s *Server) targetFor(platform, host string, installation int64) (target, error) {
+func (s *Server) targetFor(platform, host string, installation int64, repo string) (target, error) {
 	h, ok := s.hosts.Find(platform, host)
 	if !ok {
 		return target{}, fmt.Errorf("no enabled %s host %s any more", platform, host)
 	}
-	return s.targetOf(h, installation)
+	return s.targetOf(h, installation, repo)
 }
 
 // targetByID is the target of the enabled code host with this ID.
-func (s *Server) targetByID(platform string, id, installation int64) (target, error) {
+func (s *Server) targetByID(platform string, id, installation int64, repo string) (target, error) {
 	for _, h := range s.hosts.Enabled(platform) {
 		if h.ID == id {
-			return s.targetOf(h, installation)
+			return s.targetOf(h, installation, repo)
 		}
 	}
 	return target{}, fmt.Errorf("no enabled %s host #%d any more", platform, id)
 }
 
-func (s *Server) targetOf(h hosts.Host, installation int64) (target, error) {
+func (s *Server) targetOf(h hosts.Host, installation int64, repo string) (target, error) {
 	platform := h.Platform
 	switch platform {
 	case hosts.GitHub:
-		return s.githubTarget(h, installation), nil
+		return s.githubTarget(h, installation, repo), nil
 	case hosts.GitLab:
-		return s.gitlabTarget(h), nil
+		return s.gitlabTarget(h, repo), nil
 	case hosts.Bitbucket:
-		return s.bitbucketTarget(h), nil
+		return s.bitbucketTarget(h, repo), nil
 	}
 	return target{}, fmt.Errorf("unsupported platform %q", platform)
 }
@@ -211,9 +211,9 @@ func (s *Server) requeue(q store.QueuedJob, p queuedPayload) error {
 	var tgt target
 	var err error
 	if p.HostID != 0 {
-		tgt, err = s.targetByID(p.Platform, p.HostID, p.Installation)
+		tgt, err = s.targetByID(p.Platform, p.HostID, p.Installation, p.Repo)
 	} else {
-		tgt, err = s.targetFor(p.Platform, p.Host, p.Installation)
+		tgt, err = s.targetFor(p.Platform, p.Host, p.Installation, p.Repo)
 	}
 	if err != nil {
 		return err

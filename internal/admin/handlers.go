@@ -166,6 +166,10 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/hosts/{id}/webhooks", a.requireAPI(a.apiCreateWebhook))
 	mux.HandleFunc("PUT /admin/api/webhooks/{wid}", a.requireAPI(a.apiUpdateWebhook))
 	mux.HandleFunc("DELETE /admin/api/webhooks/{wid}", a.requireAPI(a.apiDeleteWebhook))
+	mux.HandleFunc("POST /admin/api/hosts/{id}/credentials", a.requireAPI(a.apiCreateCredential))
+	mux.HandleFunc("PUT /admin/api/credentials/{cid}", a.requireAPI(a.apiUpdateCredential))
+	mux.HandleFunc("DELETE /admin/api/credentials/{cid}", a.requireAPI(a.apiDeleteCredential))
+	mux.HandleFunc("POST /admin/api/credentials/{cid}/test", a.requireAPI(a.apiTestCredential))
 	mux.HandleFunc("GET /admin/api/settings", a.requireAPI(a.apiGetSettings))
 	mux.HandleFunc("PUT /admin/api/settings", a.requireAPI(a.apiPutSettings))
 	mux.HandleFunc("GET /admin/api/tuning", a.requireAPI(a.apiGetTuning))
@@ -245,6 +249,9 @@ func (a *Admin) apiMe(w http.ResponseWriter, r *http.Request, s *store.Session) 
 type repoView struct {
 	store.Repo
 	Effective store.Access `json:"effective"`
+	// Credential is the host credential the repository uses (issue #136);
+	// nil for the host's own.
+	Credential *repoCredential `json:"credential,omitempty"`
 }
 
 func (a *Admin) view(ctx context.Context, repos []store.Repo) ([]repoView, error) {
@@ -258,7 +265,7 @@ func (a *Admin) view(ctx context.Context, repos []store.Repo) ([]repoView, error
 	}
 	out := make([]repoView, 0, len(repos))
 	for _, r := range repos {
-		out = append(out, repoView{Repo: r, Effective: store.Resolve(r, rules, eff.Base())})
+		out = append(out, repoView{Repo: r, Effective: store.Resolve(r, rules, eff.Base()), Credential: a.credentialOf(r)})
 	}
 	return out, nil
 }
@@ -796,6 +803,9 @@ type hostView struct {
 	// "token" (the token user).
 	Mention       string `json:"mention,omitempty"`
 	MentionSource string `json:"mention_source,omitempty"`
+	// Credentials are used instead of the host's own token for the
+	// repositories their patterns cover (issue #136).
+	Credentials []credentialView `json:"credentials"`
 }
 
 var hookEvents = map[string][]string{
@@ -814,6 +824,10 @@ func (a *Admin) viewHost(ctx context.Context, h hosts.Host, stats hostStats) hos
 	v := hostView{ID: h.ID, Platform: h.Platform, Host: h.Host, BaseURL: h.BaseURL, Name: h.Name, Enabled: h.Enabled,
 		Settings: h.Settings, Secrets: h.SecretStatus(), Webhooks: []webhookView{},
 		Events: hookEvents[h.Platform], Licensed: !h.Enabled || a.Hosts.Active(h)}
+	v.Credentials = []credentialView{}
+	for _, c := range a.Hosts.Credentials(h.ID) {
+		v.Credentials = append(v.Credentials, a.viewCredential(ctx, h, c))
+	}
 	for _, e := range a.Hosts.Endpoints(h.ID) {
 		wv := a.viewWebhook(h.Platform, e)
 		if st, ok := stats.endpoints[e.ID]; ok {
@@ -1188,48 +1202,29 @@ func (a *Admin) apiTestHost(w http.ResponseWriter, r *http.Request, s *store.Ses
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	var c interface {
-		CurrentUser(context.Context) (string, error)
-	}
-	switch h.Platform {
-	case hosts.GitHub:
-		if h.Token == "" {
-			c := hosts.Check{OK: h.AppID != 0, Summary: "GitHub App", Message: "GitHub App: credentials are checked when a webhook arrives (an App has no user)", At: time.Now(), Source: "test"}
-			a.Hosts.RecordCheck(h.ID, c)
-			writeJSON(w, http.StatusOK, c)
-			return
+	var res hosts.Check
+	var user string
+	var e *hosts.TokenExpiry
+	switch {
+	case h.Platform == hosts.GitHub && h.Token == "" && h.AppID != 0:
+		res = hosts.Check{OK: true, Summary: "GitHub App", Message: "GitHub App: credentials are checked when a webhook arrives (an App has no user)", At: time.Now(), Source: "test"}
+	case h.Token == "" && h.APIToken == "":
+		// No token of its own: its credentials cover its repositories (issue #136).
+		n := len(a.Hosts.ActiveCredentials(h))
+		res = hosts.Check{OK: n > 0, Summary: "Credentials only", At: time.Now(), Source: "test",
+			Message: "the host has no token of its own: only repositories a credential covers are reviewed (test each credential)"}
+		if n == 0 {
+			res.Summary, res.Message = "No token", "the host has no token and no credentials: add a token or a credential"
 		}
-		c = vcs.NewGitHub(h.BaseURL, vcs.StaticToken(h.Token))
-	case hosts.GitLab:
-		c = vcs.NewGitLab(h.BaseURL, h.Token, h.SkipTLSVerify)
-	case hosts.Bitbucket:
-		c = vcs.NewBitbucket(h.BaseURL, vcs.BitbucketAuth{Token: h.Token, Email: h.Email, APIToken: h.APIToken})
+	default:
+		res, user, e = a.checkToken(ctx, h)
 	}
-	user, err := c.CurrentUser(ctx)
-	if err != nil {
-		msg := err.Error()
-		if h.Platform == hosts.Bitbucket && h.Token != "" {
-			msg += " (access tokens have no user: set the reviewer name for this host)"
-		}
-		res := hosts.Check{OK: false, Summary: hosts.Summarize(err), Message: msg, At: time.Now(), Source: "test"}
-		a.Hosts.RecordCheck(h.ID, res)
+	a.Hosts.RecordCheck(h.ID, res)
+	if !res.OK || user == "" {
 		writeJSON(w, http.StatusOK, res)
 		return
 	}
-	msg := "connected as @" + user
-	e := a.Hosts.CheckTokenExpiry(ctx, h)
-	switch {
-	case e.Known && e.Expires.IsZero():
-		msg += "; the token never expires"
-	case e.Known:
-		msg += "; the token expires on " + expiry.TokenTime(e.Expires)
-		if d := expiry.DaysLeft(e.Expires, time.Now()); d <= 14 {
-			msg += " (" + strconv.Itoa(d) + " days left: replace it soon)"
-		}
-	}
-	res := hosts.Check{OK: true, Summary: "OK as @" + user, Message: msg, At: time.Now(), User: user, Source: "test"}
-	a.Hosts.RecordCheck(h.ID, res)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "summary": res.Summary, "message": msg, "at": res.At, "token_expiry": e})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "summary": res.Summary, "message": res.Message, "at": res.At, "token_expiry": e})
 }
 
 // ---- reviews and metrics ----

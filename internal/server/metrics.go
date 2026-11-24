@@ -85,7 +85,13 @@ func (s *Server) initMetrics() {
 		var out []metrics.Sample
 		for _, h := range s.hosts.Enabled("") {
 			if e, ok := s.hosts.TokenExpiryOf(h.ID); ok && e.Known && !e.Expires.IsZero() {
-				out = append(out, metrics.Sample{Labels: metrics.Labels{"platform": h.Platform, "host": h.Host}, Value: float64(e.Expires.Unix())})
+				out = append(out, metrics.Sample{Labels: metrics.Labels{"platform": h.Platform, "host": h.Host, "credential": ""}, Value: float64(e.Expires.Unix())})
+			}
+			// Credentials (issue #136): labelled by their pattern.
+			for _, c := range s.hosts.ActiveCredentials(h) {
+				if e, ok := s.hosts.CredentialExpiryOf(c.ID); ok && e.Known && !e.Expires.IsZero() {
+					out = append(out, metrics.Sample{Labels: metrics.Labels{"platform": h.Platform, "host": h.Host, "credential": c.Pattern}, Value: float64(e.Expires.Unix())})
+				}
 			}
 		}
 		return out

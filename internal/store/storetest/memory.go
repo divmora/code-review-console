@@ -31,6 +31,7 @@ type Memory struct {
 	owners       map[string]time.Time
 	hosts        map[int64]*store.HostRow
 	hooksEP      map[string]*store.WebhookEndpoint
+	creds        map[int64]*store.HostCredential
 	learns       []*store.Learning
 	jobs         []store.Job
 	sessions     map[string]store.Session
@@ -259,7 +260,72 @@ func (m *Memory) DeleteHost(_ context.Context, id int64, actor string) error {
 			delete(m.hooksEP, k)
 		}
 	}
+	for k, c := range m.creds {
+		if c.HostID == id {
+			delete(m.creds, k)
+		}
+	}
 	m.addAudit(actor, "host.delete", h.Platform+":"+h.Host, map[string]any{})
+	return nil
+}
+
+func (m *Memory) ListHostCredentials(context.Context) ([]store.HostCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.HostCredential{}
+	for _, c := range m.creds {
+		out = append(out, *c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].HostID != out[j].HostID {
+			return out[i].HostID < out[j].HostID
+		}
+		return out[i].Pattern < out[j].Pattern
+	})
+	return out, nil
+}
+
+func (m *Memory) PutHostCredential(_ context.Context, in store.HostCredential, actor string) (*store.HostCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.hosts[in.HostID]; !ok {
+		return nil, store.ErrNotFound
+	}
+	for _, c := range m.creds {
+		if c.HostID == in.HostID && c.Pattern == in.Pattern && c.ID != in.ID {
+			return nil, store.ErrDuplicate
+		}
+	}
+	now := time.Now()
+	c, ok := m.creds[in.ID]
+	if in.ID != 0 && (!ok || c.HostID != in.HostID) {
+		return nil, store.ErrNotFound
+	}
+	if in.ID == 0 {
+		m.nextID++
+		c = &store.HostCredential{ID: m.nextID, HostID: in.HostID, CreatedAt: now, CreatedBy: actor}
+		if m.creds == nil {
+			m.creds = map[int64]*store.HostCredential{}
+		}
+		m.creds[c.ID] = c
+	}
+	m.hostsVersion++
+	c.Name, c.Pattern, c.Enabled, c.Config, c.Secrets, c.UpdatedAt, c.UpdatedBy = in.Name, in.Pattern, in.Enabled, in.Config, in.Secrets, now, actor
+	m.addAudit(actor, "credential.put", strconv.FormatInt(c.ID, 10), map[string]any{"after": map[string]any{"host_id": c.HostID, "name": c.Name, "pattern": c.Pattern, "enabled": c.Enabled}, "secrets_changed": nonNilList(in.SecretsChanged)})
+	out := *c
+	return &out, nil
+}
+
+func (m *Memory) DeleteHostCredential(_ context.Context, id int64, actor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.creds[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	m.hostsVersion++
+	delete(m.creds, id)
+	m.addAudit(actor, "credential.delete", strconv.FormatInt(id, 10), map[string]any{"host_id": c.HostID, "pattern": c.Pattern})
 	return nil
 }
 

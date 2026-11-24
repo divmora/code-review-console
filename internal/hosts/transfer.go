@@ -12,6 +12,7 @@ import (
 
 	"github.com/divmora/code-review-console/internal/config"
 	"github.com/divmora/code-review-console/internal/ee/license"
+	"github.com/divmora/code-review-console/internal/store"
 )
 
 // File is the import/export format for hosts and their webhooks (see
@@ -40,6 +41,19 @@ type FileHost struct {
 	SigningTokens  *[]string `yaml:"signing_tokens,omitempty"`
 
 	Webhooks []FileWebhook `yaml:"webhooks,omitempty"`
+	// Credentials cover groups or patterns instead of the host's own token
+	// (issue #136); matched by pattern on import.
+	Credentials []FileCredential `yaml:"credentials,omitempty"`
+}
+
+// FileCredential is one host credential in a File.
+type FileCredential struct {
+	Pattern  string             `yaml:"pattern"`
+	Name     string             `yaml:"name,omitempty"`
+	Enabled  *bool              `yaml:"enabled,omitempty"`
+	Settings CredentialSettings `yaml:"settings,omitempty"`
+	Token    *string            `yaml:"token,omitempty"`
+	APIToken *string            `yaml:"api_token,omitempty"`
 }
 
 // FileWebhook is one webhook endpoint in a File. Keeping the ID keeps its
@@ -84,6 +98,14 @@ func (r *Registry) Export(withSecrets bool, baseURL string) File {
 				fw.SigningTokens = optionalList(e.SigningTokens)
 			}
 			fh.Webhooks = append(fh.Webhooks, fw)
+		}
+		for _, c := range r.Credentials(h.ID) {
+			en := c.Enabled
+			fc := FileCredential{Pattern: c.Pattern, Name: c.Name, Enabled: &en, Settings: c.Settings}
+			if withSecrets {
+				fc.Token, fc.APIToken = optional(c.Token), optional(c.APIToken)
+			}
+			fh.Credentials = append(fh.Credentials, fc)
 		}
 		f.Hosts = append(f.Hosts, fh)
 	}
@@ -221,6 +243,42 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 			}
 			p.webhooks, p.newHooks = append(p.webhooks, e), append(p.newHooks, isNew)
 		}
+		if len(fh.Credentials) > 0 && !r.Lic.Has(license.Hosts) {
+			return res, fmt.Errorf("%s: credentials: %w", key, &license.Error{Feature: license.Hosts})
+		}
+		seenPatterns := map[string]bool{}
+		for j, fc := range fh.Credentials {
+			c := Credential{Enabled: true, Pattern: fc.Pattern}
+			norm, err := store.NormalizePattern(fc.Pattern)
+			if err != nil {
+				return res, fmt.Errorf("%s credentials[%d]: %w", key, j, err)
+			}
+			isNew := true
+			if !created {
+				for _, old := range r.Credentials(h.ID) {
+					if old.Pattern == norm {
+						c, isNew = old, false // absent secrets are kept
+					}
+				}
+			}
+			if fc.Name != "" || isNew {
+				c.Name = fc.Name
+			}
+			if fc.Enabled != nil {
+				c.Enabled = *fc.Enabled
+			}
+			c.Settings = fc.Settings
+			setStr(&c.Token, fc.Token)
+			setStr(&c.APIToken, fc.APIToken)
+			if err := c.Normalize(h); err != nil {
+				return res, fmt.Errorf("%s credentials[%d]: %w", key, j, err)
+			}
+			if seenPatterns[c.Pattern] {
+				return res, fmt.Errorf("%s credentials[%d]: %s is listed twice", key, j, c.Pattern)
+			}
+			seenPatterns[c.Pattern] = true
+			p.creds, p.newCreds = append(p.creds, c), append(p.newCreds, isNew)
+		}
 		plan = append(plan, p)
 	}
 
@@ -266,6 +324,15 @@ func (r *Registry) Import(ctx context.Context, f File, actor string, dryRun bool
 			}
 			res.Lines = append(res.Lines, fmt.Sprintf("  webhook %s: %s", label, verb(p.newHooks[i])))
 		}
+		for i, c := range p.creds {
+			if !dryRun {
+				c.HostID = h.ID
+				if _, err := r.SaveCredential(ctx, c, actor); err != nil {
+					return res, fmt.Errorf("credential %s:%s %s: %w", h.Platform, h.Host, c.Pattern, err)
+				}
+			}
+			res.Lines = append(res.Lines, fmt.Sprintf("  credential %s: %s", c.Pattern, verb(p.newCreds[i])))
+		}
 	}
 	if dryRun {
 		res.Secrets = map[string]string{} // nothing was stored, so nothing to show
@@ -280,6 +347,8 @@ type planned struct {
 	sharedSecrets bool
 	webhooks      []Endpoint
 	newHooks      []bool
+	creds         []Credential
+	newCreds      []bool
 }
 
 // importLicense applies the admin panel's license rules to an import:

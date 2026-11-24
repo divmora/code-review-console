@@ -136,10 +136,10 @@ func (s *Server) handleBitbucket(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate delivery"})
 		return
 	}
-	tgt := s.bitbucketTarget(h)
+	tgt := s.bitbucketTarget(h, repo)
 	ref := vcs.Ref{Platform: vcs.Bitbucket, Host: h.Host, Repo: repo, Number: p.PullRequest.ID}
 	log := s.logger.With("event", event, "repo", repo, "pr", p.PullRequest.ID)
-	self := s.reviewerFor(tgt, h.Host)
+	self := s.reviewerFor(tgt)
 	pr := p.PullRequest
 
 	switch event {

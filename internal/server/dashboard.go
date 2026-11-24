@@ -133,20 +133,31 @@ type mention struct {
 
 // mentions are the handles commands are matched against, per enabled
 // code host (see Server.mention): the host's bot_name, else the default
-// bot name, else the token user the console read at startup.
+// bot name, else the token user the console read at startup. A host's
+// credentials (issue #136) can add handles of their own.
 func (s *Server) mentions(hide bool) (all []mention, common string) {
 	seen := map[string]bool{}
+	listed := map[string]bool{}
 	for _, h := range s.hosts.Enabled("") {
-		handle := s.mention(h.BotName, h.Host)
-		m := mention{Platform: string(h.Platform), Host: h.Host, Handle: handle}
-		if hide {
-			if seen[handle] {
+		handles := []string{s.mention(h)}
+		for _, c := range s.hosts.ActiveCredentials(h) {
+			handles = append(handles, s.mention(h.WithCredential(c)))
+		}
+		for _, handle := range handles {
+			m := mention{Platform: string(h.Platform), Host: h.Host, Handle: handle}
+			if hide {
+				if seen[handle] {
+					continue
+				}
+				m.Platform, m.Host = "", ""
+			}
+			if listed[m.Platform+"|"+m.Host+"|"+handle] {
 				continue
 			}
-			m.Platform, m.Host = "", ""
+			listed[m.Platform+"|"+m.Host+"|"+handle] = true
+			seen[handle] = true
+			all = append(all, m)
 		}
-		seen[handle] = true
-		all = append(all, m)
 	}
 	if len(seen) == 1 {
 		common = all[0].Handle

@@ -27,6 +27,8 @@ const (
 type Warning struct {
 	Kind     string    `json:"kind"` // license or host
 	HostID   int64     `json:"host_id,omitempty"`
+	// CredentialID is set for a credential's token (issue #136).
+	CredentialID int64 `json:"credential_id,omitempty"`
 	Name     string    `json:"name"`
 	Expires  time.Time `json:"expires"`
 	Days     int       `json:"days"` // whole days left (negative: days ago)
@@ -96,6 +98,18 @@ func All(st license.Status, reg *hosts.Registry, now time.Time) []Warning {
 		for _, h := range reg.Enabled("") {
 			if e, ok := reg.TokenExpiryOf(h.ID); ok {
 				if w, ok := Host(h, e, now); ok {
+					out = append(out, w)
+				}
+			}
+			for _, c := range reg.ActiveCredentials(h) {
+				e, ok := reg.CredentialExpiryOf(c.ID)
+				if !ok {
+					continue
+				}
+				named := h
+				named.Name = c.Label(h)
+				if w, ok := Host(named, e, now); ok {
+					w.CredentialID = c.ID
 					out = append(out, w)
 				}
 			}

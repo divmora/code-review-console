@@ -152,7 +152,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 	hm.Host, hm.Project, hm.Action, hm.Sender = host, p.Repository.FullName, p.Action, p.Sender.Login
 	hm.Kind, hm.Number = event, firstNonZero(p.Number, p.PullRequest.Number, p.Issue.Number)
 	s.seen(r.Context(), vcs.GitHub, host, p.Repository.FullName)
-	tgt := s.githubTarget(h, p.Installation.ID)
+	tgt := s.githubTarget(h, p.Installation.ID, p.Repository.FullName)
 	log := s.logger.With("event", event, "action", p.Action, "repo", p.Repository.FullName, "delivery", r.Header.Get("X-GitHub-Delivery"))
 
 	switch event {
@@ -176,7 +176,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		requireReviewer := acc.RequireReviewer
-		self := s.reviewerFor(tgt, h.Host)
+		self := s.reviewerFor(tgt)
 		requested := p.Action == "review_requested" && self != "" && strings.EqualFold(p.RequestedReviewer.Login, self)
 		switch p.Action {
 		case "opened", "reopened", "synchronize", "ready_for_review":
@@ -290,11 +290,22 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// isSelf reports whether login is the token user (PAT mode), compared
-// case-insensitively. In App mode the bot is detected by user type.
+// isSelf reports whether login is one of the console's token users on host
+// (the host's own or a credential's, issue #136), compared
+// case-insensitively, so the bots never answer each other. In App mode the
+// bot is detected by user type.
 func (s *Server) isSelf(host, login string) bool {
-	self := s.self(host)
-	return self != "" && strings.EqualFold(self, login)
+	if login == "" {
+		return false
+	}
+	s.idMu.RLock()
+	defer s.idMu.RUnlock()
+	for k, self := range s.selfLogins {
+		if (k == host || strings.HasPrefix(k, host+"#")) && strings.EqualFold(self, login) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstNonZero(vals ...int) int {

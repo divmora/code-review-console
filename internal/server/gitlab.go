@@ -142,7 +142,7 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := inst.Host
-	tgt := s.gitlabTarget(inst)
+	tgt := s.gitlabTarget(inst, p.Project.PathWithNamespace)
 	event := r.Header.Get("X-Gitlab-Event")
 	log := s.logger.With("event", event, "project", p.Project.PathWithNamespace)
 	log.Info("gitlab webhook received", "kind", p.ObjectKind, "action", p.ObjectAttributes.Action,
@@ -181,7 +181,7 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		requireReviewer := acc.RequireReviewer
-		self := s.reviewerFor(tgt, host)
+		self := s.reviewerFor(tgt)
 		requested := false // the bot was just added as a reviewer
 		if c := p.Changes.Reviewers; c != nil {
 			requested = hasUser(c.Current, self) && !hasUser(c.Previous, self)
