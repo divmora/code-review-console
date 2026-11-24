@@ -25,15 +25,15 @@ const (
 
 // Warning is one thing about to expire, or expired.
 type Warning struct {
-	Kind     string    `json:"kind"` // license or host
-	HostID   int64     `json:"host_id,omitempty"`
+	Kind   string `json:"kind"` // license or host
+	HostID int64  `json:"host_id,omitempty"`
 	// CredentialID is set for a credential's token (issue #136).
-	CredentialID int64 `json:"credential_id,omitempty"`
-	Name     string    `json:"name"`
-	Expires  time.Time `json:"expires"`
-	Days     int       `json:"days"` // whole days left (negative: days ago)
-	Severity string    `json:"severity"`
-	Message  string    `json:"message"`
+	CredentialID int64     `json:"credential_id,omitempty"`
+	Name         string    `json:"name"`
+	Expires      time.Time `json:"expires"`
+	Days         int       `json:"days"` // whole days left (negative: days ago)
+	Severity     string    `json:"severity"`
+	Message      string    `json:"message"`
 }
 
 // DaysLeft is the number of whole days from now until t (rounded up, so

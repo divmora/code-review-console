@@ -227,6 +227,8 @@ func (s *Server) requeue(q store.QueuedJob, p queuedPayload) error {
 		return s.enqueueAnswerWith(tgt, ref, p.Question, p.Overrides, q.ID)
 	case "help":
 		return s.postHelpWith(tgt, ref, q.ID)
+	case "diagram":
+		return s.enqueueDiagram(tgt, ref, p.Overrides, q.ID)
 	}
 	return fmt.Errorf("unknown job kind %q", p.Kind)
 }

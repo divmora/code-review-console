@@ -14,6 +14,28 @@ import (
 // 0.4.0: CODEREVIEW_OVERRIDES "learnings" and "codereview learn".
 const MinCLIVersion = "0.4.0"
 
+// DiagramCLIVersion is the first CLI with flow diagrams (the "diagram"
+// override and --diagram-only). Older CLIs reject the override key, so the
+// console sends it only when set, and the admin panel refuses it when the
+// Executor's version is older.
+const DiagramCLIVersion = "0.7.0"
+
+// CLIAtLeast reports whether v is at least min. known is false for
+// versions that are not a release (development builds, latest, digests).
+func CLIAtLeast(v, min string) (ok, known bool) {
+	have, ok1 := parseVersion(v)
+	want, _ := parseVersion(min)
+	if !ok1 {
+		return true, false
+	}
+	for i := range have {
+		if have[i] != want[i] {
+			return have[i] > want[i], true
+		}
+	}
+	return true, true
+}
+
 // CLIVersionOK reports whether v (as printed by the CLI, "v" prefix
 // optional) is at least MinCLIVersion. known is false for versions that are
 // not a release (development builds), which are accepted.

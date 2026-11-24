@@ -19,6 +19,8 @@ type Job = {
   id: number; kind: string; platform: string; host: string; repo: string; number: number; url: string; trigger: string;
   state: string; started: string; finished: string; error: string; note: string; comments: number; files: number;
   tokens_in: number; tokens_out: number; model: string; requested_by: string; result?: any; scores?: Scores | null; approval?: string;
+  // A flow diagram drawn or kept by this job, and what drawing it cost.
+  diagram?: boolean; diagram_tokens?: number;
 };
 
 // ApprovalMark shows what a review did with the bot's approval of the
@@ -133,6 +135,7 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
       <Separator />
       <p className="text-xs text-muted-foreground">
         Model {d.model || "—"} · {d.comments} comments · {d.files} files
+        {d.diagram && <> · flow diagram{d.diagram_tokens ? " (" + fmtNum(d.diagram_tokens) + " tokens)" : " (kept from the last review)"}</>}
       </p>
       {job.kind.includes("review") && (
         <div className="flex flex-wrap gap-2">

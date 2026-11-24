@@ -438,6 +438,34 @@ func TestTokensUsed(t *testing.T) {
 	}
 }
 
+func TestDiagramJobs(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	now := time.Now()
+	add := func(kind string, number int, diagram bool, tokens int) int64 {
+		t.Helper()
+		id, err := p.InsertJob(ctx, Job{Kind: kind, Platform: "gitlab", Host: "g.example", Repo: "team/app", Number: number, State: "done",
+			Enqueued: now, Started: now, Finished: now, Diagram: diagram, DiagramTokens: tokens})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := add("review", 1, true, 790)
+	add("diagram", 1, true, 400) // the same MR again
+	add("diagram", 2, true, 300)
+	add("review", 3, false, 0)
+	j, err := p.GetJob(ctx, id)
+	if err != nil || !j.Diagram || j.DiagramTokens != 790 {
+		t.Fatalf("job: %+v %v", j, err)
+	}
+	day := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	im, err := p.Impact(ctx, ImpactFilter{From: day, To: day.AddDate(0, 0, 1), Granularity: Daily})
+	if err != nil || im.PRsWithDiagram != 2 { // other tests share the rollups; no other diagrams
+		t.Errorf("impact: %+v %v", im, err)
+	}
+}
+
 func TestInsights(t *testing.T) {
 	p := openTest(t)
 	ctx := context.Background()

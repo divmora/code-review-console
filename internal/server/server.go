@@ -629,6 +629,7 @@ func (s *Server) persistJob(r Record) {
 		State: string(r.State), Enqueued: r.Enqueued, Started: r.Started, Finished: r.Finished, Merged: r.Merged,
 		Error: r.Error, Note: r.Note, Comments: r.Comments, Files: r.Files, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Model: r.Model,
 		Result: r.Result, RequestedBy: r.RequestedBy, Scores: r.Scores, Approval: r.Approval,
+		Diagram: r.Diagram, DiagramTokens: r.DiagramTokens,
 	})
 	if err != nil {
 		s.logger.Warn("could not save job history", "error", err)
@@ -649,7 +650,8 @@ func (s *Server) loadHistory() {
 		recs = append(recs, Record{
 			Meta:  Meta{Kind: j.Kind, Platform: j.Platform, Host: j.Host, Repo: j.Repo, Number: j.Number, URL: j.URL, Trigger: j.Trigger},
 			State: State(j.State), Enqueued: j.Enqueued, Started: j.Started, Finished: j.Finished, Merged: j.Merged, Error: j.Error,
-			Report: Report{Note: j.Note, Comments: j.Comments, Files: j.Files, TokensIn: j.TokensIn, TokensOut: j.TokensOut, Model: j.Model, Scores: j.Scores, Approval: j.Approval},
+			Report: Report{Note: j.Note, Comments: j.Comments, Files: j.Files, TokensIn: j.TokensIn, TokensOut: j.TokensOut, Model: j.Model, Scores: j.Scores, Approval: j.Approval,
+				Diagram: j.Diagram, DiagramTokens: j.DiagramTokens},
 		})
 	}
 	s.queue.Seed(recs)
@@ -694,6 +696,8 @@ func parseCommand(bot, body string) (command, bool) {
 		return command{kind: "review"}, true
 	case "full review", "full-review", "review all", "re-review":
 		return command{kind: "full"}, true
+	case "diagram", "flow diagram", "draw diagram", "draw the flow", "flow":
+		return command{kind: "diagram"}, true
 	case "help", "":
 		return command{kind: "help"}, true
 	}
@@ -718,6 +722,7 @@ func helpText(bot string) string {
 |---|---|
 | `+"`@%[1]s review`"+` | Review commits pushed since the last review |
 | `+"`@%[1]s full review`"+` | Re-review every file from scratch |
+| `+"`@%[1]s diagram`"+` | Draw a diagram of the changed flow in the walkthrough (from the last review) |
 | `+"`@%[1]s help`"+` | Show this message |
 | `+"`@%[1]s remember <rule>`"+` | Save a team learning for future reviews of this repository |
 | `+"`@%[1]s <question>`"+` | Ask anything about this pull request |

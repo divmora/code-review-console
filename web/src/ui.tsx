@@ -292,6 +292,7 @@ export function settingsChips(st: Overrides = {}): string[] {
   if (st.auto_review === false) out.push("auto review off");
   if (st.auto_review === true) out.push("auto review on");
   if (st.drafts === true) out.push("drafts");
+  if (st.diagram) out.push("diagram " + st.diagram);
   if (st.instructions) out.push("instructions");
   return out;
 }
@@ -331,6 +332,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
   const [model, setModel] = useState(st.model ?? "");
   const [auto, setAuto] = useState<boolean | null>(st.auto_review ?? null);
   const [drafts, setDrafts] = useState<boolean | null>(st.drafts ?? null);
+  const [diagram, setDiagram] = useState(st.diagram ?? "");
   const [instr, setInstr] = useState(st.instructions ?? "");
   const current = (): Overrides => {
     const s: Overrides = {};
@@ -340,6 +342,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     if (model) s.model = model;
     if (auto !== null) s.auto_review = auto;
     if (drafts !== null) s.drafts = drafts;
+    if (diagram) s.diagram = diagram as Overrides["diagram"];
     if (instr.trim()) s.instructions = instr.trim();
     return s;
   };
@@ -348,6 +351,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     ...(st.profile ? { profile: st.profile } : {}), ...(st.max_comments ? { max_comments: st.max_comments } : {}),
     ...(st.min_severity ? { min_severity: st.min_severity } : {}), ...(st.model ? { model: st.model } : {}),
     ...(st.auto_review != null ? { auto_review: st.auto_review } : {}), ...(st.drafts != null ? { drafts: st.drafts } : {}),
+    ...(st.diagram ? { diagram: st.diagram } : {}),
     ...(st.instructions?.trim() ? { instructions: st.instructions.trim() } : {}),
   };
   const discard = () => {
@@ -357,9 +361,10 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     setModel(st.model ?? "");
     setAuto(st.auto_review ?? null);
     setDrafts(st.drafts ?? null);
+    setDiagram(st.diagram ?? "");
     setInstr(st.instructions ?? "");
   };
-  useUnsaved("editor:" + (unsaved || ""), unsaved ? { label: unsaved, count: diffCount(current(), loaded, ["profile", "max_comments", "min_severity", "model", "auto_review", "drafts", "instructions"]), save, discard } : null);
+  useUnsaved("editor:" + (unsaved || ""), unsaved ? { label: unsaved, count: diffCount(current(), loaded, ["profile", "max_comments", "min_severity", "model", "auto_review", "drafts", "diagram", "instructions"]), save, discard } : null);
   return (
     <div className="grid gap-5">
       {extra}
@@ -399,6 +404,14 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
         </Field>
         <Field label="Review draft PRs">
           <Tri value={drafts} onChange={setDrafts} on="On" off="Off" />
+        </Field>
+        <Field label="Flow diagram" hint={<Sub>A diagram of the changed flow in the walkthrough. Auto draws it when a change spans several layers; Off also refuses <code>@bot diagram</code>. Needs code-review-bot 0.7.0 or later.</Sub>}>
+          <NativeSelect value={diagram} onChange={(e) => setDiagram(e.target.value)}>
+            <option value="">Inherit (repository config, off by default)</option>
+            <option value="off">Off</option>
+            <option value="auto">Auto</option>
+            <option value="always">Always</option>
+          </NativeSelect>
         </Field>
       </FormGrid>
       <Field label="Extra review instructions">
