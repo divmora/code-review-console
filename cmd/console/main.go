@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/divmora/code-review-console/internal/dashboards"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -227,6 +228,10 @@ func serve(ctx context.Context, args []string) error {
 			logger.Error("part of the config file's review: section was not copied; set it in the admin panel", "error", err)
 		}
 	}
+	settingsSvc, tuningSvc := deps.Settings, deps.Tuning
+	deps.Dashboards = dashboards.New(deps.Store, func(ctx context.Context) dashboards.Legacy {
+		return dashboards.LegacyFrom(settingsSvc.Runtime(ctx), tuningSvc.Get(ctx))
+	})
 	deps.Models = models.New(cfg, deps.Store)
 	imported, skipped, err := deps.Models.Import(ctx)
 	if err != nil {
@@ -259,6 +264,7 @@ func serve(ctx context.Context, args []string) error {
 		adm.Tuning = deps.Tuning
 		adm.Box = box
 		adm.Executor = execSvc
+		adm.Dashboards = deps.Dashboards
 		deps.Admin = adm
 		logger.Info("admin enabled", "url", cfg.Admin.BaseURL, "issuer", cfg.Admin.OIDC.Issuer)
 	}

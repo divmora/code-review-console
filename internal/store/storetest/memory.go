@@ -32,6 +32,7 @@ type Memory struct {
 	hosts        map[int64]*store.HostRow
 	hooksEP      map[string]*store.WebhookEndpoint
 	creds        map[int64]*store.HostCredential
+	dashboards   map[int64]*store.Dashboard
 	learns       []*store.Learning
 	jobs         []store.Job
 	sessions     map[string]store.Session
@@ -141,6 +142,9 @@ func (m *Memory) DeleteRepo(_ context.Context, id int64, actor string) error {
 		return store.ErrNotFound
 	}
 	delete(m.repos, id)
+	for _, d := range m.dashboards {
+		d.Repos = slices.DeleteFunc(d.Repos, func(x store.DashboardRepo) bool { return x.ID == id })
+	}
 	m.addAudit(actor, "repo.delete", r.Platform+":"+r.Host+"/"+r.Path, map[string]any{})
 	return nil
 }
@@ -266,6 +270,84 @@ func (m *Memory) DeleteHost(_ context.Context, id int64, actor string) error {
 		}
 	}
 	m.addAudit(actor, "host.delete", h.Platform+":"+h.Host, map[string]any{})
+	return nil
+}
+
+func (m *Memory) ListDashboards(context.Context) ([]store.Dashboard, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []store.Dashboard{}
+	for _, d := range m.dashboards {
+		c := *d
+		c.Repos = m.dashboardRepos(d.Repos)
+		c.Patterns = append([]store.DashboardPattern{}, d.Patterns...)
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Slug == "default") != (out[j].Slug == "default") {
+			return out[i].Slug == "default"
+		}
+		return out[i].Title+out[i].Slug < out[j].Title+out[j].Slug
+	})
+	return out, nil
+}
+
+// dashboardRepos fills in attached repositories that still exist.
+func (m *Memory) dashboardRepos(in []store.DashboardRepo) []store.DashboardRepo {
+	out := []store.DashboardRepo{}
+	for _, x := range in {
+		if r, ok := m.repos[x.ID]; ok {
+			out = append(out, store.DashboardRepo{ID: r.ID, Platform: r.Platform, Host: r.Host, Path: r.Path})
+		}
+	}
+	return out
+}
+
+func (m *Memory) PutDashboard(_ context.Context, in store.Dashboard, actor string) (*store.Dashboard, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range m.dashboards {
+		if d.Slug == in.Slug && d.ID != in.ID {
+			return nil, store.ErrDuplicate
+		}
+	}
+	now := time.Now()
+	d, ok := m.dashboards[in.ID]
+	action := "dashboard.update"
+	if in.ID != 0 && !ok {
+		return nil, store.ErrNotFound
+	}
+	if in.ID == 0 {
+		m.nextID++
+		d = &store.Dashboard{ID: m.nextID, CreatedAt: now, CreatedBy: actor}
+		if m.dashboards == nil {
+			m.dashboards = map[int64]*store.Dashboard{}
+		}
+		m.dashboards[d.ID] = d
+		action = "dashboard.create"
+	}
+	id, created, by := d.ID, d.CreatedAt, d.CreatedBy
+	*d = in
+	d.ID, d.CreatedAt, d.CreatedBy, d.UpdatedAt, d.UpdatedBy, d.TokenChange = id, created, by, now, actor, ""
+	d.Repos = m.dashboardRepos(in.Repos)
+	d.Patterns = append([]store.DashboardPattern{}, in.Patterns...)
+	m.addAudit(actor, action, d.Slug, map[string]any{"after": map[string]any{"slug": d.Slug, "access": d.Access, "repos": len(d.Repos), "patterns": len(d.Patterns), "token": d.TokenHash != ""}, "token_change": in.TokenChange})
+	if in.TokenChange == "rotated" || in.TokenChange == "set" {
+		m.addAudit(actor, "dashboard.token.rotate", d.Slug, map[string]any{})
+	}
+	c := *d
+	return &c, nil
+}
+
+func (m *Memory) DeleteDashboard(_ context.Context, id int64, actor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.dashboards[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	delete(m.dashboards, id)
+	m.addAudit(actor, "dashboard.delete", d.Slug, map[string]any{})
 	return nil
 }
 

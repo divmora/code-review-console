@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"github.com/divmora/code-review-console/internal/dashboards"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func TestDashboardMentions(t *testing.T) {
 	}
 	defer s.queue.Shutdown(context.Background())
 	s.selfLogins["127.0.0.1:1"] = "gitlab-bot"
-	ms, common := s.mentions(false)
+	ms, common := s.mentions(false, allRepos)
 	if common != "" || len(ms) != 2 {
 		t.Fatalf("two handles: %q %+v", common, ms)
 	}
@@ -39,12 +40,15 @@ func TestDashboardMentions(t *testing.T) {
 	if got["127.0.0.1:1"] != "gitlab-bot" || got["127.0.0.2:1"] != "ybot" {
 		t.Errorf("each host's handle: %+v", got)
 	}
-	if ms, _ := s.mentions(true); len(ms) != 2 || ms[0].Host != "" || ms[1].Host != "" {
+	if ms, _ := s.mentions(true, allRepos); len(ms) != 2 || ms[0].Host != "" || ms[1].Host != "" {
 		t.Errorf("host names hidden with the repositories: %+v", ms)
 	}
 
 	s.selfLogins["127.0.0.1:1"] = "ybot" // the same handle everywhere: one
-	if ms, common := s.mentions(true); common != "ybot" || len(ms) != 1 {
+	if ms, common := s.mentions(true, allRepos); common != "ybot" || len(ms) != 1 {
 		t.Errorf("one handle for all hosts: %q %+v", common, ms)
 	}
 }
+
+// allRepos is the scope of a dashboard with every repository.
+var allRepos = dashboards.ScopeOf(dashboards.Dashboard{AllRepos: true})

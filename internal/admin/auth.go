@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/divmora/code-review-console/internal/dashboards"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -70,6 +71,8 @@ type Admin struct {
 	Box *secrets.Box
 	// mux is where approved changes are applied (set by Register).
 	mux *http.ServeMux
+	// Dashboards are the status dashboards (built over the store when nil).
+	Dashboards *dashboards.Service
 	// Executor holds the executor settings; nil hides them.
 	Executor *execsettings.Service
 	// Tags lists image versions for the Executor page (built on first use).
@@ -488,6 +491,15 @@ func (a *Admin) session(r *http.Request) (*store.Session, bool) {
 func (a *Admin) SignedIn(r *http.Request) bool {
 	_, ok := a.session(r)
 	return ok
+}
+
+// Role is the signed-in user's role ("admin", "operator" or "viewer"), or
+// "" without a session. The session cookie is scoped to /admin.
+func (a *Admin) Role(r *http.Request) string {
+	if s, ok := a.session(r); ok {
+		return s.Role
+	}
+	return ""
 }
 
 // isBackground reports a request the panel makes on its own (a periodic

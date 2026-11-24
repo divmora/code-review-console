@@ -401,6 +401,28 @@ ask an admin for a new one; generating a new token starts a new period and stops
 An install that had a token before keeps working with it; one without a token is now for admins
 only, until you choose otherwise. When the dashboard is public, consider hiding repository names.
 
+### Several dashboards
+
+Since dashboards (issue #155), the dashboard above is the **default** dashboard: `/dashboard`,
+`/api/status` and `/admin/dashboard` keep working, with the same title, access, token and expiry.
+More dashboards (license feature `metrics`) each have their own title, access, token and
+repositories, attached one by one or by a group pattern (new repositories in the group join on their
+own). Each shows only its repositories, filtered on the server: other repositories never appear,
+not even as counts, and the queue shows only as "N waiting overall" (not on a public dashboard).
+
+| Access | Who | Where |
+|---|---|---|
+| `admins` | signed-in admins | `/admin/dashboards/<slug>` |
+| `signed_in` | anyone signed in (viewer, operator, admin) | `/admin/dashboards/<slug>` |
+| `token` | admins, and anyone with this dashboard's token | `/dashboards/<slug>?token=…`; JSON at `/api/dashboards/<slug>/status` |
+| `public` | everyone | `/dashboards/<slug>` |
+
+A token opens only its own dashboard. New `public` and `token` dashboards hide repository names
+until an admin shows them. On upgrade, the old "signed-in admins only" setting becomes `signed_in`,
+because it let in every signed-in role; set the default dashboard to `admins` to keep viewers and
+operators out. The admin API is `/admin/api/dashboards` (list, create, change, delete,
+`/{id}/token` to rotate); the Dashboards page comes with a later release.
+
 ## HTTPS
 
 Serve the console over HTTPS, usually by terminating TLS at the load balancer or ingress. When

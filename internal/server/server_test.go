@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/divmora/code-review-console/internal/dashboards"
 	"io"
 	"log/slog"
 	"net/http"
@@ -461,8 +462,12 @@ func TestRuntimeSettingsWithoutRestart(t *testing.T) {
 			t.Errorf("dashboard off by default: %d", rec.Code)
 		}
 	}
-	on := true
-	_, _ = svc.Put(context.Background(), settings.Stored{Allowlist: &off, DashboardEnabled: &on}, "a@x")
+	// Turned on in the admin panel (issue #155: the default dashboard).
+	d, _, _ := s.dashboards.BySlug(context.Background(), dashboards.DefaultSlug)
+	d.Enabled = true
+	if _, err := s.dashboards.Save(context.Background(), d, "a@x"); err != nil {
+		t.Fatal(err)
+	}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/dashboard", nil))
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/admin/dashboard" {

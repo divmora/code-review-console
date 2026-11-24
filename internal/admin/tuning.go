@@ -57,11 +57,13 @@ func (a *Admin) apiPutTuning(w http.ResponseWriter, r *http.Request, s *store.Se
 	if !decode(w, r, &u) {
 		return
 	}
+	before := a.legacyDashboard(r.Context())
 	t, err := a.tuning().Put(r.Context(), u, a.knownProfiles(r.Context()), s.Email)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	a.syncDefaultDashboard(r.Context(), before, s.Email)
 	a.logger.Info("admin saved queue and review engine settings", "by", s.Email, "workers", t.Workers, "queue_size", t.QueueSize,
 		"job_timeout", t.JobTimeout, "dashboard_token", t.DashboardTokenHash != "")
 	writeJSON(w, http.StatusOK, viewTuning(t))

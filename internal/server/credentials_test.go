@@ -84,7 +84,7 @@ func TestCredentialsPerGroup(t *testing.T) {
 		t.Error("isSelf must cover the host's and its credentials' bot users, on that host only")
 	}
 	// The status dashboard lists both handles.
-	all, _ := s.mentions(false)
+	all, _ := s.mentions(false, allRepos)
 	var handles []string
 	for _, m := range all {
 		handles = append(handles, m.Handle)

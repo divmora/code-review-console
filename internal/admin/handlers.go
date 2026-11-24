@@ -166,6 +166,12 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/hosts/{id}/webhooks", a.requireAPI(a.apiCreateWebhook))
 	mux.HandleFunc("PUT /admin/api/webhooks/{wid}", a.requireAPI(a.apiUpdateWebhook))
 	mux.HandleFunc("DELETE /admin/api/webhooks/{wid}", a.requireAPI(a.apiDeleteWebhook))
+	mux.HandleFunc("GET /admin/api/dashboards", a.requireAPI(a.apiListDashboards))
+	mux.HandleFunc("GET /admin/api/dashboards/match", a.requireAPI(a.apiMatchDashboard))
+	mux.HandleFunc("POST /admin/api/dashboards", a.requireAPI(a.apiCreateDashboard))
+	mux.HandleFunc("PUT /admin/api/dashboards/{id}", a.requireAPI(a.apiUpdateDashboard))
+	mux.HandleFunc("DELETE /admin/api/dashboards/{id}", a.requireAPI(a.apiDeleteDashboard))
+	mux.HandleFunc("POST /admin/api/dashboards/{id}/token", a.requireAPI(a.apiRotateDashboardToken))
 	mux.HandleFunc("POST /admin/api/hosts/{id}/credentials", a.requireAPI(a.apiCreateCredential))
 	mux.HandleFunc("PUT /admin/api/credentials/{cid}", a.requireAPI(a.apiUpdateCredential))
 	mux.HandleFunc("DELETE /admin/api/credentials/{cid}", a.requireAPI(a.apiDeleteCredential))
@@ -615,11 +621,13 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	before := a.legacyDashboard(r.Context())
 	eff, err := a.settings().Put(r.Context(), st, s.Email)
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
+	a.syncDefaultDashboard(r.Context(), before, s.Email)
 	a.logger.Info("admin saved settings", "by", s.Email, "allowlist", eff.Allowlist, "require_reviewer", eff.RequireReviewer,
 		"dashboard", eff.DashboardEnabled, "hide_repos", eff.HideRepos)
 	writeJSON(w, http.StatusOK, eff)
