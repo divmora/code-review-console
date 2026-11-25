@@ -85,6 +85,11 @@ type Admin struct {
 	Reviewer interface {
 		ReviewNow(ctx context.Context, ref vcs.Ref, full bool, by string) error
 	}
+	// Labels reads a repository's labels for the label picker (the
+	// server); nil leaves only typed patterns.
+	Labels interface {
+		RepoLabels(ctx context.Context, platform, host, repo string) ([]vcs.Label, error)
+	}
 }
 
 func (a *Admin) models() *models.Service {

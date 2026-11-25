@@ -469,6 +469,7 @@ export default function Repositories() {
           <SettingsEditor
             key={edited.id}
             value={edited.settings}
+            labelRepo={{ platform: edited.platform, host: edited.host, path: edited.path }}
             onSave={(s) => save(edited, edited.mode, s).then(() => setEditing(null)).catch((x) => toast(errMsg(x), true))}
             onCancel={() => setEditing(null)}
             danger={

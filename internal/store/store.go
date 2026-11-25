@@ -79,6 +79,12 @@ type Job struct {
 	// #161), and DiagramTokens its tokens, in and out (part of the totals).
 	Diagram       bool `json:"diagram,omitempty"`
 	DiagramTokens int  `json:"diagram_tokens,omitempty"`
+	// Labels are the project labels the review picked (issue #162; nil:
+	// labels were off), LabelsApplied those apply mode set on the PR, and
+	// LabelsTokens what picking them cost (part of the totals).
+	Labels        []string `json:"labels,omitempty"`
+	LabelsApplied []string `json:"labels_applied,omitempty"`
+	LabelsTokens  int      `json:"labels_tokens,omitempty"`
 }
 
 // Scores rate a review's change from 1 (poor) to 100 (excellent), as the
@@ -399,6 +405,8 @@ type JobFilter struct {
 	Category string
 	// Approval keeps reviews with this approval outcome ("approved", ...).
 	Approval string
+	// Label keeps reviews that picked this label (case-insensitive).
+	Label string
 }
 
 // Metric granularities.
@@ -1043,6 +1051,7 @@ var migrations = []string{
 		PRIMARY KEY (dashboard_id, platform, host, pattern)
 	);`,
 	diagramSQL,
+	labelsSQL,
 }
 
 // approvalSQL adds jobs.approval and job_metrics.approvals, filled in
@@ -2444,12 +2453,13 @@ func (p *Postgres) InsertJob(ctx context.Context, j Job) (int64, error) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO jobs (kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
 			merged, error, note, comments, files, tokens_in, tokens_out, model, result, requested_by,
-			score_quality, score_security, score_maintainability, approval, diagram, diagram_tokens)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+			score_quality, score_security, score_maintainability, approval, diagram, diagram_tokens, labels, labels_applied, labels_tokens)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 		RETURNING id`,
 		j.Kind, j.Platform, j.Host, j.Repo, j.Number, j.URL, j.Trigger, j.State, j.Enqueued, nullTime(j.Started), j.Finished,
 		j.Merged, j.Error, j.Note, j.Comments, j.Files, j.TokensIn, j.TokensOut, j.Model, result, j.RequestedBy,
-		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability"), j.Approval, j.Diagram, j.DiagramTokens).Scan(&id)
+		scoreArg(j.Scores, "quality"), scoreArg(j.Scores, "security"), scoreArg(j.Scores, "maintainability"), j.Approval, j.Diagram, j.DiagramTokens,
+		j.Labels, nonNil(j.LabelsApplied), j.LabelsTokens).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -2560,7 +2570,7 @@ func (p *Postgres) PruneJobs(ctx context.Context, before, hourlyBefore time.Time
 
 const jobCols = `id, kind, platform, host, repo, number, url, trigger, state, enqueued, started, finished,
 	merged, error, note, comments, files, tokens_in, tokens_out, model, requested_by, score_quality, score_security, score_maintainability, approval,
-	diagram, diagram_tokens`
+	diagram, diagram_tokens, labels, labels_applied, labels_tokens`
 
 // scoreArg is one score for an insert (NULL without scores).
 func scoreArg(s *Scores, kind string) any {
@@ -2576,7 +2586,7 @@ func scanJob(row pgx.Row, withResult bool) (*Job, error) {
 	var q, sec, mt *int
 	dest := []any{&j.ID, &j.Kind, &j.Platform, &j.Host, &j.Repo, &j.Number, &j.URL, &j.Trigger, &j.State, &j.Enqueued, &started, &j.Finished,
 		&j.Merged, &j.Error, &j.Note, &j.Comments, &j.Files, &j.TokensIn, &j.TokensOut, &j.Model, &j.RequestedBy, &q, &sec, &mt, &j.Approval,
-		&j.Diagram, &j.DiagramTokens}
+		&j.Diagram, &j.DiagramTokens, &j.Labels, &j.LabelsApplied, &j.LabelsTokens}
 	var result []byte
 	if withResult {
 		dest = append(dest, &result)
@@ -2653,6 +2663,9 @@ func (p *Postgres) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	}
 	if f.Approval != "" {
 		add("approval = $%d", f.Approval)
+	}
+	if l := strings.TrimSpace(f.Label); l != "" {
+		add("EXISTS (SELECT 1 FROM unnest(labels) AS l WHERE lower(l) = lower($%d))", l)
 	}
 	if f.Severity != "" || f.Category != "" {
 		cond := `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(result->'findings') = 'array' THEN result->'findings' ELSE '[]'::jsonb END) AS fd

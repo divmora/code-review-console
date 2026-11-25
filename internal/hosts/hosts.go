@@ -617,3 +617,7 @@ func (r *Registry) dropSharedSecrets(ctx context.Context) error {
 	r.addNote(fmt.Sprintf("removed the webhook secrets of the shared /webhooks/<platform> URL from %s: it no longer exists, so point those webhooks at a URL from Code hosts → Manage webhooks", strings.Join(names, ", ")))
 	return r.Load(ctx)
 }
+
+// ErrNoLabels: the code host has no labels on pull requests (Bitbucket
+// Cloud), so only exact label names in the patterns can be suggested.
+var ErrNoLabels = errors.New("this code host has no pull request labels")

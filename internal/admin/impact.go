@@ -128,7 +128,7 @@ func (a *Admin) apiImpactExport(w http.ResponseWriter, r *http.Request, s *store
 	row("section", "name", "value")
 	for _, x := range [][2]string{
 		{"from", v.From.Format(time.RFC3339)}, {"to_exclusive", v.To.Format(time.RFC3339)}, {"through", v.Through},
-		{"merge_requests_reviewed", n(v.PRsReviewed)}, {"review_runs", n(v.ReviewRuns)}, {"active_repositories", n(v.ActiveRepos)},
+		{"merge_requests_reviewed", n(v.PRsReviewed)}, {"merge_requests_with_flow_diagram", n(v.PRsWithDiagram)}, {"review_runs", n(v.ReviewRuns)}, {"active_repositories", n(v.ActiveRepos)},
 		{"findings", n(v.Findings)}, {"security_findings", n(v.SecurityFindings)}, {"comments_posted", n(v.Comments)}, {"approvals_by_the_bot", n(v.Approvals)},
 		{"first_reviews", n(v.FirstReviews)}, {"median_time_to_first_review_seconds", strconv.FormatFloat(float64(v.MedianFirstReviewMS)/1000, 'f', 1, 64)},
 		{"scored_reviews", n(v.Scored)}, {"average_quality", avg(v.QualitySum)}, {"average_security", avg(v.SecuritySum)},
@@ -141,6 +141,9 @@ func (a *Admin) apiImpactExport(w http.ResponseWriter, r *http.Request, s *store
 	}
 	for _, c := range v.ByCategory {
 		row("category", csvSafe(c.Category), n(c.Count))
+	}
+	for _, l := range v.ByLabel {
+		row("merge_requests_by_label", csvSafe(l.Label), n(l.PRs))
 	}
 	for _, rc := range v.TopByReviews {
 		row("top_by_reviews", csvSafe(rc.Platform+":"+rc.Host+"/"+rc.Repo), n(rc.Count))

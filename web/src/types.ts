@@ -9,6 +9,16 @@ export type Overrides = {
   drafts?: boolean;
   instructions?: string;
   diagram?: "off" | "auto" | "always";
+  labels?: Labels;
+};
+
+// Labels are label suggestions (issue #162): set fields win over lower levels.
+export type Labels = {
+  mode?: "off" | "suggest" | "apply";
+  allow?: string[];
+  suggest_only?: string[];
+  max?: number;
+  instructions?: string;
 };
 
 export type Feature = "hosts" | "rules" | "learnings" | "executors" | "budgets" | "metrics" | "audit" | "branch_sync" | "sso_rules";

@@ -1362,3 +1362,51 @@ func TestRuleApprove(t *testing.T) {
 	}
 	_ = p.DeleteRule(ctx, r.ID, "a@x")
 }
+
+// TestLabelJobs: jobs keep the labels a review picked and set, the Reviews
+// list filters by label, and Impact counts merge requests by label
+// (migration 26, issue #162).
+func TestLabelJobs(t *testing.T) {
+	p := openTest(t)
+	ctx := context.Background()
+	at := time.Date(2041, 3, 5, 12, 0, 0, 0, time.UTC) // a period no other test uses
+	add := func(number int, labels, applied []string) int64 {
+		t.Helper()
+		id, err := p.InsertJob(ctx, Job{Kind: "review", Platform: "gitlab", Host: "g.example", Repo: "team/app", Number: number, State: "done",
+			Enqueued: at, Started: at, Finished: at, Labels: labels, LabelsApplied: applied, LabelsTokens: 430})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := add(1, []string{"type::bug", "priority::high"}, []string{"type::bug"})
+	add(1, []string{"type::bug"}, nil) // the same MR again
+	add(2, []string{"type::feature", "component::database"}, nil)
+	off := add(3, nil, nil) // labels off
+	none := add(4, []string{}, nil)
+	j, err := p.GetJob(ctx, id)
+	if err != nil || strings.Join(j.Labels, ",") != "type::bug,priority::high" || strings.Join(j.LabelsApplied, ",") != "type::bug" || j.LabelsTokens != 430 {
+		t.Fatalf("job: %+v %v", j, err)
+	}
+	if j, _ := p.GetJob(ctx, off); j.Labels != nil {
+		t.Errorf("off: %#v", j.Labels)
+	}
+	if j, _ := p.GetJob(ctx, none); j.Labels == nil || len(j.Labels) != 0 {
+		t.Errorf("none picked: %#v", j.Labels)
+	}
+	jobs, err := p.ListJobs(ctx, JobFilter{Label: "TYPE::Bug", Limit: 10})
+	if err != nil || len(jobs) != 2 {
+		t.Errorf("filter: %d %v", len(jobs), err)
+	}
+	im, err := p.Impact(ctx, ImpactFilter{From: at.Truncate(24 * time.Hour), To: at.Truncate(24*time.Hour).AddDate(0, 0, 1), Granularity: Daily})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, l := range im.ByLabel {
+		got[l.Label] = l.PRs
+	}
+	if got["type::bug"] != 1 || got["type::feature"] != 1 || got["component::database"] != 1 || got["priority::high"] != 1 || len(got) != 4 {
+		t.Errorf("by label: %+v", im.ByLabel)
+	}
+}

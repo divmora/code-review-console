@@ -68,6 +68,15 @@ type Result struct {
 	Diagram       bool
 	DiagramTokens int
 	DiagramNote   string
+	// Labels are the project labels the review picked (issue #162; nil
+	// when labels are off), LabelsMode suggest or apply, LabelsApplied
+	// and LabelsRemoved what apply mode changed on the PR, LabelsTokens
+	// what picking them cost (in and out).
+	Labels        []string
+	LabelsMode    string
+	LabelsApplied []string
+	LabelsRemoved []string
+	LabelsTokens  int
 	// Unreadable is set when the CLI succeeded but its result couldn't be
 	// read in full (see parseMerged); the counts are a best effort.
 	Unreadable string
@@ -225,6 +234,18 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 			InputTokens  int `json:"InputTokens"`
 			OutputTokens int `json:"OutputTokens"`
 		} `json:"diagram_usage"`
+		Labels *struct {
+			Mode      string `json:"mode"`
+			Suggested []struct {
+				Name string `json:"name"`
+			} `json:"suggested"`
+			Applied []string `json:"applied"`
+			Removed []string `json:"removed"`
+		} `json:"labels"`
+		LabelsUsage struct {
+			InputTokens  int `json:"InputTokens"`
+			OutputTokens int `json:"OutputTokens"`
+		} `json:"labels_usage"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil {
 		return nil, fmt.Errorf("parse codereview output: %w", err)
@@ -240,6 +261,16 @@ func ParseOutput(kind string, stdout []byte) (*Result, error) {
 	d := bytes.TrimSpace(v.Diagram)
 	res.Diagram = len(d) > 0 && string(d) != "null"
 	res.DiagramTokens, res.DiagramNote = v.DiagramUsage.InputTokens+v.DiagramUsage.OutputTokens, v.DiagramNote
+	if l := v.Labels; l != nil {
+		res.LabelsMode, res.LabelsApplied, res.LabelsRemoved = l.Mode, l.Applied, l.Removed
+		res.Labels = []string{}
+		for _, p := range l.Suggested {
+			if p.Name != "" {
+				res.Labels = append(res.Labels, p.Name)
+			}
+		}
+	}
+	res.LabelsTokens = v.LabelsUsage.InputTokens + v.LabelsUsage.OutputTokens
 	if sc := v.Scores; !res.Skipped && sc != nil && in1to100(sc.Quality) && in1to100(sc.Security) && in1to100(sc.Maintainability) {
 		res.Scores = sc
 	}

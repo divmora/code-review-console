@@ -4,8 +4,8 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/divmora/code-review-bot v0.6.1 h1:3oYHXzsCRd931T1azG53turL9a15gC1YW8nvbqYllkY=
-github.com/divmora/code-review-bot v0.6.1/go.mod h1:B8vDAhh4WRNnjX3oC0xDdOuP6y/d64jGzq7sGW2QfmA=
+github.com/divmora/code-review-bot v0.8.0 h1:NfsaBpfAUzG9ghnr+ug7ORRng7m8jFaDlUDDcpes6ow=
+github.com/divmora/code-review-bot v0.8.0/go.mod h1:B8vDAhh4WRNnjX3oC0xDdOuP6y/d64jGzq7sGW2QfmA=
 github.com/divmora/license-go v1.4.3 h1:6hMFLOQFcsiYwq2g8OnkjYrGBW1aqUxmE3eBFrkJsKc=
 github.com/divmora/license-go v1.4.3/go.mod h1:wHISCzQ18JTl6eMy77sIVM7+0UZJ/gSrXov0+SqIOio=
 github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bFY/oTyCes=

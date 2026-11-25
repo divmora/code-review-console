@@ -251,6 +251,13 @@ func Merge(base, over config.Overrides) config.Overrides {
 	if over.Drafts != nil {
 		out.Drafts = over.Drafts
 	}
+	if over.Diagram != nil {
+		out.Diagram = over.Diagram
+	}
+	out.Labels = out.Labels.Merge(over.Labels)
+	if out.Labels.Empty() {
+		out.Labels = nil // an empty block would still reach CLIs that reject the key
+	}
 	if over.Instructions != "" {
 		// The CLI accepts 8000 characters; keep the more specific text if
 		// the combination would not fit.

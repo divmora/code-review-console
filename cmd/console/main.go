@@ -275,6 +275,7 @@ func serve(ctx context.Context, args []string) error {
 	}
 	if deps.Admin != nil {
 		deps.Admin.Reviewer = srv
+		deps.Admin.Labels = srv
 	}
 	logger.Info("executor ready", "type", exec.Name())
 	return srv.ListenAndServe(ctx)

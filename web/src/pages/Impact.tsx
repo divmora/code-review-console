@@ -20,6 +20,7 @@ type Impact = {
   by_category: Count[]; security_findings: number; comments: number; approvals: number; first_reviews: number; median_first_review_ms: number;
   scored: number; quality_sum: number; security_sum: number; maintainability_sum: number;
   trend: ImpactPoint[]; top_by_reviews: Count[]; top_by_findings: Count[];
+  by_label?: { label: string; prs: number }[];
 };
 
 const severities: [string, string, string][] = [
@@ -65,6 +66,33 @@ function Tile({ value, label, sub, to }: { value: string; label: string; sub?: s
         body
       )}
     </Card>
+  );
+}
+
+// LabelSection counts merge requests by the labels reviews picked, for one
+// scope at a time ("type" for type::bug, type::feature …), as "MRs by type"
+// or "database changes" (a component:: scope).
+function LabelSection({ d }: { d: Impact }) {
+  const rows = d.by_label ?? [];
+  const scopes = Array.from(new Set(rows.map((r) => (r.label.lastIndexOf("::") > 0 ? r.label.slice(0, r.label.lastIndexOf("::")) : ""))))
+    .sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+  const [scope, setScope] = useState<string | null>(null);
+  const cur = scope !== null && scopes.includes(scope) ? scope : (scopes.includes("type") ? "type" : scopes[0] ?? "");
+  if (!rows.length) return null;
+  const shown = rows.filter((r) => (cur === "" ? r.label.lastIndexOf("::") <= 0 : r.label.startsWith(cur + "::")));
+  return (
+    <Section title="Merge requests by label" description="The project labels reviews picked (suggested or set), one scope at a time.">
+      {scopes.length > 1 && (
+        <NativeSelect className="w-auto" aria-label="Label scope" value={cur} onChange={(e) => setScope(e.target.value)}>
+          {scopes.map((sc) => (
+            <option key={sc || "-"} value={sc}>
+              {sc ? sc + "::" : "Unscoped labels"}
+            </option>
+          ))}
+        </NativeSelect>
+      )}
+      <Bars rows={shown.map((r) => [cur ? r.label.slice(cur.length + 2) : r.label, r.prs, undefined, reviewsLink(d, { label: r.label })] as [string, number, string?, string?])} />
+    </Section>
   );
 }
 
@@ -239,6 +267,7 @@ export default function ImpactPage() {
                 <Section title="Findings by category">
                   <Bars rows={d.by_category.map((c) => [c.category || "other", c.count, undefined, c.category && c.category !== "other" ? reviewsLink(d, { category: c.category }) : undefined] as [string, number, string?, string?])} />
                 </Section>
+                <LabelSection d={d} />
                 <Section title="Top repositories by reviews">
                   <RepoTable rows={d.top_by_reviews} unit="Review runs" link={(r) => reviewsLink(d, { host: r.host || "", repo: r.repo || "", state: "done" })} />
                 </Section>

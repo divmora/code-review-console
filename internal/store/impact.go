@@ -113,7 +113,10 @@ type Impact struct {
 	// PRsWithDiagram are merge requests with a flow diagram drawn or kept
 	// in the period (issue #161).
 	PRsWithDiagram int `json:"prs_with_diagram"`
-	Findings       int `json:"findings"`
+	// ByLabel counts merge requests by the project labels reviews picked
+	// (issue #162), most first; at most maxImpactLabels.
+	ByLabel  []LabelCount `json:"by_label"`
+	Findings int          `json:"findings"`
 	// BySeverity is critical, major, minor, nitpick and other.
 	BySeverity map[string]int `json:"by_severity"`
 	ByCategory []FindingCount `json:"by_category"`
@@ -233,6 +236,31 @@ const diagramSQL = `
 		PRIMARY KEY (day, platform, host, repo, number)
 	);`
 
+// labelsSQL adds the labels reviews pick to jobs, and a table of the merge
+// requests that got each, by day, for Impact (migration 26, issue #162).
+// jobs.labels is NULL when labels were off.
+const labelsSQL = `
+	ALTER TABLE jobs ADD COLUMN labels text[], ADD COLUMN labels_applied text[] NOT NULL DEFAULT '{}',
+		ADD COLUMN labels_tokens integer NOT NULL DEFAULT 0;
+	CREATE TABLE pr_label_days (
+		day      date NOT NULL,
+		platform text NOT NULL,
+		host     text NOT NULL,
+		repo     text NOT NULL,
+		number   integer NOT NULL,
+		label    text NOT NULL,
+		PRIMARY KEY (day, platform, host, repo, number, label)
+	);`
+
+// LabelCount is how many merge requests got a label.
+type LabelCount struct {
+	Label string `json:"label"`
+	PRs   int    `json:"prs"`
+}
+
+// maxImpactLabels bounds Impact's labels.
+const maxImpactLabels = 200
+
 // recordImpact adds a finished review run to the Impact rollups, in the
 // job's insert transaction.
 func recordImpact(ctx context.Context, tx pgx.Tx, j Job) error {
@@ -241,6 +269,15 @@ func recordImpact(ctx context.Context, tx pgx.Tx, j Job) error {
 			INSERT INTO pr_diagram_days (day, platform, host, repo, number) VALUES (($1::timestamptz AT TIME ZONE 'UTC')::date, $2, $3, lower($4), $5)
 			ON CONFLICT DO NOTHING`, j.Finished, j.Platform, j.Host, j.Repo, j.Number); err != nil {
 			return err
+		}
+	}
+	if j.State == "done" {
+		for _, l := range j.Labels {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO pr_label_days (day, platform, host, repo, number, label) VALUES (($1::timestamptz AT TIME ZONE 'UTC')::date, $2, $3, lower($4), $5, $6)
+				ON CONFLICT DO NOTHING`, j.Finished, j.Platform, j.Host, j.Repo, j.Number, l); err != nil {
+				return err
+			}
 		}
 	}
 	if !IsReview(j) {
@@ -293,6 +330,26 @@ func (p *Postgres) Impact(ctx context.Context, f ImpactFilter) (*Impact, error) 
 		SELECT count(DISTINCT (platform, host, repo, number))
 		FROM pr_diagram_days WHERE day >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND day < ($2::timestamptz AT TIME ZONE 'UTC')::date`, f.From, f.To).
 		Scan(&out.PRsWithDiagram); err != nil {
+		return nil, err
+	}
+	lrows, err := p.pool.Query(ctx, `
+		SELECT label, count(DISTINCT (platform, host, repo, number)) AS prs
+		FROM pr_label_days WHERE day >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND day < ($2::timestamptz AT TIME ZONE 'UTC')::date
+		GROUP BY label ORDER BY prs DESC, label LIMIT $3`, f.From, f.To, maxImpactLabels)
+	if err != nil {
+		return nil, err
+	}
+	out.ByLabel = []LabelCount{}
+	for lrows.Next() {
+		var lc LabelCount
+		if err := lrows.Scan(&lc.Label, &lc.PRs); err != nil {
+			lrows.Close()
+			return nil, err
+		}
+		out.ByLabel = append(out.ByLabel, lc)
+	}
+	lrows.Close()
+	if err := lrows.Err(); err != nil {
 		return nil, err
 	}
 	var median *float64
