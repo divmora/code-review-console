@@ -63,7 +63,7 @@ func repoInstallation(ctx context.Context, app *vcs.GitHubApp, apiURL, repo stri
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound {
 		return 0, fmt.Errorf("the GitHub App is not installed on %s", repo)

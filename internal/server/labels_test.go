@@ -43,7 +43,7 @@ func TestRepoLabels(t *testing.T) {
 		switch r.URL.Path {
 		case "/repos/o/app/installation":
 			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ey") {
-				http.Error(w, "no JWT", 401)
+				http.Error(w, "no JWT", http.StatusUnauthorized)
 				return
 			}
 			_, _ = io.WriteString(w, `{"id":42}`)
