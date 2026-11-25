@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.15.0](https://github.com/divmora/code-review-console/compare/v0.14.0...v0.15.0) (2026-11-25)
+
+
+### Features
+
+* credentials per group or pattern under a code host (backend) ([#158](https://github.com/divmora/code-review-console/issues/158)) ([a54d310](https://github.com/divmora/code-review-console/commit/a54d310ef799f136a60a895b34b56082f85dcd97)), closes [#136](https://github.com/divmora/code-review-console/issues/136)
+* **dashboards:** scores and totals for each dashboard's repositories ([#163](https://github.com/divmora/code-review-console/issues/163)) ([32f0700](https://github.com/divmora/code-review-console/commit/32f0700fe11328250d6ac29f4962e172741bb04f)), closes [#155](https://github.com/divmora/code-review-console/issues/155)
+* **executor:** pin the review image to its digest when a version is saved ([#157](https://github.com/divmora/code-review-console/issues/157)) ([f144f21](https://github.com/divmora/code-review-console/commit/f144f21f32d0ab9895d06f6933acc0a217abd377)), closes [#135](https://github.com/divmora/code-review-console/issues/135)
+* flow diagrams: review setting, [@bot](https://github.com/bot) diagram, and Impact ([#165](https://github.com/divmora/code-review-console/issues/165)) ([986559a](https://github.com/divmora/code-review-console/commit/986559aaa140d56771743b76ec3de66ac2c72909)), closes [#161](https://github.com/divmora/code-review-console/issues/161)
+* project labels: review setting, label picker, Reviews and Impact ([#166](https://github.com/divmora/code-review-console/issues/166)) ([46a6219](https://github.com/divmora/code-review-console/commit/46a621953fd6a5270f5724a52b6166b33f5503a5))
+* several status dashboards, each with its repositories and access (backend) ([#160](https://github.com/divmora/code-review-console/issues/160)) ([1f52794](https://github.com/divmora/code-review-console/commit/1f527949a80c8af9f8c88d9d7ad655e81e109d2b)), closes [#155](https://github.com/divmora/code-review-console/issues/155)
+* show real health per code host and per webhook ([#152](https://github.com/divmora/code-review-console/issues/152)) ([c553a36](https://github.com/divmora/code-review-console/commit/c553a36a34167c4c80d30381f5ac41e49f4bece9)), closes [#131](https://github.com/divmora/code-review-console/issues/131)
+* **ui:** compact Repositories rows, bulk actions and group rules ([#156](https://github.com/divmora/code-review-console/issues/156)) ([2c4dac3](https://github.com/divmora/code-review-console/commit/2c4dac309faab3e2053499f720157fca0068fd3b)), closes [#134](https://github.com/divmora/code-review-console/issues/134)
+* **ui:** Dashboards page, dashboards on Repositories, and docs ([#164](https://github.com/divmora/code-review-console/issues/164)) ([17b0f6d](https://github.com/divmora/code-review-console/commit/17b0f6db41b83631daf792443c70d64141407868)), closes [#155](https://github.com/divmora/code-review-console/issues/155)
+* **ui:** group tokens on Code hosts, and the credential on Repositories ([#159](https://github.com/divmora/code-review-console/issues/159)) ([bcd3794](https://github.com/divmora/code-review-console/commit/bcd37944b56447450eb655ba15782b3970bf0063)), closes [#136](https://github.com/divmora/code-review-console/issues/136)
+
+
+### Bug Fixes
+
+* **audit:** record which shared-URL secrets the 0.12 upgrade deleted ([#154](https://github.com/divmora/code-review-console/issues/154)) ([d24db6a](https://github.com/divmora/code-review-console/commit/d24db6a4ffd06393b4359844972443a356fbac8b)), closes [#133](https://github.com/divmora/code-review-console/issues/133)
+* GitLab tokens expire at 00:00 UTC on their date, not a day later ([#153](https://github.com/divmora/code-review-console/issues/153)) ([b99bbb2](https://github.com/divmora/code-review-console/commit/b99bbb2e2991325a7edd92317e4e47b636192bcc)), closes [#132](https://github.com/divmora/code-review-console/issues/132)
+* **security:** a GitHub webhook can't speak for another configured host ([#148](https://github.com/divmora/code-review-console/issues/148)) ([c2dba2f](https://github.com/divmora/code-review-console/commit/c2dba2f61034d819a9bde26e6cb4f01259d02520)), closes [#127](https://github.com/divmora/code-review-console/issues/127)
+* **security:** claim a change request before applying it ([#147](https://github.com/divmora/code-review-console/issues/147)) ([3b1e8e8](https://github.com/divmora/code-review-console/commit/3b1e8e8f972aaa2aa9958d1f78e8cd6c9060e6b5)), closes [#126](https://github.com/divmora/code-review-console/issues/126)
+* **security:** don't mount arbitrary Secrets into review pods as the CA bundle ([#149](https://github.com/divmora/code-review-console/issues/149)) ([482a614](https://github.com/divmora/code-review-console/commit/482a6149bfd75bcf7113d3573674473b994da42e)), closes [#128](https://github.com/divmora/code-review-console/issues/128)
+* **security:** email rules need email_verified; add subject rules ([#146](https://github.com/divmora/code-review-console/issues/146)) ([928ddb8](https://github.com/divmora/code-review-console/commit/928ddb8705b2a42fe2e99aefe733d6fa08661edb)), closes [#125](https://github.com/divmora/code-review-console/issues/125)
+* **security:** keep code host credentials on their host across redirects ([#143](https://github.com/divmora/code-review-console/issues/143)) ([ac48f12](https://github.com/divmora/code-review-console/commit/ac48f12525789a760c70eb1846f11d8030d4017d)), closes [#124](https://github.com/divmora/code-review-console/issues/124)
+* **security:** only model key variables can be a profile's api_key_env ([#145](https://github.com/divmora/code-review-console/issues/145)) ([64136b9](https://github.com/divmora/code-review-console/commit/64136b964bb958040e72717468a070a69fb8d23b)), closes [#123](https://github.com/divmora/code-review-console/issues/123)
+* **security:** send Strict-Transport-Security when base_url is https ([#150](https://github.com/divmora/code-review-console/issues/150)) ([d8fb06e](https://github.com/divmora/code-review-console/commit/d8fb06ee0e2c0f5a41608e4af8056cf00cd8bdbd)), closes [#129](https://github.com/divmora/code-review-console/issues/129)
+* **ui:** keep tables and their actions usable in narrow windows ([#151](https://github.com/divmora/code-review-console/issues/151)) ([6703129](https://github.com/divmora/code-review-console/commit/6703129f8c8c0f8efdf2b0b9d7e1430767bcc6d1)), closes [#130](https://github.com/divmora/code-review-console/issues/130)
+
 ## [0.14.0](https://github.com/divmora/code-review-console/compare/v0.13.0...v0.14.0) (2026-11-23)
 
 
