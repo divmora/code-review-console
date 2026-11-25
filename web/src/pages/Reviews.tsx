@@ -21,7 +21,27 @@ type Job = {
   tokens_in: number; tokens_out: number; model: string; requested_by: string; result?: any; scores?: Scores | null; approval?: string;
   // A flow diagram drawn or kept by this job, and what drawing it cost.
   diagram?: boolean; diagram_tokens?: number;
+  // The project labels the review picked (absent: labels off), those it
+  // set on the PR, and what picking them cost.
+  labels?: string[]; labels_applied?: string[]; labels_tokens?: number;
 };
+
+// LabelBadges are a review's labels; set ones are filled. onPick filters
+// the list by a label.
+function LabelBadges({ labels, applied, onPick }: { labels?: string[]; applied?: string[]; onPick?: (l: string) => void }) {
+  if (!labels?.length) return null;
+  const set = new Set((applied ?? []).map((l) => l.toLowerCase()));
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {labels.map((l) => (
+        <button type="button" key={l} title={(set.has(l.toLowerCase()) ? "Set on the merge request" : "Suggested") + (onPick ? " · show reviews with this label" : "")}
+          onClick={(e) => { e.stopPropagation(); onPick?.(l); }} disabled={!onPick}>
+          <Badge variant={set.has(l.toLowerCase()) ? "default" : "outline"} className="px-1.5 py-0 text-[11px] font-normal">{l}</Badge>
+        </button>
+      ))}
+    </span>
+  );
+}
 
 // ApprovalMark shows what a review did with the bot's approval of the
 // merge request on the code host (not operator change requests).
@@ -136,7 +156,13 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
       <p className="text-xs text-muted-foreground">
         Model {d.model || "—"} · {d.comments} comments · {d.files} files
         {d.diagram && <> · flow diagram{d.diagram_tokens ? " (" + fmtNum(d.diagram_tokens) + " tokens)" : " (kept from the last review)"}</>}
+        {d.labels && <> · labels{d.labels_tokens ? " (" + fmtNum(d.labels_tokens) + " tokens)" : d.labels.length ? " (kept from the last review)" : ""}</>}
       </p>
+      {d.labels && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {d.labels.length ? <>Labels: <LabelBadges labels={d.labels} applied={d.labels_applied} /> {d.labels_applied?.length ? <span>filled: set on the merge request</span> : null}</> : "No label picked."}
+        </div>
+      )}
       {job.kind.includes("review") && (
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => onRerun(false)}>
@@ -156,9 +182,9 @@ function Detail({ job, onRerun }: { job: Job; onRerun: (full: boolean) => void }
 const findingCategories = ["bug", "security", "performance", "reliability", "maintainability", "style", "docs", "tests"];
 
 // The query-string names match /admin/api/reviews.
-const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below", "severity", "category", "approval"] as const;
+const filterKeys = ["host", "repo", "state", "kind", "trigger", "from", "to", "score_kind", "score_below", "severity", "category", "approval", "label"] as const;
 const reviewView = {
-  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "", severity: "", category: "", approval: "",
+  host: "", repo: "", state: "", kind: "", trigger: "", from: "", to: "", score_kind: "", score_below: "", severity: "", category: "", approval: "", label: "",
   sort: "", granularity: "day", review: "",
 };
 
@@ -179,6 +205,8 @@ export default function Reviews() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [hosts, setHosts] = useState<{ host: string; name: string }[]>([]);
   const [repoQ, setRepoQ] = useState(q.repo);
+  const [labelQ, setLabelQ] = useState(q.label);
+  useEffect(() => setLabelQ(q.label), [q.label]);
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [more, setMore] = useState(false);
   // A review opened from a link may not be on the first page of the list.
@@ -198,6 +226,10 @@ export default function Reviews() {
     const t = window.setTimeout(() => setF({ repo: repoQ.trim() }), 300);
     return () => window.clearTimeout(t);
   }, [repoQ]);
+  useEffect(() => {
+    const t = window.setTimeout(() => labelQ.trim() !== q.label && setF({ label: labelQ.trim() }), 300);
+    return () => window.clearTimeout(t);
+  }, [labelQ]);
   useEffect(() => {
     if (q.repo !== repoQ.trim()) setRepoQ(q.repo); // the URL changed (a link, Back)
   }, [q.repo]);
@@ -363,6 +395,7 @@ export default function Reviews() {
           <option value="not_approved">Not approved</option>
           <option value="failed">Approval failed</option>
         </NativeSelect>
+        <Input className="w-40" aria-label="Label" placeholder="Label, e.g. type::bug" value={labelQ} onChange={(e) => setLabelQ(e.target.value)} />
         <NativeSelect className="w-auto" aria-label="Finding severity" value={f.severity} onChange={set("severity")}>
           <option value="">Any findings</option>
           <option value="any">With findings</option>
@@ -450,6 +483,11 @@ export default function Reviews() {
                       <Sub>
                         {j.platform} · {j.host}
                       </Sub>
+                      {!!j.labels?.length && (
+                        <div className="mt-1">
+                          <LabelBadges labels={j.labels} applied={j.labels_applied} onPick={(l) => setF({ label: l })} />
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div>{j.kind}</div>

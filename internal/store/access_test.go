@@ -159,3 +159,26 @@ func TestResolveApprove(t *testing.T) {
 		t.Errorf("no rule: the settings decide: %+v", a)
 	}
 }
+
+// TestMergeDiagramAndLabels: a rule's or repository's flow diagram and
+// labels win over the defaults (diagram was dropped below the defaults
+// before issue #162); labels merge field by field.
+func TestMergeDiagramAndLabels(t *testing.T) {
+	auto, off := "auto", "off"
+	defaults := config.Overrides{Diagram: &auto, Labels: &config.Labels{Mode: "suggest", Allow: []string{"type::*"}}}
+	rule := config.Overrides{Labels: &config.Labels{SuggestOnly: []string{"priority::*"}}}
+	repo := config.Overrides{Diagram: &off, Labels: &config.Labels{Mode: "apply"}}
+	got := Merge(Merge(defaults, rule), repo)
+	if got.Diagram == nil || *got.Diagram != "off" {
+		t.Errorf("diagram: %v", got.Diagram)
+	}
+	if l := got.Labels; l == nil || l.Mode != "apply" || len(l.Allow) != 1 || len(l.SuggestOnly) != 1 {
+		t.Errorf("labels: %+v", got.Labels)
+	}
+	if defaults.Labels.Mode != "suggest" {
+		t.Error("the defaults were changed")
+	}
+	if got := Merge(config.Overrides{Labels: &config.Labels{}}, config.Overrides{}); got.Labels != nil || got.Diagram != nil {
+		t.Error("nothing set: nothing sent")
+	}
+}

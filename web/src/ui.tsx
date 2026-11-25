@@ -22,6 +22,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Textarea } from "@/components/ui/textarea";
 import type { Feature, Me, Overrides } from "./types";
 import { diffCount, useUnsaved } from "./unsaved";
+import { LabelFields, labelForm, labelsChip, labelsOf, type RepoRef } from "./labels";
 
 // ---- toast ----
 
@@ -293,6 +294,8 @@ export function settingsChips(st: Overrides = {}): string[] {
   if (st.auto_review === true) out.push("auto review on");
   if (st.drafts === true) out.push("drafts");
   if (st.diagram) out.push("diagram " + st.diagram);
+  const lc = labelsChip(st.labels);
+  if (lc) out.push(lc);
   if (st.instructions) out.push("instructions");
   return out;
 }
@@ -313,8 +316,11 @@ export function Tri({ value, onChange, on, off, inherit = "Inherit", label, disa
 
 // ---- review settings editor (repositories, rules, global defaults) ----
 
-export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = "Server default", saveLabel = "Save settings", danger, unsaved }: {
+export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = "Server default", saveLabel = "Save settings", danger, unsaved, labelRepo }: {
   value?: Overrides;
+  // labelRepo is the repository (or, without a path, the host) the label
+  // picker starts from.
+  labelRepo?: RepoRef;
   onSave: (s: Overrides) => void;
   // unsaved names the form in the unsaved-changes bar (none: not tracked).
   unsaved?: string;
@@ -333,6 +339,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
   const [auto, setAuto] = useState<boolean | null>(st.auto_review ?? null);
   const [drafts, setDrafts] = useState<boolean | null>(st.drafts ?? null);
   const [diagram, setDiagram] = useState(st.diagram ?? "");
+  const [labels, setLabels] = useState(() => labelForm(st.labels));
   const [instr, setInstr] = useState(st.instructions ?? "");
   const current = (): Overrides => {
     const s: Overrides = {};
@@ -343,6 +350,8 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     if (auto !== null) s.auto_review = auto;
     if (drafts !== null) s.drafts = drafts;
     if (diagram) s.diagram = diagram as Overrides["diagram"];
+    const l = labelsOf(labels);
+    if (l) s.labels = l;
     if (instr.trim()) s.instructions = instr.trim();
     return s;
   };
@@ -352,6 +361,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     ...(st.min_severity ? { min_severity: st.min_severity } : {}), ...(st.model ? { model: st.model } : {}),
     ...(st.auto_review != null ? { auto_review: st.auto_review } : {}), ...(st.drafts != null ? { drafts: st.drafts } : {}),
     ...(st.diagram ? { diagram: st.diagram } : {}),
+    ...(labelsOf(labelForm(st.labels)) ? { labels: labelsOf(labelForm(st.labels)) } : {}),
     ...(st.instructions?.trim() ? { instructions: st.instructions.trim() } : {}),
   };
   const discard = () => {
@@ -362,9 +372,10 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
     setAuto(st.auto_review ?? null);
     setDrafts(st.drafts ?? null);
     setDiagram(st.diagram ?? "");
+    setLabels(labelForm(st.labels));
     setInstr(st.instructions ?? "");
   };
-  useUnsaved("editor:" + (unsaved || ""), unsaved ? { label: unsaved, count: diffCount(current(), loaded, ["profile", "max_comments", "min_severity", "model", "auto_review", "drafts", "diagram", "instructions"]), save, discard } : null);
+  useUnsaved("editor:" + (unsaved || ""), unsaved ? { label: unsaved, count: diffCount(current(), loaded, ["profile", "max_comments", "min_severity", "model", "auto_review", "drafts", "diagram", "labels", "instructions"]), save, discard } : null);
   return (
     <div className="grid gap-5">
       {extra}
@@ -414,6 +425,7 @@ export function SettingsEditor({ value, onSave, onCancel, extra, inheritModel = 
           </NativeSelect>
         </Field>
       </FormGrid>
+      <LabelFields value={labels} onChange={setLabels} repo={labelRepo} />
       <Field label="Extra review instructions">
         <Textarea rows={4} maxLength={8000} placeholder="Appended to the repository's own instructions" value={instr} onChange={(e) => setInstr(e.target.value)} />
       </Field>

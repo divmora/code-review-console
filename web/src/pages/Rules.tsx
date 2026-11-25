@@ -28,6 +28,7 @@ function RuleEditor({ rule, onSave, onDelete }: { rule: Rule; onSave: (b: any) =
     <SettingsEditor
       value={rule.settings}
       inheritModel="Inherit"
+      labelRepo={rule.host ? { platform: rule.platform, host: rule.host } : undefined}
       onSave={(s) => onSave({ ...vals, settings: s })}
       danger={
         <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={onDelete}>

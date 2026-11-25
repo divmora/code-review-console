@@ -51,6 +51,8 @@ var operateRoutes = map[string]bool{
 	"DELETE /admin/api/learnings/{id}":       true,
 	"POST /admin/api/hosts/{id}/test":        true,
 	"POST /admin/api/credentials/{cid}/test": true,
+	// Reads a repository's labels with the bot's token (the label picker).
+	"POST /admin/api/repo-labels": true,
 }
 
 var adminOnlyRoutes = map[string]bool{

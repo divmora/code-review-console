@@ -713,7 +713,8 @@ func jobMatches(j store.Job, f store.JobFilter) bool {
 		(f.State == "" || j.State == f.State) && (f.Kind == "" || j.Kind == f.Kind) && (f.Trigger == "" || j.Trigger == f.Trigger) &&
 		(f.From.IsZero() || !j.Finished.Before(f.From)) && (f.To.IsZero() || j.Finished.Before(f.To)) &&
 		(f.BeforeID == 0 || j.ID < f.BeforeID) && scoreMatches(j, f) && findingMatches(j, f) &&
-		(f.Approval == "" || j.Approval == f.Approval)
+		(f.Approval == "" || j.Approval == f.Approval) &&
+		(f.Label == "" || hasLabel(j.Labels, f.Label))
 }
 
 func findingMatches(j store.Job, f store.JobFilter) bool {
@@ -1317,6 +1318,7 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 	}
 	prs, repos, cats := map[string]bool{}, map[string]bool{}, map[string]int{}
 	diagrams := map[string]bool{}
+	labelPRs := map[string]map[string]bool{}
 	byRepoReviews, byRepoFindings := map[store.RepoCount]int{}, map[store.RepoCount]int{}
 	first := map[string]store.Job{}
 	for _, j := range m.jobs { // oldest first
@@ -1332,6 +1334,14 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 		}
 		if j.Diagram && j.State == "done" {
 			diagrams[pr] = true
+		}
+		if j.State == "done" {
+			for _, l := range j.Labels {
+				if labelPRs[l] == nil {
+					labelPRs[l] = map[string]bool{}
+				}
+				labelPRs[l][pr] = true
+			}
 		}
 		pt := point(j.Finished)
 		out.Comments += j.Comments
@@ -1368,6 +1378,16 @@ func (m *Memory) Impact(_ context.Context, f store.ImpactFilter) (*store.Impact,
 		}
 	}
 	out.PRsReviewed, out.ActiveRepos, out.PRsWithDiagram = len(prs), len(repos), len(diagrams)
+	out.ByLabel = []store.LabelCount{}
+	for l, set := range labelPRs {
+		out.ByLabel = append(out.ByLabel, store.LabelCount{Label: l, PRs: len(set)})
+	}
+	sort.Slice(out.ByLabel, func(a, b int) bool {
+		if out.ByLabel[a].PRs != out.ByLabel[b].PRs {
+			return out.ByLabel[a].PRs > out.ByLabel[b].PRs
+		}
+		return out.ByLabel[a].Label < out.ByLabel[b].Label
+	})
 	var lat []int64
 	for _, j := range first {
 		if !j.Finished.Before(f.From) && j.Finished.Before(f.To) {
@@ -1489,4 +1509,13 @@ func (m *Memory) Insights(_ context.Context, f store.InsightsFilter) (*store.Ins
 		}
 	}
 	return out, nil
+}
+
+func hasLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(l, strings.TrimSpace(want)) {
+			return true
+		}
+	}
+	return false
 }

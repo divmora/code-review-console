@@ -142,6 +142,7 @@ func (a *Admin) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/repos", a.requireAPI(a.apiCreateRepo))
 	mux.HandleFunc("PUT /admin/api/repos/{id}", a.requireAPI(a.apiUpdateRepo))
 	mux.HandleFunc("DELETE /admin/api/repos/{id}", a.requireAPI(a.apiDeleteRepo))
+	mux.HandleFunc("POST /admin/api/repo-labels", a.requireAPI(a.apiRepoLabels))
 	mux.HandleFunc("GET /admin/api/rules", a.requireAPI(a.apiListRules))
 	mux.HandleFunc("POST /admin/api/rules", a.requireAPI(a.apiCreateRule))
 	mux.HandleFunc("PUT /admin/api/rules/{id}", a.requireAPI(a.apiUpdateRule))
@@ -434,7 +435,7 @@ func (a *Admin) apiUpdateRepo(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := a.checkDiagramCLI(r.Context(), &req.Settings); err != nil {
+	if err := a.checkCLIFeatures(r.Context(), &req.Settings); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -511,7 +512,7 @@ func (a *Admin) apiCreateRule(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := a.checkDiagramCLI(r.Context(), &req.Settings); err != nil {
+	if err := a.checkCLIFeatures(r.Context(), &req.Settings); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -553,7 +554,7 @@ func (a *Admin) apiUpdateRule(w http.ResponseWriter, r *http.Request, s *store.S
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := a.checkDiagramCLI(r.Context(), &req.Settings); err != nil {
+	if err := a.checkCLIFeatures(r.Context(), &req.Settings); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -662,7 +663,7 @@ func (a *Admin) apiPutSettings(w http.ResponseWriter, r *http.Request, s *store.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := a.checkDiagramCLI(r.Context(), &st.ReviewDefaults); err != nil {
+	if err := a.checkCLIFeatures(r.Context(), &st.ReviewDefaults); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -1318,6 +1319,7 @@ func (a *Admin) apiListReviews(w http.ResponseWriter, r *http.Request, s *store.
 	// (severity=any: with any finding), as counted on the Impact page.
 	f.Severity, f.Category = strings.TrimSpace(q.Get("severity")), strings.TrimSpace(q.Get("category"))
 	f.Approval = q.Get("approval") // approved, withdrawn, ...
+	f.Label = strings.TrimSpace(q.Get("label"))
 	jobs, err := a.store.ListJobs(r.Context(), f)
 	if err != nil {
 		a.serverError(w, err)

@@ -20,6 +20,10 @@ const MinCLIVersion = "0.4.0"
 // Executor's version is older.
 const DiagramCLIVersion = "0.7.0"
 
+// LabelsCLIVersion is the first CLI with label suggestions (the "labels"
+// override). Older CLIs reject the key, like "diagram".
+const LabelsCLIVersion = "0.8.0"
+
 // CLIAtLeast reports whether v is at least min. known is false for
 // versions that are not a release (development builds, latest, digests).
 func CLIAtLeast(v, min string) (ok, known bool) {

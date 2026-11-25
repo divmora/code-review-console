@@ -6,7 +6,7 @@ toolchain go1.27.4
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/divmora/code-review-bot v0.6.1
+	github.com/divmora/code-review-bot v0.8.0
 	github.com/divmora/license-go v1.4.3
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/google/uuid v1.6.0

@@ -56,6 +56,11 @@ type Report struct {
 	// drawing it cost (issue #161).
 	Diagram       bool `json:"diagram,omitempty"`
 	DiagramTokens int  `json:"diagram_tokens,omitempty"`
+	// Labels the review picked (nil: off), those it set on the PR, and
+	// their tokens (issue #162).
+	Labels        []string `json:"labels,omitempty"`
+	LabelsApplied []string `json:"labels_applied,omitempty"`
+	LabelsTokens  int      `json:"labels_tokens,omitempty"`
 }
 
 // Record is one job's lifecycle, as shown on the dashboard.

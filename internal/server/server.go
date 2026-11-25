@@ -630,6 +630,7 @@ func (s *Server) persistJob(r Record) {
 		Error: r.Error, Note: r.Note, Comments: r.Comments, Files: r.Files, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Model: r.Model,
 		Result: r.Result, RequestedBy: r.RequestedBy, Scores: r.Scores, Approval: r.Approval,
 		Diagram: r.Diagram, DiagramTokens: r.DiagramTokens,
+		Labels: r.Labels, LabelsApplied: r.LabelsApplied, LabelsTokens: r.LabelsTokens,
 	})
 	if err != nil {
 		s.logger.Warn("could not save job history", "error", err)
@@ -651,7 +652,7 @@ func (s *Server) loadHistory() {
 			Meta:  Meta{Kind: j.Kind, Platform: j.Platform, Host: j.Host, Repo: j.Repo, Number: j.Number, URL: j.URL, Trigger: j.Trigger},
 			State: State(j.State), Enqueued: j.Enqueued, Started: j.Started, Finished: j.Finished, Merged: j.Merged, Error: j.Error,
 			Report: Report{Note: j.Note, Comments: j.Comments, Files: j.Files, TokensIn: j.TokensIn, TokensOut: j.TokensOut, Model: j.Model, Scores: j.Scores, Approval: j.Approval,
-				Diagram: j.Diagram, DiagramTokens: j.DiagramTokens},
+				Diagram: j.Diagram, DiagramTokens: j.DiagramTokens, Labels: j.Labels, LabelsApplied: j.LabelsApplied, LabelsTokens: j.LabelsTokens},
 		})
 	}
 	s.queue.Seed(recs)
