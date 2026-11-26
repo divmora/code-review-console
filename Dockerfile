@@ -6,7 +6,7 @@
 FROM ghcr.io/divmora/code-review-bot:0.8.0 AS bot
 
 # The admin UI (web/) is built here and embedded by the Go build below.
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS web
+FROM --platform=$BUILDPLATFORM node:25-bookworm-slim AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
